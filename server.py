@@ -1382,6 +1382,7 @@ def db_schema(table: str = "") -> str:
 PUBLIC_PATHS = {
     "/health",
     "/db-test",
+    "/master-test",
     "/.well-known/oauth-protected-resource",
     "/.well-known/oauth-authorization-server",
     "/register",
@@ -1491,6 +1492,28 @@ def create_app():
                 "error": str(e)[:1000],
                 "traceback": traceback.format_exc()[:2000],
                 "supabase_url": SUPABASE_URL,
+            }, status_code=500)
+
+    @mcp.custom_route("/master-test", methods=["GET"])
+    async def master_test_route(request: Request) -> Response:
+        """Diagnostic — calls screen_detail for a known ticker, returns the
+        full error/traceback if any."""
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer ") or not (
+            MCP_AUTH_TOKEN and secrets.compare_digest(auth[7:], MCP_AUTH_TOKEN)
+        ):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        import traceback
+        try:
+            result = screen_detail("SOFI")
+            return JSONResponse({"ok": True, "result_len": len(result),
+                                 "result_preview": result[:500]})
+        except Exception as e:
+            return JSONResponse({
+                "ok": False,
+                "error_type": type(e).__name__,
+                "error": str(e)[:2000],
+                "traceback": traceback.format_exc()[:3000],
             }, status_code=500)
 
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
