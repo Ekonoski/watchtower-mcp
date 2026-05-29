@@ -36,8 +36,7 @@ from datetime import datetime, timezone, timedelta, date
 from typing import Any, Optional
 from urllib.parse import urlencode
 
-import psycopg2
-from psycopg2.extras import RealDictCursor, execute_values
+import httpx
 import uvicorn
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -53,18 +52,15 @@ MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "").strip()
 PORT           = int(os.environ.get("PORT", 8000))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
-DB_HOST     = os.environ.get("SUPABASE_DB_HOST", "").strip()
-DB_PORT     = int(os.environ.get("SUPABASE_DB_PORT", "5432"))
-DB_USER     = os.environ.get("SUPABASE_DB_USER", "postgres").strip()
-DB_PASSWORD = os.environ.get("SUPABASE_DB_PASSWORD", "").strip()
-DB_NAME     = os.environ.get("SUPABASE_DB_NAME", "postgres").strip()
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
 
 if not MCP_AUTH_TOKEN:
     print(json.dumps({"level": "ERROR",
                       "msg": "MCP_AUTH_TOKEN not set — all requests will be rejected"}))
-if not DB_HOST or not DB_PASSWORD:
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     print(json.dumps({"level": "ERROR",
-                      "msg": "DB credentials not set — queries will fail"}))
+                      "msg": "SUPABASE_URL or SUPABASE_SERVICE_KEY not set — queries will fail"}))
 
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -118,98 +114,125 @@ class RateLimiter:
 global_limiter = RateLimiter(60, 10.0)
 
 
-# ─── DB connection ────────────────────────────────────────────────────────────
-# Supabase hosts are IPv6-only — fall back to dig if the system resolver
-# returns nothing for AAAA. Same pattern as Watchtower's compounder.py.
+# ─── DB access (via Supabase PostgREST HTTP API — IPv4, no pooler issues) ────
 
-_IPV6_CACHE: dict[str, str] = {}
-
-
-def _resolve_ipv6(host: str) -> Optional[str]:
-    if host in _IPV6_CACHE:
-        return _IPV6_CACHE[host]
-    try:
-        for info in socket.getaddrinfo(host, None, family=socket.AF_INET6):
-            addr = info[4][0]
-            _IPV6_CACHE[host] = addr
-            return addr
-    except socket.gaierror:
-        pass
-    try:
-        out = subprocess.check_output(
-            ["dig", "+short", "+time=3", "+tries=1", host, "AAAA", "@8.8.8.8"],
-            stderr=subprocess.DEVNULL, timeout=8,
-        ).decode().strip()
-        for line in out.splitlines():
-            line = line.strip()
-            if ":" in line and not line.endswith("."):
-                _IPV6_CACHE[host] = line
-                return line
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-    return None
+def _sb_headers() -> dict:
+    return {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+    }
 
 
-def _db_conn():
-    """Open a fresh connection. Caller must close. Retry on transient failures."""
-    if not DB_HOST or not DB_PASSWORD:
-        raise RuntimeError("DB credentials not configured on this server.")
-    hostaddr = None
-    try:
-        socket.getaddrinfo(DB_HOST, DB_PORT)
-    except socket.gaierror:
-        hostaddr = _resolve_ipv6(DB_HOST)
-    last_err = None
-    for attempt in range(4):
-        try:
-            kwargs = dict(host=DB_HOST, port=DB_PORT, user=DB_USER,
-                          password=DB_PASSWORD, dbname=DB_NAME,
-                          sslmode="require", connect_timeout=15)
-            if hostaddr:
-                kwargs["hostaddr"] = hostaddr
-            conn = psycopg2.connect(**kwargs)
-            with conn.cursor() as c:
-                c.execute("SET statement_timeout = '60s'")
-            conn.commit()
-            return conn
-        except psycopg2.OperationalError as e:
-            last_err = e
-            msg = str(e)
-            if any(x in msg for x in ("could not translate", "unreachable",
-                                      "timeout", "No route")):
-                time.sleep(min(2 ** attempt, 4))
-                continue
-            raise
-    raise RuntimeError(f"could not connect after 4 attempts: {last_err}")
+def _interpolate_params(sql: str, params) -> str:
+    """psycopg-style %(name)s parameter substitution. PostgREST RPC takes a
+    plain string so we inline the parameters server-side. Safe because
+    mcp_exec_sql validates that the resulting query is SELECT/WITH only."""
+    if not params:
+        return sql
+    if isinstance(params, dict):
+        out = sql
+        for k, v in params.items():
+            if v is None:
+                rep = "NULL"
+            elif isinstance(v, bool):
+                rep = "TRUE" if v else "FALSE"
+            elif isinstance(v, (int, float)):
+                rep = str(v)
+            elif isinstance(v, (list, tuple)):
+                # Postgres array literal: ARRAY['a','b',1]
+                inner = ", ".join(
+                    "NULL" if x is None
+                    else (str(x) if isinstance(x, (int, float))
+                          else "'" + str(x).replace("'", "''") + "'")
+                    for x in v
+                )
+                rep = f"ARRAY[{inner}]"
+            elif isinstance(v, (date, datetime)):
+                rep = "'" + v.isoformat() + "'"
+            else:
+                # String — escape single quotes
+                rep = "'" + str(v).replace("'", "''") + "'"
+            out = out.replace(f"%({k})s", rep)
+        return out
+    return sql
 
 
 def _query(sql: str, params=None, fetch: bool = True) -> list[dict]:
-    """Run a query and return rows as list of dicts."""
-    conn = _db_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params or {})
-            if fetch and cur.description:
-                rows = [dict(r) for r in cur.fetchall()]
-            else:
-                rows = []
-            conn.commit()
-            return rows
-    finally:
-        conn.close()
+    """Run a SELECT/WITH query and return rows as list of dicts.
+
+    Sends the SQL to the mcp_exec_sql Postgres function via PostgREST RPC.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise RuntimeError("Supabase URL/key not configured.")
+    interpolated = _interpolate_params(sql, params)
+    last_err = None
+    for attempt in range(3):
+        try:
+            with httpx.Client(timeout=30) as client:
+                r = client.post(
+                    f"{SUPABASE_URL}/rest/v1/rpc/mcp_exec_sql",
+                    headers=_sb_headers(),
+                    json={"query": interpolated},
+                )
+            if r.status_code != 200:
+                raise RuntimeError(
+                    f"PostgREST error {r.status_code}: {r.text[:500]}"
+                )
+            data = r.json()
+            return data if isinstance(data, list) else []
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            last_err = e
+            time.sleep(2 ** attempt)
+            continue
+    raise RuntimeError(f"query failed after retries: {last_err}")
 
 
 def _execute(sql: str, params=None) -> int:
-    """Run a write query and return rowcount."""
-    conn = _db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, params or {})
-            n = cur.rowcount
-            conn.commit()
-            return n
-    finally:
-        conn.close()
+    """Run a write statement via direct PostgREST table operations.
+
+    For INSERT/UPDATE/DELETE we route through PostgREST resource endpoints.
+    The watchlist tools are the only writers right now.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise RuntimeError("Supabase URL/key not configured.")
+    interpolated = _interpolate_params(sql, params)
+    lowered = interpolated.lower().strip()
+
+    # Watchlist add: INSERT INTO watchlist ... ON CONFLICT DO UPDATE
+    if lowered.startswith("insert into watchlist"):
+        # parse the values dict from params
+        body = {
+            "ticker": params.get("t") if params else None,
+            "notes": params.get("n") if params else None,
+            "target_price": params.get("tp") if params else None,
+        }
+        with httpx.Client(timeout=15) as client:
+            r = client.post(
+                f"{SUPABASE_URL}/rest/v1/watchlist",
+                headers={**_sb_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+                json=body,
+            )
+        if r.status_code not in (200, 201, 204):
+            raise RuntimeError(f"watchlist insert error {r.status_code}: {r.text[:300]}")
+        return 1
+
+    # Watchlist delete: DELETE FROM watchlist WHERE ticker = ...
+    if lowered.startswith("delete from watchlist"):
+        ticker = params.get("t") if params else None
+        if not ticker:
+            return 0
+        with httpx.Client(timeout=15) as client:
+            r = client.delete(
+                f"{SUPABASE_URL}/rest/v1/watchlist",
+                headers=_sb_headers(),
+                params={"ticker": f"eq.{ticker}"},
+            )
+        if r.status_code not in (200, 204):
+            raise RuntimeError(f"watchlist delete error {r.status_code}: {r.text[:300]}")
+        return 1
+
+    raise RuntimeError(f"_execute called with unsupported SQL: {interpolated[:120]}")
 
 
 # ─── Output formatting helpers ────────────────────────────────────────────────
@@ -1441,14 +1464,13 @@ def create_app():
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "tools": 15,
             "oauth": True,
-            "db_configured": bool(DB_HOST and DB_PASSWORD),
+            "db_configured": bool(SUPABASE_URL and SUPABASE_SERVICE_KEY),
+            "transport": "postgrest",
         })
 
     @mcp.custom_route("/db-test", methods=["GET"])
     async def db_test_route(request: Request) -> Response:
-        """Diagnostic endpoint — attempts a basic DB query, returns the
-        actual error if any. Same auth as MCP."""
-        # Require the bearer token for this endpoint
+        """Diagnostic — attempts a basic query, returns the actual error if any."""
         auth = request.headers.get("authorization", "")
         if not auth.startswith("Bearer ") or not (
             MCP_AUTH_TOKEN and secrets.compare_digest(auth[7:], MCP_AUTH_TOKEN)
@@ -1456,14 +1478,11 @@ def create_app():
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
         import traceback
         try:
-            rows = _query("SELECT 1 AS one, current_database() AS db, current_user AS usr")
+            rows = _query("SELECT 1 AS one, current_database() AS db, count(*) AS n_tickers FROM tickers")
             return JSONResponse({
                 "ok": True,
                 "rows": rows,
-                "db_host": DB_HOST,
-                "db_port": DB_PORT,
-                "db_user": DB_USER,
-                "db_name": DB_NAME,
+                "supabase_url": SUPABASE_URL,
             })
         except Exception as e:
             return JSONResponse({
@@ -1471,10 +1490,7 @@ def create_app():
                 "error_type": type(e).__name__,
                 "error": str(e)[:1000],
                 "traceback": traceback.format_exc()[:2000],
-                "db_host": DB_HOST,
-                "db_port": DB_PORT,
-                "db_user": DB_USER,
-                "db_name": DB_NAME,
+                "supabase_url": SUPABASE_URL,
             }, status_code=500)
 
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
