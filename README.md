@@ -28,6 +28,7 @@ Lets Claude.ai chat with the [Watchtower](https://github.com/Ekonoski/watchtower
 | `recent_insider_activity` | Net insider buying by stock |
 | `institutional_accumulation` | 13F top-10 holders increasing positions |
 | `analyst_grade_changes` | Net analyst upgrades by ticker |
+| `social_buzz_top` | Reddit + WSB mention surge (24h) — situational awareness |
 
 **Watchlist:**
 

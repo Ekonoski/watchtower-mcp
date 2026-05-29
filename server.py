@@ -1154,6 +1154,98 @@ def insider_burst_plus_tech(top: int = 25) -> str:
 
 
 @mcp.tool()
+def social_buzz_top(top: int = 15, sort: str = "surge",
+                    source: str = "all-stocks",
+                    min_mentions: int = 10) -> str:
+    """What's buzzing on Reddit + WSB — situational awareness, not a trade signal.
+
+    Pulls from the latest Apewisdom snapshot (refreshed daily). Two views:
+      - sort='surge'   : biggest 24h rank climbers (default; "the crowd just
+                         noticed something today")
+      - sort='mentions': raw mention count this snapshot ("loudest right now")
+
+    Tickers that also appear in the Compounder quality universe are flagged
+    with a [Q] marker — that's the cross-section where buzz meets fundamentals.
+
+    Args:
+      top: how many results to return (default 15)
+      sort: 'surge' (rank climb 24h) or 'mentions' (raw count) — default surge
+      source: 'all-stocks' (cross-subreddit, broader) or
+              'wallstreetbets' (WSB only, louder + earlier on memes)
+      min_mentions: floor for inclusion (default 10 — filters single-post noise)
+    """
+    sort = (sort or "surge").lower().strip()
+    if sort not in ("surge", "mentions"):
+        return f"Invalid sort '{sort}'. Use 'surge' or 'mentions'."
+    source = (source or "all-stocks").strip()
+    order_by = ("(COALESCE(rank_24h_ago, 999) - rank) DESC, mentions DESC"
+                if sort == "surge" else "mentions DESC")
+
+    rows = _query(f"""
+        WITH latest AS (SELECT max(snapshot_date) AS d FROM social_buzz),
+        snap AS (
+            SELECT sb.ticker, sb.name, sb.rank, sb.rank_24h_ago,
+                   sb.mentions, sb.mentions_24h_ago, sb.upvotes,
+                   (COALESCE(sb.rank_24h_ago, 999) - sb.rank) AS rank_surge,
+                   CASE WHEN sb.mentions_24h_ago > 0
+                        THEN ROUND(100.0 * (sb.mentions - sb.mentions_24h_ago)::numeric
+                                   / sb.mentions_24h_ago, 0)::int
+                        ELSE NULL END AS mentions_pct,
+                   sb.snapshot_date
+            FROM social_buzz sb, latest
+            WHERE sb.snapshot_date = latest.d
+              AND sb.source = %(source)s
+              AND sb.mentions >= %(min_m)s
+        )
+        SELECT s.*,
+               EXISTS (
+                 SELECT 1 FROM quality_universe q
+                 WHERE q.ticker = s.ticker
+                   AND q.as_of_date = (SELECT max(as_of_date) FROM quality_universe)
+               ) AS in_quality
+        FROM snap s
+        ORDER BY {order_by}
+        LIMIT %(top)s
+    """, {"source": source, "min_m": min_mentions, "top": top})
+
+    if not rows:
+        return (f"No social buzz data for source '{source}' "
+                f"(min_mentions={min_mentions}). Snapshot may be empty today.")
+
+    snap_date = rows[0].get("snapshot_date")
+    sort_label = ("biggest 24h rank climbers" if sort == "surge"
+                  else "most mentioned right now")
+    lines = [
+        f"SOCIAL BUZZ ({source})  |  {snap_date}  |  {sort_label}  |  "
+        f">={min_mentions} mentions",
+        "",
+    ]
+    for r in rows:
+        ticker = r["ticker"]
+        quality_flag = " [Q]" if r.get("in_quality") else ""
+        rank = r.get("rank") or 0
+        rank_ago = r.get("rank_24h_ago")
+        rank_ago_s = f"was {rank_ago:>3}" if rank_ago else "was   -"
+        mentions = r.get("mentions") or 0
+        pct = r.get("mentions_pct")
+        if pct is None:
+            pct_s = "      -"
+        elif pct > 0:
+            pct_s = f"+{pct:>4}%"
+        else:
+            pct_s = f"{pct:>5}%"
+        name = (r.get("name") or "")[:30]
+        lines.append(
+            f"  rank {rank:>3}  ({rank_ago_s})  "
+            f"{ticker:<6}{quality_flag:<4} "
+            f"{mentions:>4} mentions  "
+            f"{pct_s} vs 24h  "
+            f"{name}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def master_screen_top(top: int = 25, min_screens: int = 3,
                       sector: str = "", max_price: float = 0) -> str:
     """BROAD CONTEXT — 9-signal fundamental + ownership composite (no technicals).
