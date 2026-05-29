@@ -1927,11 +1927,15 @@ class AuthMiddleware:
 def create_app():
     @mcp.custom_route("/health", methods=["GET"])
     async def health_route(request: Request) -> Response:
+        try:
+            tool_count = len(await mcp.list_tools())
+        except Exception:
+            tool_count = -1
         return JSONResponse({
             "status": "ok",
             "service": "watchtower-mcp",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tools": 15,
+            "tools": tool_count,
             "oauth": True,
             "db_configured": bool(SUPABASE_URL and SUPABASE_SERVICE_KEY),
             "transport": "postgrest",
