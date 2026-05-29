@@ -281,6 +281,254 @@ def _none_safe(d: dict, default: dict) -> dict:
     return out
 
 
+# ─── Technical indicators (pure Python — ported from reversal_screen_v1.py) ──
+
+def _ewm_recursive(values: list[float], span: int) -> list[float]:
+    """EMA, pandas Series.ewm(span=span, adjust=False).mean() equivalent."""
+    if not values:
+        return []
+    alpha = 2.0 / (span + 1)
+    out = [float(values[0])]
+    for v in values[1:]:
+        out.append(alpha * float(v) + (1 - alpha) * out[-1])
+    return out
+
+
+def _ewm_adjusted(values: list[float], alpha: float, min_periods: int) -> list[float]:
+    """Pandas Series.ewm(alpha=alpha, min_periods=min_periods).mean() — adjust=True."""
+    out = []
+    num = 0.0
+    denom = 0.0
+    for i, v in enumerate(values):
+        num = float(v) + (1 - alpha) * num
+        denom = 1.0 + (1 - alpha) * denom
+        if i + 1 >= min_periods:
+            out.append(num / denom)
+        else:
+            out.append(float("nan"))
+    return out
+
+
+def _rsi(closes: list[float], period: int = 14) -> list[float]:
+    if len(closes) < 2:
+        return [float("nan")] * len(closes)
+    gains, losses = [0.0], [0.0]
+    for i in range(1, len(closes)):
+        d = float(closes[i]) - float(closes[i - 1])
+        gains.append(max(d, 0.0))
+        losses.append(max(-d, 0.0))
+    avg_g = _ewm_adjusted(gains, 1.0 / period, period)
+    avg_l = _ewm_adjusted(losses, 1.0 / period, period)
+    out = []
+    for g, l in zip(avg_g, avg_l):
+        if g != g or l != l:
+            out.append(float("nan"))
+        elif l == 0:
+            out.append(100.0)
+        else:
+            rs = g / l
+            out.append(100.0 - 100.0 / (1.0 + rs))
+    return out
+
+
+def _macd(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9):
+    e_fast = _ewm_recursive(closes, fast)
+    e_slow = _ewm_recursive(closes, slow)
+    line = [f - s for f, s in zip(e_fast, e_slow)]
+    sig = _ewm_recursive(line, signal)
+    hist = [l - s for l, s in zip(line, sig)]
+    return line, sig, hist
+
+
+def _bullish_divergence(closes: list[float], rsi: list[float], window: int = 40) -> bool:
+    n = len(closes)
+    if n < window * 2 + 10:
+        return False
+    recent_idx = min(range(n - window, n), key=lambda i: closes[i])
+    prior_idx = min(range(n - 2 * window, n - window), key=lambda i: closes[i])
+    if rsi[recent_idx] != rsi[recent_idx] or rsi[prior_idx] != rsi[prior_idx]:
+        return False
+    return closes[recent_idx] < closes[prior_idx] and rsi[recent_idx] > rsi[prior_idx]
+
+
+def _volume_ratio(closes: list[float], volumes: list[float], lookback: int = 20) -> float:
+    n = len(closes)
+    if n < lookback + 1:
+        return 1.0
+    up_vols, dn_vols = [], []
+    for i in range(n - lookback, n):
+        d = float(closes[i]) - float(closes[i - 1])
+        if d > 0:
+            up_vols.append(float(volumes[i]))
+        elif d < 0:
+            dn_vols.append(float(volumes[i]))
+    avg_up = sum(up_vols) / len(up_vols) if up_vols else 0.0
+    avg_dn = sum(dn_vols) / len(dn_vols) if dn_vols else 0.0
+    if avg_dn == 0:
+        return 2.0
+    return avg_up / avg_dn
+
+
+# Reversal-screen scoring weights — same as reversal_screen_v1.py
+_R_RSI_PERIOD = 14
+_R_EMA_SHORT = 8
+_R_EMA_LONG = 13
+_R_EMA_TREND = 50
+_R_RSI_SLOPE_WIN = 5
+_W_RSI_RECOVERY = 0.20
+_W_RSI_DIVERGENCE = 0.15
+_W_MACD = 0.20
+_W_EMA_CROSS = 0.20
+_W_VOLUME = 0.10
+_W_PRICE_VS_EMA = 0.15
+
+
+def _score_rsi_recovery(rsi_now: float, rsi_slope: float) -> float:
+    if rsi_now != rsi_now or rsi_slope != rsi_slope:
+        return 0.0
+    if rsi_now < 30:
+        zone = 0.8 if rsi_slope > 0 else 0.3
+    elif rsi_now < 40:
+        zone = 1.0 if rsi_slope > 0 else 0.5
+    elif rsi_now < 50:
+        zone = 0.7 if rsi_slope > 0 else 0.3
+    elif rsi_now < 60:
+        zone = 0.4
+    else:
+        zone = 0.1
+    slope_bonus = min(0.2, max(0.0, rsi_slope * 0.05)) if rsi_slope > 0 else 0.0
+    return min(1.0, zone + slope_bonus)
+
+
+def _score_macd(hist_now: float, hist_prev: float) -> float:
+    if hist_now != hist_now or hist_prev != hist_prev:
+        return 0.0
+    if hist_now > 0 and hist_prev <= 0:
+        return 1.0
+    if hist_now > 0 and hist_now > hist_prev:
+        return 0.8
+    if hist_now > 0:
+        return 0.5
+    if hist_now > hist_prev:
+        return 0.4
+    return 0.0
+
+
+def _score_ema_crossover(es_now: float, el_now: float,
+                         es_prev: float, el_prev: float) -> float:
+    if any(v != v for v in (es_now, el_now, es_prev, el_prev)):
+        return 0.0
+    if es_now > el_now and not (es_prev > el_prev):
+        return 1.0
+    if es_now > el_now:
+        return 0.7
+    if el_now == 0:
+        return 0.0
+    gap = (es_now - el_now) / el_now
+    if gap > -0.01:
+        return 0.4
+    if gap > -0.03:
+        return 0.2
+    return 0.0
+
+
+def _score_volume(vol_ratio: float) -> float:
+    if vol_ratio >= 1.8:
+        return 1.0
+    if vol_ratio >= 1.3:
+        return 0.7
+    if vol_ratio >= 1.0:
+        return 0.4
+    return 0.1
+
+
+def _score_price_vs_ema(close: float, ema50: float) -> float:
+    if close != close or ema50 != ema50 or ema50 == 0:
+        return 0.0
+    pct = (close - ema50) / ema50
+    if pct > 0.02:
+        return 1.0
+    if pct > -0.02:
+        return 0.8
+    if pct > -0.05:
+        return 0.5
+    if pct > -0.10:
+        return 0.2
+    return 0.0
+
+
+def _analyze_reversal(closes: list[float], volumes: list[float]) -> Optional[dict]:
+    if len(closes) < 60:
+        return None
+    rsi = _rsi(closes, _R_RSI_PERIOD)
+    _, _, hist = _macd(closes)
+    ema_short = _ewm_recursive(closes, _R_EMA_SHORT)
+    ema_long = _ewm_recursive(closes, _R_EMA_LONG)
+    ema_trend = _ewm_recursive(closes, _R_EMA_TREND)
+
+    rsi_now = rsi[-1]
+    rsi_prev = rsi[-_R_RSI_SLOPE_WIN - 1] if len(rsi) > _R_RSI_SLOPE_WIN else rsi[0]
+    if rsi_now == rsi_now and rsi_prev == rsi_prev:
+        rsi_slope = (rsi_now - rsi_prev) / _R_RSI_SLOPE_WIN
+    else:
+        rsi_slope = float("nan")
+
+    hi_52w = max(closes)
+    current = closes[-1]
+    pct_off = (1 - current / hi_52w) * 100 if hi_52w > 0 else 0.0
+
+    has_div = _bullish_divergence(closes, rsi)
+    vol_ratio = _volume_ratio(closes, volumes)
+
+    s_rsi = _score_rsi_recovery(rsi_now, rsi_slope)
+    s_div = 1.0 if has_div else 0.0
+    s_macd = _score_macd(hist[-1], hist[-2])
+    s_ema = _score_ema_crossover(ema_short[-1], ema_long[-1],
+                                 ema_short[-6], ema_long[-6])
+    s_vol = _score_volume(vol_ratio)
+    s_price = _score_price_vs_ema(current, ema_trend[-1])
+
+    composite = (
+        _W_RSI_RECOVERY * s_rsi
+        + _W_RSI_DIVERGENCE * s_div
+        + _W_MACD * s_macd
+        + _W_EMA_CROSS * s_ema
+        + _W_VOLUME * s_vol
+        + _W_PRICE_VS_EMA * s_price
+    ) * 100
+
+    if composite >= 70:
+        signal = "STRONG BUY"
+    elif composite >= 55:
+        signal = "BUY"
+    elif composite >= 40:
+        signal = "WATCH"
+    else:
+        signal = "WAIT"
+
+    return {
+        "current": current,
+        "hi_52w": hi_52w,
+        "pct_off_high": pct_off,
+        "rsi": rsi_now,
+        "rsi_slope": rsi_slope,
+        "rsi_divergence": has_div,
+        "macd_hist": hist[-1],
+        "ema_short": ema_short[-1],
+        "ema_long": ema_long[-1],
+        "ema_50": ema_trend[-1],
+        "vol_ratio": vol_ratio,
+        "s_rsi": s_rsi,
+        "s_div": s_div,
+        "s_macd": s_macd,
+        "s_ema": s_ema,
+        "s_vol": s_vol,
+        "s_price": s_price,
+        "score": composite,
+        "signal": signal,
+    }
+
+
 # ─── OAuth 2.0 (mirrors the Lumex pattern so claude.ai connector flow works) ──
 
 ACCESS_TOKEN_TTL = 60 * 60 * 24   # 24 hours
@@ -694,13 +942,229 @@ def _call_master_screen_rpc(top_n: int, min_screens: int,
 
 
 @mcp.tool()
+def reversal_candidates(min_drawdown: float = 15.0, top: int = 25) -> str:
+    """PRIMARY screen — beaten-down quality stocks turning up.
+
+    Filters the Compounder quality universe (high ROIC, low debt, consistent FCF)
+    for names ≥X% off their 52-week high, then scores them on a 0-100 composite:
+      - RSI recovery from oversold (20%)
+      - RSI bullish divergence: lower price low + higher RSI low (15%)
+      - MACD histogram turning positive (20%)
+      - 8/13 EMA crossover — fresh cross weighted highest (20%)
+      - Volume accumulation, up-day vs down-day (10%)
+      - Price reclaiming 50 EMA (15%)
+
+    Composite >=70 = STRONG BUY, 55+ = BUY, 40+ = WATCH, else WAIT.
+    Start here for actionable swing-trade setups.
+
+    Args:
+      min_drawdown: minimum % off 52-week high to include (default 15)
+      top: max results to return (default 25)
+    """
+    quality_rows = _query("""
+        SELECT q.ticker, t.company_name, t.sector
+        FROM quality_universe q
+        JOIN tickers t ON t.ticker = q.ticker
+        WHERE q.as_of_date = (SELECT max(as_of_date) FROM quality_universe)
+    """)
+    if not quality_rows:
+        return "No quality universe found."
+    tickers = [r["ticker"] for r in quality_rows]
+    meta = {r["ticker"]: r for r in quality_rows}
+
+    px_rows = _query("""
+        SELECT ticker, trade_date, close, volume
+        FROM daily_prices
+        WHERE ticker = ANY(%(tickers)s)
+          AND trade_date >= current_date - 300 * interval '1 day'
+        ORDER BY ticker, trade_date
+    """, {"tickers": tickers})
+
+    by_t: dict[str, list] = {}
+    for r in px_rows:
+        by_t.setdefault(r["ticker"], []).append(r)
+
+    results = []
+    for t, rows in by_t.items():
+        closes = [float(r["close"]) for r in rows]
+        volumes = [float(r["volume"]) for r in rows]
+        a = _analyze_reversal(closes, volumes)
+        if a is None:
+            continue
+        if a["pct_off_high"] < min_drawdown:
+            continue
+        m = meta.get(t, {})
+        results.append({
+            "ticker": t,
+            "company": m.get("company_name") or "",
+            "sector": m.get("sector") or "",
+            **a,
+        })
+
+    results.sort(key=lambda r: r["score"], reverse=True)
+    results = results[:top]
+    if not results:
+        return f"No reversal candidates with >={min_drawdown:.0f}% drawdown."
+
+    lines = [
+        "REVERSAL CANDIDATES — beaten-down quality, turning up",
+        f"Filter: >={min_drawdown:.0f}% off 52w high  |  "
+        f"{len(results)} candidates  |  "
+        f"weights: RSI 35 / MACD 20 / 8-13 EMA 20 / 50 EMA 15 / vol 10",
+        "",
+    ]
+    for r in results:
+        macd_dir = "+" if r["macd_hist"] > 0 else "-"
+        rsi_dir = "up" if (r["rsi_slope"] == r["rsi_slope"] and r["rsi_slope"] > 0) else "dn"
+        ema_state = "8>13" if r["ema_short"] > r["ema_long"] else "8<13"
+        div_flag = " div" if r["rsi_divergence"] else ""
+        company = (r["company"] or "")[:24]
+        sector_s = (r["sector"] or "")[:14]
+        lines.append(
+            f"  {r['ticker']:<6} {company:<24} {sector_s:<14} "
+            f"${r['current']:>7.2f}  {r['pct_off_high']:>4.1f}% off  "
+            f"score {r['score']:>3.0f}  {r['signal']:<11} "
+            f"RSI {rsi_dir} {r['rsi']:>3.0f}{div_flag}  "
+            f"MACD {macd_dir}{abs(r['macd_hist']):>4.2f}  {ema_state}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def insider_burst_plus_tech(top: int = 25) -> str:
+    """PRIMARY screen — Watchtower's backtest winner (+13.9pp excess vs SPY).
+
+    Three filters:
+      - >=3 net insider buys (purchases minus sales) in last 2 reported quarters
+      - Stock >=10% off its 52-week high (insiders buying on weakness)
+      - Either RSI rising over last 5 sessions OR MACD histogram positive
+
+    Insider buying is the dominant alpha signal in this system; pairing it with
+    a light technical filter keeps you out of falling knives. Ranked by net
+    insider buy count.
+
+    Args:
+      top: max results to return (default 25)
+    """
+    insider_rows = _query("""
+        WITH ranked AS (
+            SELECT ticker, fiscal_year, fiscal_quarter,
+                   total_purchases, total_sales,
+                   ROW_NUMBER() OVER (PARTITION BY ticker
+                                      ORDER BY fiscal_year DESC,
+                                               fiscal_quarter DESC) AS qrank
+            FROM insider_stats
+        )
+        SELECT ticker,
+               COALESCE(SUM(total_purchases - total_sales)
+                        FILTER (WHERE qrank <= 2), 0) AS net
+        FROM ranked
+        GROUP BY ticker
+        HAVING COALESCE(SUM(total_purchases - total_sales)
+                        FILTER (WHERE qrank <= 2), 0) >= 3
+        ORDER BY net DESC
+        LIMIT 200
+    """)
+    if not insider_rows:
+        return "No tickers with >=3 net insider buys in last 2 quarters."
+
+    tickers = [r["ticker"] for r in insider_rows]
+    net_map = {r["ticker"]: int(r["net"]) for r in insider_rows}
+
+    meta_rows = _query("""
+        SELECT ticker, company_name, sector
+        FROM tickers
+        WHERE ticker = ANY(%(tickers)s)
+    """, {"tickers": tickers})
+    meta = {r["ticker"]: r for r in meta_rows}
+
+    px_rows = _query("""
+        SELECT ticker, trade_date, close
+        FROM daily_prices
+        WHERE ticker = ANY(%(tickers)s)
+          AND trade_date >= current_date - 120 * interval '1 day'
+        ORDER BY ticker, trade_date
+    """, {"tickers": tickers})
+
+    by_t: dict[str, list] = {}
+    for r in px_rows:
+        by_t.setdefault(r["ticker"], []).append(r)
+
+    results = []
+    for t, rows in by_t.items():
+        closes = [float(r["close"]) for r in rows]
+        if len(closes) < 60:
+            continue
+        current = closes[-1]
+        hi = max(closes)
+        if hi <= 0:
+            continue
+        pct_off = 1 - current / hi
+        if pct_off < 0.10:
+            continue
+        rsi_vals = _rsi(closes)
+        if len(rsi_vals) < 6:
+            continue
+        rsi_now = rsi_vals[-1]
+        rsi_prev = rsi_vals[-6]
+        _, _, hist = _macd(closes)
+        hist_now = hist[-1]
+        rsi_rising = (rsi_now == rsi_now and rsi_prev == rsi_prev
+                      and rsi_now > rsi_prev)
+        macd_positive = (hist_now == hist_now and hist_now > 0)
+        if not (rsi_rising or macd_positive):
+            continue
+        m = meta.get(t, {})
+        results.append({
+            "ticker": t,
+            "company": m.get("company_name") or "",
+            "sector": m.get("sector") or "",
+            "price": current,
+            "pct_off": pct_off * 100,
+            "net_buys": net_map[t],
+            "rsi_now": rsi_now,
+            "rsi_prev": rsi_prev,
+            "macd_hist": hist_now,
+        })
+
+    results.sort(key=lambda r: r["net_buys"], reverse=True)
+    results = results[:top]
+    if not results:
+        return "No tickers passed the insider + technical filter."
+
+    lines = [
+        f"INSIDER BURST + TECH — {len(results)} candidates",
+        ">=3 net insider buys (last 2Q)  |  >=10% off 52w high  |  "
+        "RSI rising OR MACD positive",
+        "",
+    ]
+    for r in results:
+        macd_dir = "+" if r["macd_hist"] > 0 else "-"
+        rsi_dir = "up" if r["rsi_now"] > r["rsi_prev"] else "dn"
+        company = (r["company"] or "")[:24]
+        sector_s = (r["sector"] or "")[:14]
+        lines.append(
+            f"  {r['ticker']:<6} {company:<24} {sector_s:<14} "
+            f"${r['price']:>7.2f}  {r['pct_off']:>4.1f}% off  "
+            f"net buys {r['net_buys']:>3}  "
+            f"RSI {rsi_dir} {r['rsi_now']:>3.0f}  "
+            f"MACD {macd_dir}{abs(r['macd_hist']):>4.2f}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def master_screen_top(top: int = 25, min_screens: int = 3,
                       sector: str = "", max_price: float = 0) -> str:
-    """Top stocks ranked by the master screen — combines all signal sources
-    into one conviction score per ticker. Returns a ranked list with per-screen
-    breakdown showing where each stock is strong.
+    """BROAD CONTEXT — 9-signal fundamental + ownership composite (no technicals).
 
-    Aggregation happens server-side in Postgres for speed.
+    For actionable swing-trade setups, prefer `reversal_candidates` or
+    `insider_burst_plus_tech` — this composite blends value/quality/insider/
+    institutional/grades/revisions/news/earnings/short signals and tends to
+    surface 'cheap with institutions buying' rather than 'just-turned' setups.
+
+    Useful for: sector context, broad market screening, finding names that
+    score well across multiple fundamental dimensions.
 
     Args:
       top: how many results to return (default 25)
