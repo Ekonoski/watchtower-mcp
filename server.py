@@ -1358,6 +1358,7 @@ def db_schema(table: str = "") -> str:
 
 PUBLIC_PATHS = {
     "/health",
+    "/db-test",
     "/.well-known/oauth-protected-resource",
     "/.well-known/oauth-authorization-server",
     "/register",
@@ -1442,6 +1443,39 @@ def create_app():
             "oauth": True,
             "db_configured": bool(DB_HOST and DB_PASSWORD),
         })
+
+    @mcp.custom_route("/db-test", methods=["GET"])
+    async def db_test_route(request: Request) -> Response:
+        """Diagnostic endpoint — attempts a basic DB query, returns the
+        actual error if any. Same auth as MCP."""
+        # Require the bearer token for this endpoint
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer ") or not (
+            MCP_AUTH_TOKEN and secrets.compare_digest(auth[7:], MCP_AUTH_TOKEN)
+        ):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        import traceback
+        try:
+            rows = _query("SELECT 1 AS one, current_database() AS db, current_user AS usr")
+            return JSONResponse({
+                "ok": True,
+                "rows": rows,
+                "db_host": DB_HOST,
+                "db_port": DB_PORT,
+                "db_user": DB_USER,
+                "db_name": DB_NAME,
+            })
+        except Exception as e:
+            return JSONResponse({
+                "ok": False,
+                "error_type": type(e).__name__,
+                "error": str(e)[:1000],
+                "traceback": traceback.format_exc()[:2000],
+                "db_host": DB_HOST,
+                "db_port": DB_PORT,
+                "db_user": DB_USER,
+                "db_name": DB_NAME,
+            }, status_code=500)
 
     @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
     async def oauth_protected_resource(request: Request) -> Response:
