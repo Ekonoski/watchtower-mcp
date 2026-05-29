@@ -663,12 +663,44 @@ def _compute_master_score(sig: dict) -> dict:
     }
 
 
+def _call_master_screen_rpc(top_n: int, min_screens: int,
+                            sector: Optional[str] = None,
+                            max_price: Optional[float] = None) -> list[dict]:
+    """Direct RPC call to mcp_master_screen — server-side aggregation."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise RuntimeError("Supabase URL/key not configured.")
+    payload = {"top_n": top_n, "min_screens": min_screens}
+    if sector:
+        payload["sector_filter"] = sector
+    if max_price and max_price > 0:
+        payload["max_price"] = max_price
+    last_err = None
+    for attempt in range(3):
+        try:
+            with httpx.Client(timeout=90) as client:
+                r = client.post(
+                    f"{SUPABASE_URL}/rest/v1/rpc/mcp_master_screen",
+                    headers=_sb_headers(),
+                    json=payload,
+                )
+            if r.status_code != 200:
+                raise RuntimeError(f"RPC error {r.status_code}: {r.text[:500]}")
+            data = r.json()
+            return data if isinstance(data, list) else []
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            last_err = e
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"master_screen RPC failed: {last_err}")
+
+
 @mcp.tool()
 def master_screen_top(top: int = 25, min_screens: int = 3,
                       sector: str = "", max_price: float = 0) -> str:
-    """Top stocks ranked by the master screen — combines all 12 signal sources
+    """Top stocks ranked by the master screen — combines all signal sources
     into one conviction score per ticker. Returns a ranked list with per-screen
     breakdown showing where each stock is strong.
+
+    Aggregation happens server-side in Postgres for speed.
 
     Args:
       top: how many results to return (default 25)
@@ -676,63 +708,35 @@ def master_screen_top(top: int = 25, min_screens: int = 3,
       sector: optional sector filter (e.g., 'Technology', 'Healthcare')
       max_price: optional max share price (0 = no cap)
     """
-    signals = _load_master_signals()
-    # Latest price + sector/company
-    prices = {r["ticker"]: float(r["close"]) for r in _query("""
-        SELECT DISTINCT ON (ticker) ticker, close
-        FROM daily_prices ORDER BY ticker, trade_date DESC
-    """)}
-    meta = {r["ticker"]: r for r in _query("""
-        SELECT ticker, company_name, sector FROM tickers
-        WHERE delisted = false AND country = 'US'
-    """)}
-
-    out = []
-    for ticker, sig in signals.items():
-        m = meta.get(ticker)
-        if not m:
-            continue
-        if sector and (m.get("sector") or "").lower() != sector.lower():
-            continue
-        price = prices.get(ticker)
-        if price is None:
-            continue
-        if max_price > 0 and price > max_price:
-            continue
-        score = _compute_master_score(sig)
-        if score["n_signals"] < min_screens:
-            continue
-        out.append({
-            "ticker": ticker,
-            "company": m.get("company_name") or "",
-            "sector": m.get("sector") or "",
-            "price": price,
-            "score": score["total_score"],
-            "n_strong": score["n_strong"],
-            "n_signals": score["n_signals"],
-            "by_screen": score["by_screen"],
-            "earnings_in_days": sig.get("earnings_in_days"),
-        })
-    out.sort(key=lambda r: r["score"], reverse=True)
-    out = out[:top]
-
-    if not out:
+    rows = _call_master_screen_rpc(top, min_screens, sector or None,
+                                   max_price if max_price > 0 else None)
+    if not rows:
         return "No candidates matched the filters."
 
     lines = [
-        f"MASTER SCREEN — top {len(out)} (≥{min_screens} signals required)",
+        f"MASTER SCREEN — top {len(rows)} (≥{min_screens} signals required)",
         ""
     ]
-    for r in out:
+    screens = [("s_value", "VAL"), ("s_quality", "QLY"), ("s_insider", "INS"),
+               ("s_short", "SQZ"), ("s_revisions", "RVN"), ("s_grades", "GRD"),
+               ("s_institutional", "INST"), ("s_news", "NWS"),
+               ("s_earnings_beat", "ERN")]
+    for r in rows:
         breakdown = " ".join(
-            f"{k[:3].upper()}:{int(v)}" for k, v in r["by_screen"].items() if v >= 50
+            f"{lbl}:{int(r[k])}"
+            for k, lbl in screens
+            if r.get(k) is not None and float(r[k]) >= 50
         )
-        flag = f" ⏰{r['earnings_in_days']}d" if r.get("earnings_in_days") is not None else ""
+        flag = f" ⏰{int(r['earnings_in_days'])}d" if r.get("earnings_in_days") is not None else ""
+        company = (r.get("company_name") or "")[:30]
+        sector_s = (r.get("sector") or "")[:18]
+        score = float(r.get("total_score") or 0)
+        n_strong = int(r.get("n_strong") or 0)
+        n_signals = int(r.get("n_signals") or 0)
+        price = float(r.get("price") or 0)
         lines.append(
-            f"  {r['ticker']:<7} {r['company'][:30]:<30} "
-            f"{r['sector'][:18]:<18} ${r['price']:>7.2f}  "
-            f"{r['n_strong']}/{r['n_signals']} strong  "
-            f"score {r['score']:>4.0f}{flag}"
+            f"  {r['ticker']:<7} {company:<30} {sector_s:<18} ${price:>7.2f}  "
+            f"{n_strong}/{n_signals} strong  score {score:>4.0f}{flag}"
         )
         if breakdown:
             lines.append(f"          {breakdown}")
