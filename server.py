@@ -942,36 +942,47 @@ def _call_master_screen_rpc(top_n: int, min_screens: int,
 
 
 @mcp.tool()
-def reversal_candidates(min_drawdown: float = 15.0, top: int = 25) -> str:
-    """PRIMARY screen — beaten-down quality stocks turning up.
+def _load_reversal_universe(tier: str) -> tuple[list[str], dict[str, dict]]:
+    """Load tickers + metadata for the chosen tier.
 
-    Filters the Compounder quality universe (high ROIC, low debt, consistent FCF)
-    for names ≥X% off their 52-week high, then scores them on a 0-100 composite:
-      - RSI recovery from oversold (20%)
-      - RSI bullish divergence: lower price low + higher RSI low (15%)
-      - MACD histogram turning positive (20%)
-      - 8/13 EMA crossover — fresh cross weighted highest (20%)
-      - Volume accumulation, up-day vs down-day (10%)
-      - Price reclaiming 50 EMA (15%)
-
-    Composite >=70 = STRONG BUY, 55+ = BUY, 40+ = WATCH, else WAIT.
-    Start here for actionable swing-trade setups.
-
-    Args:
-      min_drawdown: minimum % off 52-week high to include (default 15)
-      top: max results to return (default 25)
+    tier='A': Compounder universe (~40 elite high-ROIC large caps)
+    tier='B': broader quality (Piotroski>=7, Altman Z>=2, FCF>0,
+              mcap>=$500M, price>=$5) — ~450 names, includes mid/small caps
     """
-    quality_rows = _query("""
-        SELECT q.ticker, t.company_name, t.sector
-        FROM quality_universe q
-        JOIN tickers t ON t.ticker = q.ticker
-        WHERE q.as_of_date = (SELECT max(as_of_date) FROM quality_universe)
-    """)
-    if not quality_rows:
-        return "No quality universe found."
-    tickers = [r["ticker"] for r in quality_rows]
-    meta = {r["ticker"]: r for r in quality_rows}
+    if tier == "A":
+        rows = _query("""
+            SELECT q.ticker, t.company_name, t.sector
+            FROM quality_universe q
+            JOIN tickers t ON t.ticker = q.ticker
+            WHERE q.as_of_date = (SELECT max(as_of_date) FROM quality_universe)
+        """)
+    else:  # tier == "B"
+        rows = _query("""
+            WITH fs AS (
+                SELECT DISTINCT ON (ticker) ticker, piotroski_score, altman_z_score
+                FROM financial_scores ORDER BY ticker, as_of_date DESC
+            ),
+            v AS (
+                SELECT DISTINCT ON (ticker) ticker, fcf_ttm, market_cap, price
+                FROM valuation_metrics ORDER BY ticker, as_of_date DESC
+            )
+            SELECT fs.ticker, t.company_name, t.sector
+            FROM fs
+            JOIN v USING (ticker)
+            JOIN tickers t ON t.ticker = fs.ticker
+            WHERE fs.piotroski_score >= 7
+              AND fs.altman_z_score >= 2
+              AND v.fcf_ttm > 0
+              AND v.market_cap >= 500e6
+              AND v.price >= 5
+        """)
+    return [r["ticker"] for r in rows], {r["ticker"]: r for r in rows}
 
+
+def _run_reversal_tier(tier: str, min_drawdown: float) -> list[dict]:
+    tickers, meta = _load_reversal_universe(tier)
+    if not tickers:
+        return []
     px_rows = _query("""
         SELECT ticker, trade_date, close, volume
         FROM daily_prices
@@ -989,45 +1000,91 @@ def reversal_candidates(min_drawdown: float = 15.0, top: int = 25) -> str:
         closes = [float(r["close"]) for r in rows]
         volumes = [float(r["volume"]) for r in rows]
         a = _analyze_reversal(closes, volumes)
-        if a is None:
-            continue
-        if a["pct_off_high"] < min_drawdown:
+        if a is None or a["pct_off_high"] < min_drawdown:
             continue
         m = meta.get(t, {})
         results.append({
             "ticker": t,
+            "tier": tier,
             "company": m.get("company_name") or "",
             "sector": m.get("sector") or "",
             **a,
         })
-
     results.sort(key=lambda r: r["score"], reverse=True)
-    results = results[:top]
-    if not results:
+    return results
+
+
+def _fmt_reversal_line(r: dict) -> str:
+    macd_dir = "+" if r["macd_hist"] > 0 else "-"
+    rsi_dir = "up" if (r["rsi_slope"] == r["rsi_slope"] and r["rsi_slope"] > 0) else "dn"
+    ema_state = "8>13" if r["ema_short"] > r["ema_long"] else "8<13"
+    div_flag = " div" if r["rsi_divergence"] else ""
+    company = (r["company"] or "")[:24]
+    sector_s = (r["sector"] or "")[:14]
+    return (
+        f"  {r['ticker']:<6} {company:<24} {sector_s:<14} "
+        f"${r['current']:>7.2f}  {r['pct_off_high']:>4.1f}% off  "
+        f"score {r['score']:>3.0f}  {r['signal']:<11} "
+        f"RSI {rsi_dir} {r['rsi']:>3.0f}{div_flag}  "
+        f"MACD {macd_dir}{abs(r['macd_hist']):>4.2f}  {ema_state}"
+    )
+
+
+def reversal_candidates(min_drawdown: float = 15.0, top: int = 25,
+                        tier: str = "both") -> str:
+    """PRIMARY screen — beaten-down quality stocks turning up.
+
+    Scores tickers on a 0-100 composite (RSI recovery + divergence + MACD +
+    8/13 EMA + volume + 50 EMA). Composite >=70 = STRONG BUY, 55+ = BUY,
+    40+ = WATCH, else WAIT.
+
+    TWO TIERS available:
+      tier='A'    — Compounder universe (~40 elite names, ROIC>=15%, low debt).
+                    High conviction. Most names trade $100+ because they're
+                    long-time large-cap winners.
+      tier='B'    — Broader quality (Piotroski>=7, Altman Z>=2, FCF+, mcap>=$500M,
+                    price>=$5). ~450 names including mid/small caps. More setups
+                    for chart review.
+      tier='both' — Tier A first (high conviction), then Tier B excluding Tier A
+                    overlap. Default.
+
+    Args:
+      min_drawdown: minimum % off 52-week high to include (default 15)
+      top: max results per tier to return (default 25)
+      tier: 'A', 'B', or 'both' (default 'both')
+    """
+    tier = (tier or "both").upper().strip()
+    if tier not in ("A", "B", "BOTH"):
+        return f"Invalid tier '{tier}'. Use 'A', 'B', or 'both'."
+
+    tiers_to_run = ["A", "B"] if tier == "BOTH" else [tier]
+    sections: dict[str, list[dict]] = {}
+    for t in tiers_to_run:
+        sections[t] = _run_reversal_tier(t, min_drawdown)[:top]
+
+    if tier == "BOTH":
+        a_tickers = {r["ticker"] for r in sections.get("A", [])}
+        sections["B"] = [r for r in sections.get("B", [])
+                         if r["ticker"] not in a_tickers][:top]
+
+    if not any(sections.values()):
         return f"No reversal candidates with >={min_drawdown:.0f}% drawdown."
 
-    lines = [
-        "REVERSAL CANDIDATES — beaten-down quality, turning up",
-        f"Filter: >={min_drawdown:.0f}% off 52w high  |  "
-        f"{len(results)} candidates  |  "
-        f"weights: RSI 35 / MACD 20 / 8-13 EMA 20 / 50 EMA 15 / vol 10",
-        "",
-    ]
-    for r in results:
-        macd_dir = "+" if r["macd_hist"] > 0 else "-"
-        rsi_dir = "up" if (r["rsi_slope"] == r["rsi_slope"] and r["rsi_slope"] > 0) else "dn"
-        ema_state = "8>13" if r["ema_short"] > r["ema_long"] else "8<13"
-        div_flag = " div" if r["rsi_divergence"] else ""
-        company = (r["company"] or "")[:24]
-        sector_s = (r["sector"] or "")[:14]
-        lines.append(
-            f"  {r['ticker']:<6} {company:<24} {sector_s:<14} "
-            f"${r['current']:>7.2f}  {r['pct_off_high']:>4.1f}% off  "
-            f"score {r['score']:>3.0f}  {r['signal']:<11} "
-            f"RSI {rsi_dir} {r['rsi']:>3.0f}{div_flag}  "
-            f"MACD {macd_dir}{abs(r['macd_hist']):>4.2f}  {ema_state}"
-        )
-    return "\n".join(lines)
+    out: list[str] = []
+    for t in tiers_to_run:
+        rows = sections.get(t, [])
+        label = ("TIER A — Compounder (ROIC>=15%, low debt)" if t == "A"
+                 else "TIER B — Broader quality (Piotroski>=7, Altman>=2, FCF+)")
+        out.append(f"REVERSAL CANDIDATES — {label}")
+        out.append(f"Filter: >={min_drawdown:.0f}% off 52w high  |  "
+                   f"{len(rows)} candidates")
+        if rows:
+            for r in rows:
+                out.append(_fmt_reversal_line(r))
+        else:
+            out.append("  (no candidates today)")
+        out.append("")
+    return "\n".join(out).rstrip()
 
 
 @mcp.tool()
