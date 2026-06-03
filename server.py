@@ -457,7 +457,79 @@ def _score_price_vs_ema(close: float, ema50: float) -> float:
     return 0.0
 
 
-def _analyze_reversal(closes: list[float], volumes: list[float]) -> Optional[dict]:
+def _resample_weekly(dates: list, closes: list[float]) -> list[float]:
+    """Resample daily closes to weekly (W-FRI), matching reversal_screen.py.
+
+    For each daily bar, compute its week-ending-Friday key. Within each week,
+    keep the LAST close. Returns a list of weekly closes ordered chronologically.
+    `dates` must be date objects (or ISO strings parseable to date).
+    """
+    if not dates:
+        return []
+    from datetime import date as _date
+    weekly: dict = {}
+    for d, c in zip(dates, closes):
+        if isinstance(d, str):
+            d = _date.fromisoformat(d[:10])
+        # Days forward to Friday of this week's bar (Fri=4)
+        days_to_fri = (4 - d.weekday()) % 7
+        week_key = d.toordinal() + days_to_fri
+        weekly[week_key] = float(c)  # later assignment in same week wins
+    return [weekly[k] for k in sorted(weekly)]
+
+
+def _analyze_weekly_confirm(week_closes: list[float]) -> float:
+    """Weekly confirmation score 0-1, matching reversal_screen.py:418-464.
+
+    Three checks, each contributing up to 1.0, averaged:
+      - weekly RSI rising (RSI>35 and slope>0 = 1.0, slope>0 only = 0.5)
+      - weekly MACD positive (=1.0) or improving (=0.6)
+      - weekly 8>13 EMA stack (=1.0) or close-to-cross within 2% (=0.4)
+    """
+    if len(week_closes) < 20:
+        return 1.0  # neutral — not enough weekly history to discriminate
+    rsi = _rsi(week_closes, _R_RSI_PERIOD)
+    _, _, hist = _macd(week_closes)
+    ema_short = _ewm_recursive(week_closes, _R_EMA_SHORT)
+    ema_long = _ewm_recursive(week_closes, _R_EMA_LONG)
+
+    w_rsi = rsi[-1]
+    w_rsi_prev = rsi[-3] if len(rsi) >= 3 else rsi[0]
+    w_rsi_slope = (w_rsi - w_rsi_prev) if (w_rsi == w_rsi and w_rsi_prev == w_rsi_prev) else 0.0
+    w_hist = hist[-1]
+    w_hist_prev = hist[-2] if len(hist) >= 2 else 0.0
+    w_ema_above = ema_short[-1] > ema_long[-1]
+
+    confirms = 0.0
+    count = 0.0
+
+    count += 1
+    if w_rsi == w_rsi and w_rsi > 35 and w_rsi_slope > 0:
+        confirms += 1.0
+    elif w_rsi_slope > 0:
+        confirms += 0.5
+
+    count += 1
+    if w_hist > 0:
+        confirms += 1.0
+    elif w_hist > w_hist_prev:
+        confirms += 0.6
+
+    count += 1
+    if w_ema_above:
+        confirms += 1.0
+    elif ema_long[-1] != 0:
+        gap = (ema_short[-1] - ema_long[-1]) / ema_long[-1]
+        if gap > -0.02:
+            confirms += 0.4
+
+    return confirms / count if count else 1.0
+
+
+def _analyze_reversal(closes: list[float], volumes: list[float],
+                      dates: Optional[list] = None) -> Optional[dict]:
+    """Full reversal analysis. Matches reversal_screen.py: daily 6-component
+    composite × weekly confirmation multiplier (0.7-1.2)."""
     if len(closes) < 60:
         return None
     rsi = _rsi(closes, _R_RSI_PERIOD)
@@ -488,7 +560,7 @@ def _analyze_reversal(closes: list[float], volumes: list[float]) -> Optional[dic
     s_vol = _score_volume(vol_ratio)
     s_price = _score_price_vs_ema(current, ema_trend[-1])
 
-    composite = (
+    daily_raw = (
         _W_RSI_RECOVERY * s_rsi
         + _W_RSI_DIVERGENCE * s_div
         + _W_MACD * s_macd
@@ -496,6 +568,15 @@ def _analyze_reversal(closes: list[float], volumes: list[float]) -> Optional[dic
         + _W_VOLUME * s_vol
         + _W_PRICE_VS_EMA * s_price
     ) * 100
+
+    # Weekly confirmation multiplier (matches reversal_screen.py:524)
+    if dates is not None:
+        week_closes = _resample_weekly(dates, closes)
+        w_confirm = _analyze_weekly_confirm(week_closes)
+    else:
+        w_confirm = 1.0  # neutral fallback when caller didn't pass dates
+    w_factor = 0.7 + (w_confirm * 0.5)
+    composite = min(100.0, daily_raw * w_factor)
 
     if composite >= 70:
         signal = "STRONG BUY"
@@ -524,6 +605,9 @@ def _analyze_reversal(closes: list[float], volumes: list[float]) -> Optional[dic
         "s_ema": s_ema,
         "s_vol": s_vol,
         "s_price": s_price,
+        "daily_raw": daily_raw,
+        "w_confirm": w_confirm,
+        "w_factor": w_factor,
         "score": composite,
         "signal": signal,
     }
@@ -999,7 +1083,8 @@ def _run_reversal_tier(tier: str, min_drawdown: float) -> list[dict]:
     for t, rows in by_t.items():
         closes = [float(r["close"]) for r in rows]
         volumes = [float(r["volume"]) for r in rows]
-        a = _analyze_reversal(closes, volumes)
+        dates = [r["trade_date"] for r in rows]
+        a = _analyze_reversal(closes, volumes, dates=dates)
         if a is None or a["pct_off_high"] < min_drawdown:
             continue
         m = meta.get(t, {})
@@ -1085,6 +1170,92 @@ def reversal_candidates(min_drawdown: float = 15.0, top: int = 25,
             out.append("  (no candidates today)")
         out.append("")
     return "\n".join(out).rstrip()
+
+
+@mcp.tool()
+def reversal_explain(ticker: str) -> str:
+    """Full math breakdown for a ticker's reversal score.
+
+    Shows the 6 daily sub-scores (RSI recovery, RSI divergence, MACD, 8/13
+    EMA, volume, 50 EMA), each weighted, plus the weekly confirmation
+    multiplier and the final composite. This is the same formula the morning
+    email uses — every number is reproducible from these inputs.
+
+    Use this whenever you want to know *why* a ticker scored what it did
+    on the reversal screen, instead of just trusting the headline number.
+
+    Args:
+      ticker: the ticker symbol (e.g., 'VRSK', 'BBWI')
+    """
+    ticker = (ticker or "").upper().strip()
+    if not ticker:
+        return "Provide a ticker symbol."
+
+    meta_rows = _query("""
+        SELECT ticker, company_name, sector,
+               EXISTS (SELECT 1 FROM quality_universe q
+                       WHERE q.ticker = t.ticker
+                         AND q.as_of_date = (SELECT max(as_of_date) FROM quality_universe)) AS in_tier_a
+        FROM tickers t
+        WHERE ticker = %(t)s
+    """, {"t": ticker})
+    if not meta_rows:
+        return f"Ticker {ticker} not found."
+    meta = meta_rows[0]
+
+    px_rows = _query("""
+        SELECT trade_date, close, volume
+        FROM daily_prices
+        WHERE ticker = %(t)s
+          AND trade_date >= current_date - 300 * interval '1 day'
+        ORDER BY trade_date
+    """, {"t": ticker})
+    if len(px_rows) < 60:
+        return (f"{ticker}: only {len(px_rows)} days of price history "
+                f"(need ≥60). Cannot compute reversal score.")
+
+    closes = [float(r["close"]) for r in px_rows]
+    volumes = [float(r["volume"]) for r in px_rows]
+    dates = [r["trade_date"] for r in px_rows]
+    a = _analyze_reversal(closes, volumes, dates=dates)
+    if a is None:
+        return f"{ticker}: insufficient data to compute reversal."
+
+    tier = "A (Compounder)" if meta.get("in_tier_a") else "B or outside"
+    rsi_dir = "rising" if (a["rsi_slope"] == a["rsi_slope"] and a["rsi_slope"] > 0) else "falling"
+    ema_state = "8>13" if a["ema_short"] > a["ema_long"] else "8<13"
+
+    lines = [
+        f"REVERSAL SCORE — {ticker}  ({meta.get('company_name', '')})",
+        f"Sector: {meta.get('sector') or '—'}  |  Universe tier: {tier}",
+        f"Price: ${a['current']:.2f}  |  52w high: ${a['hi_52w']:.2f}  |  Off high: {a['pct_off_high']:.1f}%",
+        "",
+        "DAILY 6-COMPONENT BREAKDOWN (sub-scores 0-1, weights sum to 100%):",
+        f"  RSI recovery     score={a['s_rsi']:.2f}  weight=20%   "
+        f"contrib={a['s_rsi']*0.20*100:5.1f}   (RSI={a['rsi']:.0f}, {rsi_dir})",
+        f"  RSI divergence   score={a['s_div']:.2f}  weight=15%   "
+        f"contrib={a['s_div']*0.15*100:5.1f}   (bullish div={'YES' if a['rsi_divergence'] else 'no'})",
+        f"  MACD momentum    score={a['s_macd']:.2f}  weight=20%   "
+        f"contrib={a['s_macd']*0.20*100:5.1f}   (hist={a['macd_hist']:+.2f})",
+        f"  8/13 EMA cross   score={a['s_ema']:.2f}  weight=20%   "
+        f"contrib={a['s_ema']*0.20*100:5.1f}   (8={a['ema_short']:.2f} vs 13={a['ema_long']:.2f}, {ema_state})",
+        f"  Volume accum     score={a['s_vol']:.2f}  weight=10%   "
+        f"contrib={a['s_vol']*0.10*100:5.1f}   (up/dn ratio={a['vol_ratio']:.2f})",
+        f"  Price vs 50 EMA  score={a['s_price']:.2f}  weight=15%   "
+        f"contrib={a['s_price']*0.15*100:5.1f}   (price={a['current']:.2f} vs 50EMA={a['ema_50']:.2f})",
+        f"                                              -------",
+        f"                            DAILY RAW SUM:    {a['daily_raw']:5.1f}",
+        "",
+        "WEEKLY CONFIRMATION MULTIPLIER (0.70 to 1.20):",
+        f"  w_confirm = {a['w_confirm']:.2f}  "
+        f"(weekly RSI rising, weekly MACD+, weekly 8>13 EMA — each up to 1.0)",
+        f"  multiplier = 0.7 + ({a['w_confirm']:.2f} * 0.5) = {a['w_factor']:.3f}",
+        "",
+        f"FINAL SCORE: {a['daily_raw']:.1f} * {a['w_factor']:.3f} = {a['score']:.0f}  →  {a['signal']}",
+        "",
+        "Signal bands: 70+ STRONG BUY  |  55-69 BUY  |  40-54 WATCH  |  <40 WAIT",
+    ]
+    return "\n".join(lines)
 
 
 @mcp.tool()
