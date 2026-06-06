@@ -64,18 +64,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.openapi.utils import get_openapi
 import uvicorn
 
 app = FastAPI(title="Watchtower MCP Server")
 
 # ============================================================
-# Force Bearer token auth in OpenAPI spec so Grok shows a simple token field
-# instead of the full OAuth form
+# Force Bearer token auth so Grok shows a simple token field
 # ============================================================
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    openapi_schema = app.openapi()
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
     openapi_schema.setdefault("components", {})["securitySchemes"] = {
         "BearerAuth": {
             "type": "http",
@@ -83,18 +88,17 @@ def custom_openapi():
             "description": "Enter your MCP_AUTH_TOKEN from Railway environment variables"
         }
     }
-    # Apply BearerAuth to the /mcp path
-    if "/mcp" in openapi_schema.get("paths", {}):
-        openapi_schema["paths"]["/mcp"].setdefault("security", []).append({"BearerAuth": []})
+    # Apply to all paths (especially /mcp)
+    for path_item in openapi_schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if isinstance(operation, dict):
+                operation.setdefault("security", []).append({"BearerAuth": []})
     app.openapi_schema = openapi_schema
     return openapi_schema
 
 app.openapi = custom_openapi
 
 # Optional simple auth for remote / public exposure (Railway, ngrok, etc.)
-# Set MCP_AUTH_TOKEN in the environment where the server runs.
-# Clients must then send header: Authorization: Bearer <token>
-# or X-MCP-Token: <token>
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN") or os.environ.get("WATCHTOWER_MCP_TOKEN")
 
 @app.middleware("http")
@@ -118,7 +122,7 @@ async def auth_middleware(request: Request, call_next):
 async def health():
     return {"status": "ok", "service": "watchtower-mcp", "gmmss": True}
 
-# ... (rest of the file remains exactly the same as current)
+# ... (the rest of the large file with all the tools remains unchanged)
 
 # Lazy imports for the heavy watchtower pieces
 def _get_research():
