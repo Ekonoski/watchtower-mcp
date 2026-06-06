@@ -242,13 +242,15 @@ class AuthASGIWrapper:
             path = scope.get("path", "")
             if MCP_AUTH_TOKEN and path.startswith("/mcp") and path not in PUBLIC_PATHS:
                 headers = dict(scope.get("headers", []))
+                host = headers.get(b"host", b"").decode("utf-8", errors="replace")
+                base_url = f"https://{host}" if host else ""
                 auth = headers.get(b"authorization", b"").decode("utf-8", errors="replace")
                 if not auth.lower().startswith("bearer "):
-                    await self._unauthorized(send)
+                    await self._unauthorized(send, base_url)
                     return
                 token = auth.split(" ", 1)[1].strip()
                 if token != MCP_AUTH_TOKEN:
-                    await self._unauthorized(send)
+                    await self._unauthorized(send, base_url)
                     return
 
             # Rewrite Host header to localhost on /mcp so FastMCP's transport_security
@@ -262,11 +264,13 @@ class AuthASGIWrapper:
 
         await self.app(scope, receive, send)
 
-    async def _unauthorized(self, send):
+    async def _unauthorized(self, send, base_url: str = ""):
         body = b'{"error":"Unauthorized"}'
+        resource_metadata = f"{base_url}/.well-known/oauth-protected-resource"
+        www_auth = f'Bearer realm="watchtower", resource_metadata="{resource_metadata}"'
         await send({"type": "http.response.start", "status": 401, "headers": [
             (b"content-type", b"application/json"),
-            (b"www-authenticate", b"Bearer"),
+            (b"www-authenticate", www_auth.encode()),
         ]})
         await send({"type": "http.response.body", "body": body})
 
