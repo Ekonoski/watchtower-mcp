@@ -1,14 +1,3 @@
-# Core for MCP server
 fastapi
-uvicorn
-python-dotenv[cli]
-
-# Watchtower dependencies (screens, research, daily, etc.)
-yfinance
-pandas
-numpy
-psycopg2-binary
-requests
-
-# Optional but recommended for full functionality
-# Add more if specific ingests need them (e.g. for future)
+uvicorn[standard]
+python-dotenv
