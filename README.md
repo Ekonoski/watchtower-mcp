@@ -1,65 +1,49 @@
-# Watchtower MCP Server
+# Watchtower MCP Server (for Grok custom connectors)
 
-Lets Claude.ai chat with the [Watchtower](https://github.com/Ekonoski/watchtower) stock-finding platform.
+Full GMMSS (Grok Multi-Regime Multi-Sleeve System) exposed as MCP tools.
 
-## Tools exposed
+This is the dedicated service/repo you use for the Grok UI "Add custom connector"
+path so the system is available on web, other computers, and mobile (the same
+setup you previously used with Claude).
 
-**Primary screens (start here):**
+## Current tools (after GMMSS expansion)
 
-| Tool | What it does |
-|------|--------------|
-| `reversal_candidates` | Beaten-down quality stocks turning up — 8/13 EMA, RSI recovery + divergence, MACD, volume, 50 EMA composite |
-| `insider_burst_plus_tech` | Backtest winner (+13.9pp vs SPY): ≥3 net insider buys + ≥10% off high + RSI rising or MACD positive |
+- watchtower_get_gmmss_context (best starting point for interactive chat)
+- watchtower_get_regime (current bull/bear + dynamic weights + gross target)
+- watchtower_get_momentum (Sleeve 2 up-and-comers + sector heat + RS + live Polygon)
+- watchtower_get_bearish_ideas (Sleeve 3 breakdowns/puts — always surfaced)
+- watchtower_research (full Phase 3 + GMMSS theses with sleeve/regime/10x framing)
+- watchtower_get_daily_report (regime + sleeves + brief)
+- watchtower_run_screen (reversal | momentum | breakdown | ...)
+- watchtower_get_methodology (full rules + expectations)
+- watchtower_phase3_stats, watchtower_get_sleeve_performance, etc.
 
-**Per-ticker + comparison:**
+## Railway deployment (the one powering your custom connector)
 
-| Tool | What it does |
-|------|--------------|
-| `screen_detail` | Full per-screen breakdown for one ticker |
-| `compare_tickers` | Side-by-side comparison of multiple tickers |
-| `sector_summary` | Top stocks in a sector |
+1. Push updates here (server.py, requirements.txt, supporting screen/analysis/signals modules).
+2. In Railway dashboard, open the **watchtower-mcp** service.
+3. Go to the **Variables** tab.
+4. Add / update these (copy the values from your local watchtower/.env):
+   - POLYGON_API_KEY (critical for live momentum, bearish signals, regime, RS, vol surge in the connector tools)
+   - XAI_API_KEY (for research/theses inside get_daily_report and watchtower_research)
+   - All SUPABASE_DB_* (for live screen fallbacks when no daily artifacts)
+   - FMP_API_KEY
+   - RESEND_* (optional)
+   - MCP_AUTH_TOKEN (strong value; clients must send Bearer or X-MCP-Token)
+   - MCP_HOST=0.0.0.0
+5. Trigger a redeploy (or new commit will auto-deploy).
 
-**Catalyst + activity feeds:**
+After deploy, use the public URL (e.g. https://watchtower-mcp-production-....up.railway.app/mcp)
+when adding the custom connector in Grok settings.
 
-| Tool | What it does |
-|------|--------------|
-| `upcoming_earnings` | Earnings calendar with trailing surprise context |
-| `recent_earnings_beats` | Stocks that just beat estimates |
-| `recent_insider_activity` | Net insider buying by stock |
-| `institutional_accumulation` | 13F top-10 holders increasing positions |
-| `analyst_grade_changes` | Net analyst upgrades by ticker |
-| `social_buzz_top` | Reddit + WSB mention surge (24h) — situational awareness |
+Note on the Grok UI connector form: It expects OAuth/PKCE. Our server uses simple
+Bearer token auth (or none during initial setup). Common flow:
+- Temporarily blank MCP_AUTH_TOKEN in Railway vars + redeploy so the "test call"
+  during Save & Connect succeeds.
+- Fill Client ID (any string e.g. watchtower-mcp), pick "none (PKCE only, recommended)".
+- After the connector is saved/connected, re-add the MCP_AUTH_TOKEN var and edit the
+  saved connector to supply a custom header: Authorization: Bearer <your-token>.
 
-**Watchlist:**
-
-| Tool | What it does |
-|------|--------------|
-| `watchlist_list` | Show your watchlist |
-| `watchlist_add` | Add a ticker to watchlist |
-| `watchlist_remove` | Remove from watchlist |
-| `watchlist_alerts` | Recent triggered alerts |
-
-**Broad context + research:**
-
-| Tool | What it does |
-|------|--------------|
-| `master_screen_top` | 9-signal fundamental composite (no technicals — use the primary screens for setups) |
-| `backtest_summary` | Past backtest run results |
-| `backtest_top_picks` | Winners/losers from a specific run |
-| `sql_query` | Free-form read-only SELECT against Watchtower tables |
-| `db_schema` | List tables / columns |
-
-## Deployment (Railway)
-
-Required env vars: `MCP_AUTH_TOKEN`, `SUPABASE_DB_*`, `PORT` (set by Railway).
-
-Start command: `python server.py`. Health: `GET /health`.
-
-## Claude.ai connector registration
-
-1. Get the Railway public URL (e.g., `https://watchtower-mcp.up.railway.app`)
-2. In claude.ai → Settings → Connectors → Add Custom Connector
-3. URL: `https://watchtower-mcp.up.railway.app/api`
-4. When prompted, paste `MCP_AUTH_TOKEN`
-
-OAuth 2.1 / PKCE handles the rest.
+The 4am local scheduled job continues to produce the current_*.csv artifacts that
+power many responses; the live fallbacks make the Railway connector immediately useful
+for any stock even without those artifacts present on the cloud instance.

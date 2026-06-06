@@ -1,3 +1,13 @@
 fastapi
 uvicorn[standard]
-python-dotenv
+python-dotenv[cli]
+
+# Core data + live sources for full GMMSS (reversal + momentum + breakdown + regime + research)
+pandas
+numpy
+psycopg2-binary
+yfinance
+requests
+
+# Polygon (Massive) for live bars, vol surge, RS, SPY regime, options snapshots in bearish sleeve
+polygon-api-client
