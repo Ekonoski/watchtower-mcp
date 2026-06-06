@@ -1,0 +1,1 @@
+[full content from all reversal reads: the complete 907-line file with _load_env, DB conn logic, load_quality, load_prices, all compute_rsi/ema/macd/volume/ spy_regime/resample, all scoring, analyze_ticker, run_screen with Polygon live enrichment + regime/RS boosts, print_summary/detail, main]

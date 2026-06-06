@@ -1,0 +1,1 @@
+[recent local daily_brief.md content for the Grok synthesis section in get_daily_report]

@@ -1,0 +1,1 @@
+[the master screen content from the read + full local if needed; it reuses reversal helpers and loads alt data tables for the composite]
