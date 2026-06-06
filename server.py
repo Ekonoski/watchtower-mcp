@@ -4,15 +4,14 @@ Watchtower MCP Server - Official MCP SDK version
 
 This version uses the standard mcp Python SDK (FastMCP) for maximum compatibility
 with Grok, Claude, and other MCP clients.
-
-Replaces the previous custom raw JSON-RPC handler that was causing connection
-and tool discovery issues.
 """
 
 import os
+import secrets
+import time
 from mcp.server.fastmcp import FastMCP
-from starlette.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse, RedirectResponse
+from starlette.requests import Request
 import uvicorn
 
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "").strip()
@@ -24,22 +23,15 @@ mcp = FastMCP(
 )
 
 PUBLIC_PATHS = {"/health"}
+OAUTH_PATHS = {
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/oauth-protected-resource",
+    "/authorize",
+    "/token",
+}
 
-
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Require Bearer token for /mcp paths (except health)."""
-    async def dispatch(self, request, call_next):
-        path = request.url.path
-        if path in PUBLIC_PATHS:
-            return await call_next(request)
-        if MCP_AUTH_TOKEN and path.startswith("/mcp"):
-            auth = request.headers.get("authorization", "")
-            if not auth.lower().startswith("bearer "):
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            token = auth.split(" ", 1)[1].strip()
-            if token != MCP_AUTH_TOKEN:
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        return await call_next(request)
+# In-memory store for one-time auth codes: code -> (redirect_uri, expires_at)
+_auth_codes: dict[str, tuple[str, float]] = {}
 
 
 def _get_screens():
@@ -128,29 +120,115 @@ def watchtower_get_bearish_ideas(top_n: int = 5) -> str:
 @mcp.tool()
 def watchtower_get_gmmss_context() -> str:
     """Get full current context: regime + top momentum + top bearish ideas + methodology."""
-    # For now return a summary; can be expanded with regime.json + sleeves
     return "GMMSS context: Bull regime (see current_regime.json in repo). Use watchtower_run_screen or the individual getters for live sleeves. Full synthesis available when all keys (POLYGON, XAI) are configured on Railway."
 
 
-# Public health check (bypasses auth)
+# ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────
+
+@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+async def oauth_server_metadata(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return JSONResponse({
+        "issuer": base,
+        "authorization_endpoint": f"{base}/authorize",
+        "token_endpoint": f"{base}/token",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256", "plain"],
+        "token_endpoint_auth_methods_supported": ["none"],
+    })
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return JSONResponse({
+        "resource": base,
+        "authorization_servers": [base],
+    })
+
+
+@mcp.custom_route("/authorize", methods=["GET"])
+async def authorize(request: Request):
+    """OAuth authorization endpoint — auto-approves and redirects back with a code."""
+    params = dict(request.query_params)
+    redirect_uri = params.get("redirect_uri", "")
+    state = params.get("state", "")
+
+    if not redirect_uri:
+        return JSONResponse({"error": "missing redirect_uri"}, status_code=400)
+
+    code = secrets.token_urlsafe(32)
+    _auth_codes[code] = (redirect_uri, time.time() + 300)  # 5-min expiry
+
+    sep = "&" if "?" in redirect_uri else "?"
+    location = f"{redirect_uri}{sep}code={code}"
+    if state:
+        location += f"&state={state}"
+
+    return RedirectResponse(location, status_code=302)
+
+
+@mcp.custom_route("/token", methods=["POST"])
+async def token(request: Request):
+    """OAuth token endpoint — exchanges auth code for the MCP Bearer token."""
+    try:
+        form = await request.form()
+        data = dict(form)
+    except Exception:
+        data = {}
+
+    if not data:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+    grant_type = data.get("grant_type", "")
+    code = data.get("code", "")
+
+    if grant_type != "authorization_code":
+        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+
+    entry = _auth_codes.pop(code, None)
+    if entry is None:
+        return JSONResponse({"error": "invalid_grant"}, status_code=400)
+
+    _, expires_at = entry
+    if time.time() > expires_at:
+        return JSONResponse({"error": "invalid_grant", "error_description": "code expired"}, status_code=400)
+
+    return JSONResponse({
+        "access_token": MCP_AUTH_TOKEN,
+        "token_type": "bearer",
+        "expires_in": 315360000,  # ~10 years — effectively permanent
+    })
+
+
+# ── Health check ──────────────────────────────────────────────────────────────
+
 @mcp.custom_route("/health", methods=["GET"])
-async def health(request):
-    return JSONResponse(
-        {
-            "status": "ok",
-            "service": "watchtower-mcp",
-            "version": "1.0.0-sdk",
-            "tools": ["watchtower_run_screen", "watchtower_get_momentum", "watchtower_get_bearish_ideas", "watchtower_get_gmmss_context"],
-        }
-    )
+async def health(request: Request):
+    return JSONResponse({
+        "status": "ok",
+        "service": "watchtower-mcp",
+        "version": "1.1.0-oauth",
+        "tools": [
+            "watchtower_run_screen",
+            "watchtower_get_momentum",
+            "watchtower_get_bearish_ideas",
+            "watchtower_get_gmmss_context",
+        ],
+    })
 
 
-# Wrap the MCP app with auth middleware
+# ── ASGI app with Bearer auth on /mcp ─────────────────────────────────────────
+
 raw_app = mcp.streamable_http_app()
 
 
 class AuthASGIWrapper:
-    """Lightweight ASGI wrapper for Bearer auth on MCP paths."""
+    """Lightweight ASGI wrapper — enforces Bearer auth on /mcp, passes OAuth paths through."""
 
     def __init__(self, app):
         self.app = app
@@ -158,21 +236,24 @@ class AuthASGIWrapper:
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
             path = scope.get("path", "")
-            if path not in PUBLIC_PATHS and MCP_AUTH_TOKEN and path.startswith("/mcp"):
+            if MCP_AUTH_TOKEN and path.startswith("/mcp") and path not in PUBLIC_PATHS:
                 headers = dict(scope.get("headers", []))
                 auth = headers.get(b"authorization", b"").decode("utf-8", errors="replace")
                 if not auth.lower().startswith("bearer "):
-                    await self._send_error(send, 401, "Unauthorized")
+                    await self._unauthorized(send)
                     return
                 token = auth.split(" ", 1)[1].strip()
                 if token != MCP_AUTH_TOKEN:
-                    await self._send_error(send, 401, "Unauthorized")
+                    await self._unauthorized(send)
                     return
         await self.app(scope, receive, send)
 
-    async def _send_error(self, send, status: int, message: str):
-        body = f'{{"error": "{message}"}}'.encode()
-        await send({"type": "http.response.start", "status": status, "headers": [(b"content-type", b"application/json")]})
+    async def _unauthorized(self, send):
+        body = b'{"error":"Unauthorized"}'
+        await send({"type": "http.response.start", "status": 401, "headers": [
+            (b"content-type", b"application/json"),
+            (b"www-authenticate", b"Bearer"),
+        ]})
         await send({"type": "http.response.body", "body": body})
 
 
