@@ -228,7 +228,11 @@ raw_app = mcp.streamable_http_app()
 
 
 class AuthASGIWrapper:
-    """Lightweight ASGI wrapper — enforces Bearer auth on /mcp, passes OAuth paths through."""
+    """Lightweight ASGI wrapper — enforces Bearer auth on /mcp, passes OAuth paths through.
+
+    Also rewrites the Host header to 'localhost' for /mcp requests so the MCP SDK's
+    built-in DNS-rebinding protection doesn't reject Railway's public hostname (421).
+    """
 
     def __init__(self, app):
         self.app = app
@@ -246,6 +250,16 @@ class AuthASGIWrapper:
                 if token != MCP_AUTH_TOKEN:
                     await self._unauthorized(send)
                     return
+
+            # Rewrite Host header to localhost on /mcp so FastMCP's transport_security
+            # check doesn't reject Railway's public hostname with 421.
+            if path.startswith("/mcp"):
+                new_headers = [
+                    (k, b"localhost") if k == b"host" else (k, v)
+                    for k, v in scope.get("headers", [])
+                ]
+                scope = {**scope, "headers": new_headers}
+
         await self.app(scope, receive, send)
 
     async def _unauthorized(self, send):
