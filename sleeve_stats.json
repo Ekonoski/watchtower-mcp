@@ -1,1 +1,50 @@
-[content of local sleeve_stats.json]
+{
+  "as_of": "2026-06-06T12:53:06.783583",
+  "n_momentum_flags": 12,
+  "n_breakdown_flags": 12,
+  "momentum_fwd_returns": {
+    "('unknown', 'top')": {
+      "20": {
+        "n": 11,
+        "avg": -3.51,
+        "median": -0.45,
+        "pos_pct": 45.5
+      },
+      "40": {
+        "n": 10,
+        "avg": -0.16,
+        "median": -4.57,
+        "pos_pct": 30.0
+      },
+      "60": {
+        "n": 9,
+        "avg": -1.76,
+        "median": 2.26,
+        "pos_pct": 55.6
+      }
+    }
+  },
+  "breakdown_fwd_returns": {
+    "('unknown', 'top')": {
+      "20": {
+        "n": 11,
+        "avg": -2.43,
+        "median": -3.14,
+        "pos_pct": 45.5
+      },
+      "40": {
+        "n": 10,
+        "avg": 1.58,
+        "median": 9.67,
+        "pos_pct": 70.0
+      },
+      "60": {
+        "n": 9,
+        "avg": 15.04,
+        "median": 18.13,
+        "pos_pct": 66.7
+      }
+    }
+  },
+  "notes": "Preliminary / illustrative. Real edge will be clearer after more live history from the scheduled daily job. Momentum names tend to need faster exits; breakdown for protection/opportunistic puts (manual for now)."
+}

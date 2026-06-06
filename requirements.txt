@@ -8,6 +8,7 @@ numpy
 psycopg2-binary
 yfinance
 requests
+openai
 
 # Polygon (Massive) for live bars, vol surge, RS, SPY regime, options snapshots in bearish sleeve
 polygon-api-client

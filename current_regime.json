@@ -1,1 +1,14 @@
-{"regime": "bull", "spy_regime": true, "weights": {"reversal": 0.5, "momentum": 0.35, "bearish": 0.05, "event": 0.1}, "gross_long_target": 0.85, "notes": "Bull regime (SPY above ~200MA proxy). Heavy reversal + momentum/up-and-comer bias. Use momentum outputs for calls where conviction is high. Keep small bearish sleeve for tail protection.", "vol_context": "volatility tilt not yet implemented (future: expand on volatility_metrics table)", "as_of": "2026-06-06"}
+{
+  "regime": "bull",
+  "spy_regime": true,
+  "weights": {
+    "reversal": 0.5,
+    "momentum": 0.35,
+    "bearish": 0.05,
+    "event": 0.1
+  },
+  "gross_long_target": 0.85,
+  "notes": "Bull regime (SPY above ~200MA proxy). Heavy reversal + momentum/up-and-comer bias. Use momentum outputs for calls where conviction is high. Keep small bearish sleeve for tail protection.",
+  "vol_context": "volatility tilt not yet implemented (future: expand on volatility_metrics table)",
+  "as_of": "2026-06-06"
+}
