@@ -1,4 +1,4 @@
-fastapi
+mcp[cli]
 uvicorn[standard]
 python-dotenv[cli]
 
