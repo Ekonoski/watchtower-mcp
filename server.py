@@ -15,6 +15,25 @@ except ImportError:
 
 app = FastAPI(title="Watchtower MCP Server")
 
+# Force Bearer token in OpenAPI spec for Grok
+ def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = app.openapi()
+    openapi_schema.setdefault("components", {})["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "Enter your MCP_AUTH_TOKEN"
+        }
+    }
+    if "/mcp" in openapi_schema.get("paths", {}):
+        openapi_schema["paths"]["/mcp"].setdefault("security", []).append({"BearerAuth": []})
+    app.openapi_schema = openapi_schema
+    return openapi_schema
+
+app.openapi = custom_openapi
+
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN")
 
 @app.middleware("http")
@@ -37,9 +56,8 @@ async def health():
 
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
-    # Placeholder for now - full tools to be added later
     body = await request.json()
-    return {"jsonrpc": "2.0", "id": body.get("id"), "result": {"content": [{"type": "text", "text": "Watchtower MCP connected successfully! Use your tools."}]}}
+    return {"jsonrpc": "2.0", "id": body.get("id"), "result": {"content": [{"type": "text", "text": "✅ Watchtower MCP is connected and ready!"}]}}
 
 if __name__ == "__main__":
     host = os.environ.get("MCP_HOST", "0.0.0.0")
