@@ -16,10 +16,14 @@ import uvicorn
 
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "").strip()
 PORT = int(os.environ.get("PORT", 8080))
+# Railway sets RAILWAY_PUBLIC_DOMAIN to the service's public hostname.
+# FastMCP's transport_security validates the Host header against this value.
+PUBLIC_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "localhost")
 
 mcp = FastMCP(
     "watchtower",
     streamable_http_path="/mcp",
+    host=PUBLIC_DOMAIN,
 )
 
 PUBLIC_PATHS = {"/health"}
@@ -237,15 +241,6 @@ class AuthASGIWrapper:
                 if token != MCP_AUTH_TOKEN:
                     await self._unauthorized(send, base_url)
                     return
-
-            # Rewrite Host header to localhost on /mcp so FastMCP's transport_security
-            # check doesn't reject Railway's public hostname with 421.
-            if path.startswith("/mcp"):
-                new_headers = [
-                    (k, b"localhost") if k == b"host" else (k, v)
-                    for k, v in scope.get("headers", [])
-                ]
-                scope = {**scope, "headers": new_headers}
 
         await self.app(scope, receive, send)
 
