@@ -63,6 +63,20 @@ def run_scheduled_scan():
         log.error(f"[scheduler] Intraday scan error: {e}")
 
 
+def run_daily_fill_returns():
+    """
+    Daily return fill — runs at 4:45 PM ET after market close.
+    Fetches current prices for all tracked alerts and updates d-day return columns.
+    """
+    try:
+        from analysis.alert_tracker import fill_daily_returns
+        log.info("[scheduler] Starting daily alert return fill...")
+        updated = fill_daily_returns()
+        log.info(f"[scheduler] Alert return fill: {updated} rows updated.")
+    except Exception as e:
+        log.error(f"[scheduler] Alert return fill error: {e}")
+
+
 def run_daily_social_scan():
     """
     Daily social buzz scan — runs at 4:30 PM ET after market close.
@@ -161,6 +175,14 @@ def start_scheduler():
         run_scheduled_scan,
         CronTrigger(day_of_week="mon-fri", hour="12-15", minute="30,0", timezone=et),
         id="intraday_scan_afternoon_30min",
+        replace_existing=True,
+    )
+
+    # Daily return fill — 4:45 PM ET, Mon-Fri (after market close + social scan)
+    scheduler.add_job(
+        run_daily_fill_returns,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="45", timezone=et),
+        id="daily_fill_returns",
         replace_existing=True,
     )
 

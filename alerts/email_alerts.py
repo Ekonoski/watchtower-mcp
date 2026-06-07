@@ -376,7 +376,20 @@ def send_intraday_alert(
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
+            sent = resp.status == 200
+        if sent and results:
+            try:
+                from analysis.alert_tracker import log_alerts
+                log_alerts(results, "intraday")
+            except Exception:
+                pass
+        if sent and news_alerts:
+            try:
+                from analysis.alert_tracker import log_alerts
+                log_alerts(news_alerts, "news")
+            except Exception:
+                pass
+        return sent
     except Exception:
         return False
 
@@ -567,6 +580,13 @@ def send_hidden_gems_alert(results: List[dict]) -> bool:
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return resp.status == 200
+            sent = resp.status == 200
+        if sent:
+            try:
+                from analysis.alert_tracker import log_alerts
+                log_alerts(results, "gem")
+            except Exception:
+                pass
+        return sent
     except Exception:
         return False

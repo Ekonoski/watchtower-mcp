@@ -386,6 +386,83 @@ def watchtower_get_gmmss_context() -> str:
 
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────
 
+@mcp.tool()
+def watchtower_alert_performance(days_back: int = 90, export_csv: bool = False) -> str:
+    """
+    Show how past Watchtower alerts have performed.
+
+    Tracks every alert that fired over the last `days_back` days and shows
+    daily returns at d1, d3, d5, d7, d14, d21, d30 — plus peak return and
+    win rates by alert type (intraday, gem, news).
+
+    Args:
+        days_back: How far back to look (default 90 days).
+        export_csv: If True, returns raw CSV data instead of summary.
+    """
+    try:
+        from analysis.alert_tracker import get_performance_report, generate_csv
+        report = get_performance_report(days_back=days_back)
+
+        if "error" in report:
+            return f"Error: {report['error']}"
+
+        if export_csv:
+            return generate_csv(report)
+
+        lines = [f"**Watchtower Alert Performance — last {days_back} days**", ""]
+
+        total = report.get("total_alerts", 0)
+        if total == 0:
+            return "No alerts logged yet. Performance tracking starts as soon as the next alert fires."
+
+        lines.append(f"Total alerts tracked: **{total}**")
+        lines.append(f"Win threshold: ≥{report['win_threshold_pct']}% gain", )
+        lines.append("")
+
+        stats = report.get("stats_by_type", {})
+        type_labels = {"intraday": "Intraday Alerts", "gem": "Hidden Gems", "news": "News Catalysts"}
+
+        for at, label in type_labels.items():
+            s = stats.get(at)
+            if not s:
+                continue
+            lines.append(f"**{label}** (n={s['n']})")
+            if s.get("win_rate_d7") is not None:
+                lines.append(f"  Win rate D7:  {s['win_rate_d7']}%")
+            if s.get("win_rate_d30") is not None:
+                lines.append(f"  Win rate D30: {s['win_rate_d30']}%")
+            if s.get("avg_d7_return") is not None:
+                lines.append(f"  Avg D7:       {s['avg_d7_return']:+.2f}%")
+            if s.get("avg_d30_return") is not None:
+                lines.append(f"  Avg D30:      {s['avg_d30_return']:+.2f}%")
+            if s.get("avg_peak_return") is not None:
+                lines.append(f"  Avg Peak:     {s['avg_peak_return']:+.2f}%")
+            if s.get("best_d30") is not None:
+                lines.append(f"  Best D30:     {s['best_d30']:+.2f}%")
+            if s.get("worst_d30") is not None:
+                lines.append(f"  Worst D30:    {s['worst_d30']:+.2f}%")
+            lines.append("")
+
+        # Recent alerts table
+        rows = report.get("rows", [])[:20]
+        if rows:
+            lines.append("**Recent Alerts (newest first)**")
+            lines.append(f"{'Date':<12} {'Type':<10} {'Ticker':<8} {'Entry':>8} {'D7%':>7} {'D30%':>7} {'Peak%':>7} {'Status':<10}")
+            lines.append("-" * 72)
+            for r in rows:
+                lines.append(
+                    f"{r['date']:<12} {r['type']:<10} {r['ticker']:<8} "
+                    f"{r['entry']:>8} {r['d7%']:>7} {r['d30%']:>7} {r['peak%']:>7} {r['status']:<10}"
+                )
+
+        lines.append("")
+        lines.append("Use export_csv=True to get the full dataset.")
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Error: {e}"
+
+
 @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
 async def oauth_server_metadata(request: Request):
     base = str(request.base_url).rstrip("/")
