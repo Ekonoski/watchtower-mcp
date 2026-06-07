@@ -14,13 +14,22 @@ ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
 
 # Signal type → CSS color
 _SIGNAL_COLORS = {
+    # Bullish — greens/blues
     "GAP_AND_GO":        "#16a34a",  # green
     "INTRADAY_BREAKOUT": "#2563eb",  # blue
     "VWAP_BREAKOUT":     "#0d9488",  # teal
     "FLUSH_REVERSAL":    "#ea580c",  # orange
     "GAP_REVERSAL":      "#7c3aed",  # purple
-    "VOLUME_SURGE":      "#ca8a04",  # yellow/amber
+    # Bearish — reds
+    "VWAP_REJECTION":    "#dc2626",  # red
+    "INTRADAY_BREAKDOWN":"#b91c1c",  # dark red
+    "GAP_DOWN_CONFIRM":  "#991b1b",  # deep red
+    "DISTRIBUTION":      "#c2410c",  # burnt red
+    # Neutral
+    "VOLUME_SURGE":      "#ca8a04",  # amber
 }
+
+_BEARISH_SIGNALS = {"VWAP_REJECTION", "INTRADAY_BREAKDOWN", "GAP_DOWN_CONFIRM", "DISTRIBUTION"}
 
 
 def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool) -> str:

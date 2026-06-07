@@ -120,7 +120,9 @@ def watchtower_run_screen(
 def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: bool = False) -> str:
     """Scan for intraday setups forming right now using live Polygon data (15-min delayed on Starter tier).
 
-    Detects: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL, VOLUME_SURGE.
+    Bullish: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL
+    Bearish: VWAP_REJECTION, INTRADAY_BREAKDOWN, GAP_DOWN_CONFIRM, DISTRIBUTION
+    Neutral: VOLUME_SURGE (unusual activity, direction unclear)
 
     Use ticker="ONDS" to check a specific stock intraday.
     Use with_synthesis=true for Grok AI narrative on the top setups.

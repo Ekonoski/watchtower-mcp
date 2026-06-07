@@ -2,7 +2,10 @@
 Watchtower — Intraday scan screen using Polygon live snapshots.
 
 Detects intraday setups forming right now:
-  GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL, VOLUME_SURGE
+
+  BULLISH: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL
+  BEARISH: VWAP_REJECTION, INTRADAY_BREAKDOWN, GAP_DOWN_CONFIRM, DISTRIBUTION
+  NEUTRAL: VOLUME_SURGE (directional unclear)
 
 Usage:
     set -a && source .env && set +a
@@ -94,55 +97,80 @@ def classify_intraday(
 ) -> tuple:
     """
     Returns (signal_type: str, score: float, rationale: str).
-    signal_type is one of: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT,
-    FLUSH_REVERSAL, GAP_REVERSAL, VOLUME_SURGE, NEUTRAL.
+
+    Bullish: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL
+    Bearish: VWAP_REJECTION, INTRADAY_BREAKDOWN, GAP_DOWN_CONFIRM, DISTRIBUTION
+    Neutral: VOLUME_SURGE
     """
-    # 1. GAP_AND_GO
+    at_hod = today_high > 0 and (today_high - current_price) / today_high <= 0.005
+    at_lod = today_low > 0 and (current_price - today_low) / today_low <= 0.005
+
+    # ── BULLISH ───────────────────────────────────────────────────────────────
+
+    # 1. GAP_AND_GO — gapped up, still holding, volume confirming
     if (gap_pct >= 3.0
             and prev_close > 0
             and (current_price - prev_close) >= 0.5 * (today_high - prev_close)
             and vol_pace_ratio >= 2.0):
         score = min(100, 55 + gap_pct * 2 + (vol_pace_ratio - 2.0) * 5)
-        rationale = f"Gapped +{gap_pct:.1f}%, holding with {vol_pace_ratio:.1f}x volume pace"
-        return "GAP_AND_GO", score, rationale
+        return "GAP_AND_GO", score, f"Gapped +{gap_pct:.1f}%, holding with {vol_pace_ratio:.1f}x volume pace"
 
-    # 2. INTRADAY_BREAKOUT — at HOD above VWAP
-    at_hod = today_high > 0 and (today_high - current_price) / today_high <= 0.005
-    if (above_vwap and at_hod and vol_pace_ratio >= 1.5 and change_pct > 0):
+    # 2. INTRADAY_BREAKOUT — at HOD above VWAP with volume
+    if above_vwap and at_hod and vol_pace_ratio >= 1.5 and change_pct > 0:
         score = min(100, 50 + (vol_pace_ratio - 1.5) * 8 + change_pct * 2)
-        rationale = f"At HOD above VWAP, {vol_pace_ratio:.1f}x volume pace"
-        return "INTRADAY_BREAKOUT", score, rationale
+        return "INTRADAY_BREAKOUT", score, f"At HOD above VWAP, {vol_pace_ratio:.1f}x volume pace"
 
-    # 3. VWAP_BREAKOUT — above VWAP, not at HOD
-    if (above_vwap and not at_hod and vol_pace_ratio >= 1.5 and change_pct > 0):
+    # 3. VWAP_BREAKOUT — above VWAP, not at HOD yet
+    if above_vwap and not at_hod and vol_pace_ratio >= 1.5 and change_pct > 0:
         score = min(100, 45 + (vol_pace_ratio - 1.5) * 6)
-        rationale = f"Above VWAP with {vol_pace_ratio:.1f}x volume pace"
-        return "VWAP_BREAKOUT", score, rationale
+        return "VWAP_BREAKOUT", score, f"Above VWAP with {vol_pace_ratio:.1f}x volume pace"
 
-    # 4. FLUSH_REVERSAL — was down hard, now reclaiming VWAP
-    if (change_pct < 0
-            and above_vwap
-            and prev_close > 0
-            and today_low < prev_close * 0.97
+    # 4. FLUSH_REVERSAL — flushed hard, now back above VWAP
+    if (change_pct < 0 and above_vwap
+            and prev_close > 0 and today_low < prev_close * 0.97
             and vol_pace_ratio >= 1.5):
         score = min(100, 45 + (vol_pace_ratio - 1.5) * 6 + abs(change_pct))
-        rationale = "Flushed to lows, now reclaiming VWAP"
-        return "FLUSH_REVERSAL", score, rationale
+        return "FLUSH_REVERSAL", score, "Flushed to lows, now reclaiming VWAP"
 
     # 5. GAP_REVERSAL — gapped down, recovering above VWAP
-    if (gap_pct <= -3.0
-            and change_pct > gap_pct * 0.5
-            and above_vwap
-            and vol_pace_ratio >= 1.5):
+    if (gap_pct <= -3.0 and change_pct > gap_pct * 0.5
+            and above_vwap and vol_pace_ratio >= 1.5):
         score = min(100, 50 + (vol_pace_ratio - 1.5) * 5)
-        rationale = f"Gapped down {gap_pct:.1f}%, recovering above VWAP"
-        return "GAP_REVERSAL", score, rationale
+        return "GAP_REVERSAL", score, f"Gapped down {gap_pct:.1f}%, recovering above VWAP"
 
-    # 6. VOLUME_SURGE — unusual activity, no directional setup
+    # ── BEARISH ───────────────────────────────────────────────────────────────
+
+    # 6. VWAP_REJECTION — rallied to VWAP, got rejected, fading below with volume
+    if (not above_vwap and change_pct < 0
+            and prev_close > 0 and today_high >= prev_close * 0.99
+            and vol_pace_ratio >= 1.5):
+        score = min(100, 45 + (vol_pace_ratio - 1.5) * 6 + abs(change_pct))
+        return "VWAP_REJECTION", score, f"Rejected at VWAP, fading {change_pct:.1f}% on {vol_pace_ratio:.1f}x volume"
+
+    # 7. INTRADAY_BREAKDOWN — at LOD below VWAP with volume
+    if (not above_vwap and at_lod
+            and vol_pace_ratio >= 1.5 and change_pct < -1.0):
+        score = min(100, 50 + (vol_pace_ratio - 1.5) * 8 + abs(change_pct) * 2)
+        return "INTRADAY_BREAKDOWN", score, f"At LOD below VWAP, {vol_pace_ratio:.1f}x volume — breakdown"
+
+    # 8. GAP_DOWN_CONFIRM — gapped down, failing to recover VWAP, bearish continuation
+    if (gap_pct <= -3.0 and not above_vwap
+            and change_pct <= gap_pct * 0.5
+            and vol_pace_ratio >= 1.5):
+        score = min(100, 55 + abs(gap_pct) * 1.5 + (vol_pace_ratio - 1.5) * 5)
+        return "GAP_DOWN_CONFIRM", score, f"Gapped down {gap_pct:.1f}%, failing to recover — bears in control"
+
+    # 9. DISTRIBUTION — near HOD but heavy volume on down candles (proxy: high vol, negative change)
+    if (at_hod and not above_vwap and vol_pace_ratio >= 2.0 and change_pct < -0.5):
+        score = min(100, 45 + (vol_pace_ratio - 2.0) * 6)
+        return "DISTRIBUTION", score, f"High volume selling near HOD — distribution signal"
+
+    # ── NEUTRAL ───────────────────────────────────────────────────────────────
+
+    # 10. VOLUME_SURGE — something is happening, direction unclear
     if vol_pace_ratio >= 3.0:
         score = min(100, 40 + (vol_pace_ratio - 3.0) * 5)
-        rationale = f"Volume at {vol_pace_ratio:.1f}x pace — unusual activity"
-        return "VOLUME_SURGE", score, rationale
+        return "VOLUME_SURGE", score, f"Volume at {vol_pace_ratio:.1f}x pace — unusual activity"
 
     return "NEUTRAL", 0.0, ""
 
