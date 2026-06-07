@@ -424,6 +424,23 @@ def _build_gems_html(results: List[dict]) -> str:
         else:
             badge_color = "#6b7280"
 
+        # Social buzz sub-row
+        buzz = r.get("social_buzz", {})
+        buzz_html = ""
+        if buzz and buzz.get("summary"):
+            buzz_sentiment = buzz.get("sentiment", "neutral")
+            buzz_score = buzz.get("sentiment_score", 0.0)
+            buzz_summary = buzz.get("summary", "")
+            buzz_level = buzz.get("buzz_level", "low")
+            buzz_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "⚪"}.get(buzz_sentiment, "⚪")
+            buzz_level_icon = {"high": "🔥", "medium": "📢", "low": "💤"}.get(buzz_level, "")
+            buzz_html = f"""
+        <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb;">
+          <td colspan="8" style="padding:3px 12px 10px 28px;font-size:11px;color:#6b7280;">
+            {buzz_emoji} X/Social: <strong>{buzz_sentiment}</strong> ({buzz_score:+.2f}) {buzz_level_icon} — {buzz_summary}
+          </td>
+        </tr>"""
+
         rows_html += f"""
         <tr style="border-bottom:1px solid #f3f4f6;">
           <td style="padding:10px 12px;font-weight:700;font-size:15px;color:#111827;">{ticker}</td>
@@ -439,7 +456,7 @@ def _build_gems_html(results: List[dict]) -> str:
           <td style="padding:10px 12px;font-size:12px;">{rationale}{upside_str}</td>
           <td style="padding:10px 12px;font-size:11px;color:#9ca3af;">{fund_str}</td>
         </tr>
-        """
+        {buzz_html}"""
 
     synthesis_html = ""
     if results and results[0].get("synthesis"):

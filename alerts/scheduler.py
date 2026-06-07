@@ -94,6 +94,18 @@ def run_daily_gems_scan():
             log.info("[scheduler] No hidden gems found above threshold today.")
             return
 
+        # Fetch live X sentiment for each gem before emailing
+        try:
+            from analysis.social_buzz import query_ticker_sentiment
+            for r in results:
+                ticker = r.get("ticker", "")
+                if ticker:
+                    buzz = query_ticker_sentiment(ticker)
+                    r["social_buzz"] = buzz
+            log.info(f"[scheduler] Social buzz fetched for {len(results)} hidden gems.")
+        except Exception as e:
+            log.warning(f"[scheduler] Social buzz for gems error (non-fatal): {e}")
+
         sent = send_hidden_gems_alert(results)
         log.info(f"[scheduler] Hidden gems scan: {len(results)} gems found. Email sent: {sent}")
     except Exception as e:
