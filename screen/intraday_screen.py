@@ -31,6 +31,22 @@ from screen.reversal_screen import _conn, load_quality_tickers, load_prices
 from analysis.polygon_data import get_client
 
 
+# ── Watchlist helpers ─────────────────────────────────────────────────────────
+
+def _load_watchlist(conn) -> list:
+    """
+    Load active tickers from the optional `watchlist` table.
+    Returns empty list if the table doesn't exist or any error occurs.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT ticker FROM watchlist WHERE active = true")
+            rows = cur.fetchall()
+        return [row[0] for row in rows if row[0]]
+    except Exception:
+        return []
+
+
 # ── Market time helpers ───────────────────────────────────────────────────────
 
 def _get_et_now():
@@ -144,7 +160,9 @@ def run_screen(
     Args:
         min_score: Minimum score to include in results (default 35).
         single_ticker: If set, scan only this ticker (bypasses quality universe filter).
-        broad: If True, use all quality universe tickers; otherwise standard set.
+        broad: If True, fetch all stocks via Polygon snapshot (no ticker filter), take
+               top 500 by today's volume, and load 20d avg volumes from Supabase where
+               available (falling back to prevDay.v for unknown tickers).
 
     Returns:
         List of result dicts sorted by score descending.
@@ -157,32 +175,17 @@ def run_screen(
 
     quality_rows = []
     quality_map = {}
+    watchlist_tickers = []
     if conn is not None:
         try:
             quality_rows = load_quality_tickers(conn)
             quality_map = {r["ticker"]: r for r in quality_rows}
         except Exception:
             pass
-
-    prices_df = pd.DataFrame()
-    if conn is not None:
         try:
-            if single_ticker:
-                prices_df = load_prices(conn, [single_ticker.upper()], days=30)
-            else:
-                tickers_to_load = [r["ticker"] for r in quality_rows]
-                if tickers_to_load:
-                    prices_df = load_prices(conn, tickers_to_load, days=30)
+            watchlist_tickers = _load_watchlist(conn)
         except Exception:
             pass
-
-    # Compute 20-day avg volume per ticker
-    avg_vol_map: dict = {}
-    if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
-        grp = prices_df.groupby("ticker")["volume"].apply(
-            lambda s: s.tail(20).mean()
-        )
-        avg_vol_map = grp.to_dict()
 
     # ── Polygon client ────────────────────────────────────────────────────────
     client = get_client()
@@ -192,28 +195,104 @@ def run_screen(
     # ── Market time ───────────────────────────────────────────────────────────
     minutes_elapsed, is_market_hours = _market_minutes_elapsed()
 
-    # ── Determine ticker universe ─────────────────────────────────────────────
+    # ── Determine ticker universe + snapshots ─────────────────────────────────
+    BATCH_SIZE = 200
+    snapshots: dict = {}  # ticker -> snap object
+    avg_vol_map: dict = {}  # ticker -> 20d avg volume
+
     if single_ticker:
+        # ── Single ticker mode ────────────────────────────────────────────────
         universe = [single_ticker.upper()]
+        prices_df = pd.DataFrame()
+        if conn is not None:
+            try:
+                prices_df = load_prices(conn, universe, days=30)
+            except Exception:
+                pass
+        if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
+            grp = prices_df.groupby("ticker")["volume"].apply(lambda s: s.tail(20).mean())
+            avg_vol_map = grp.to_dict()
+
+        for i in range(0, len(universe), BATCH_SIZE):
+            batch = universe[i : i + BATCH_SIZE]
+            try:
+                snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(batch)})
+                for snap in (snaps or []):
+                    if hasattr(snap, "ticker") and snap.ticker:
+                        snapshots[snap.ticker] = snap
+            except Exception:
+                pass
+
+    elif broad:
+        # ── Broad mode: full market top-500 by volume ─────────────────────────
+        try:
+            all_snaps = client.get_snapshot_all("stocks")
+        except Exception:
+            all_snaps = []
+
+        # Sort by today's volume descending, take top 500
+        def _snap_vol(s):
+            try:
+                return getattr(s.day, "v", 0) or 0
+            except Exception:
+                return 0
+
+        sorted_snaps = sorted(all_snaps or [], key=_snap_vol, reverse=True)[:500]
+        for snap in sorted_snaps:
+            if hasattr(snap, "ticker") and snap.ticker:
+                snapshots[snap.ticker] = snap
+
+        universe = list(snapshots.keys())
+
+        # Load 20d avg volumes from Supabase for known tickers
+        prices_df = pd.DataFrame()
+        if conn is not None and universe:
+            try:
+                prices_df = load_prices(conn, universe, days=30)
+            except Exception:
+                pass
+        if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
+            grp = prices_df.groupby("ticker")["volume"].apply(lambda s: s.tail(20).mean())
+            avg_vol_map = grp.to_dict()
+
+        # Fall back to prevDay.v for tickers not in DB
+        for ticker, snap in snapshots.items():
+            if ticker not in avg_vol_map:
+                try:
+                    prev_vol = getattr(snap.prevDay, "v", 0) or 0
+                    if prev_vol > 0:
+                        avg_vol_map[ticker] = float(prev_vol)
+                except Exception:
+                    pass
+
     else:
-        universe = [r["ticker"] for r in quality_rows]
+        # ── Default mode: quality universe + watchlist ─────────────────────────
+        quality_tickers = [r["ticker"] for r in quality_rows]
+        combined = list(dict.fromkeys(quality_tickers + watchlist_tickers))  # deduped, order-preserving
+        universe = combined
+
+        prices_df = pd.DataFrame()
+        if conn is not None and universe:
+            try:
+                prices_df = load_prices(conn, universe, days=30)
+            except Exception:
+                pass
+        if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
+            grp = prices_df.groupby("ticker")["volume"].apply(lambda s: s.tail(20).mean())
+            avg_vol_map = grp.to_dict()
+
+        for i in range(0, len(universe), BATCH_SIZE):
+            batch = universe[i : i + BATCH_SIZE]
+            try:
+                snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(batch)})
+                for snap in (snaps or []):
+                    if hasattr(snap, "ticker") and snap.ticker:
+                        snapshots[snap.ticker] = snap
+            except Exception:
+                pass
 
     if not universe:
         return []
-
-    # ── Fetch snapshots in batches of 200 ────────────────────────────────────
-    BATCH_SIZE = 200
-    snapshots: dict = {}  # ticker -> snap object
-
-    for i in range(0, len(universe), BATCH_SIZE):
-        batch = universe[i : i + BATCH_SIZE]
-        try:
-            snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(batch)})
-            for snap in (snaps or []):
-                if hasattr(snap, "ticker") and snap.ticker:
-                    snapshots[snap.ticker] = snap
-        except Exception:
-            pass
 
     # ── Score each ticker ─────────────────────────────────────────────────────
     results = []

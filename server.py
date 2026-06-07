@@ -393,6 +393,14 @@ class AuthASGIWrapper:
 
 app = AuthASGIWrapper(raw_app)
 
+# Start background scheduler for intraday email alerts
+try:
+    from alerts.scheduler import start_scheduler
+    _scheduler = start_scheduler()
+except Exception as _sched_err:
+    import logging
+    logging.getLogger(__name__).warning(f"Scheduler not started: {_sched_err}")
+
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")

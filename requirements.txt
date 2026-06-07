@@ -12,3 +12,7 @@ openai
 
 # Polygon (Massive) for live bars, vol surge, RS, SPY regime, options snapshots in bearish sleeve
 polygon-api-client
+
+# Scheduled intraday email alerts
+apscheduler>=3.10.0
+pytz
