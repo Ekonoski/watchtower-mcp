@@ -10,20 +10,39 @@ log = logging.getLogger(__name__)
 
 
 def run_scheduled_scan():
-    """Intraday scan — called every 15-30 min during trading hours."""
+    """Intraday scan + news scan — called every 15-30 min during trading hours."""
     try:
         from screen.intraday_screen import run_screen
         from alerts.email_alerts import send_intraday_alert
+        from analysis.news_scanner import run_news_scan
 
+        # Run intraday price/volume scan
         results = run_screen(min_score=40.0, broad=False)
-        if not results:
-            log.info("[scheduler] No intraday signals above threshold.")
+
+        # Run news scan in parallel — always, even if no intraday signals
+        news_alerts = []
+        try:
+            news_alerts = run_news_scan(lookback_minutes=35)
+            log.info(f"[scheduler] News scan: {len(news_alerts)} catalysts found.")
+        except Exception as e:
+            log.warning(f"[scheduler] News scan error (non-fatal): {e}")
+
+        if not results and not news_alerts:
+            log.info("[scheduler] No intraday signals or news catalysts above threshold.")
             return
 
-        is_mkt = results[0].get("is_market_hours", True)
-        mins = results[0].get("minutes_elapsed", 0)
-        sent = send_intraday_alert(results, minutes_elapsed=mins, is_market_hours=is_mkt)
-        log.info(f"[scheduler] Intraday scan: {len(results)} signals. Email sent: {sent}")
+        is_mkt = results[0].get("is_market_hours", True) if results else True
+        mins = results[0].get("minutes_elapsed", 0) if results else 0
+        sent = send_intraday_alert(
+            results,
+            minutes_elapsed=mins,
+            is_market_hours=is_mkt,
+            news_alerts=news_alerts,
+        )
+        log.info(
+            f"[scheduler] Scan complete. {len(results)} signals, "
+            f"{len(news_alerts)} news catalysts. Email sent: {sent}"
+        )
     except Exception as e:
         log.error(f"[scheduler] Intraday scan error: {e}")
 
