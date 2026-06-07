@@ -387,21 +387,28 @@ def watchtower_get_gmmss_context() -> str:
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────
 
 @mcp.tool()
-def watchtower_alert_performance(days_back: int = 90, export_csv: bool = False) -> str:
+def watchtower_alert_performance(
+    days_back: int = 90,
+    alert_type: str = None,
+    export_csv: bool = False,
+) -> str:
     """
-    Show how past Watchtower alerts have performed.
+    Show how past Watchtower signals have performed across all screens.
 
-    Tracks every alert that fired over the last `days_back` days and shows
-    daily returns at d1, d3, d5, d7, d14, d21, d30 — plus peak return and
-    win rates by alert type (intraday, gem, news).
+    Tracks every signal logged — intraday, gems, news, reversal, momentum,
+    breakdown, and insider — with daily return fills at d1/d3/d7/d14/d30/d60/d90
+    depending on the signal type's tracking window. Also shows peak return
+    and which day it peaked, so you can see the full price path, not just the endpoint.
 
     Args:
-        days_back: How far back to look (default 90 days).
-        export_csv: If True, returns raw CSV data instead of summary.
+        days_back:  How far back to look (default 90 days).
+        alert_type: Filter to one type: intraday | gem | news | reversal |
+                    momentum | breakdown | insider | master
+        export_csv: If True, returns raw CSV instead of summary.
     """
     try:
-        from analysis.alert_tracker import get_performance_report, generate_csv
-        report = get_performance_report(days_back=days_back)
+        from analysis.alert_tracker import get_performance_report, generate_csv, TRACK_DAYS
+        report = get_performance_report(days_back=days_back, alert_type=alert_type)
 
         if "error" in report:
             return f"Error: {report['error']}"
@@ -409,54 +416,67 @@ def watchtower_alert_performance(days_back: int = 90, export_csv: bool = False) 
         if export_csv:
             return generate_csv(report)
 
-        lines = [f"**Watchtower Alert Performance — last {days_back} days**", ""]
-
         total = report.get("total_alerts", 0)
-        if total == 0:
-            return "No alerts logged yet. Performance tracking starts as soon as the next alert fires."
+        filter_str = f" [{alert_type}]" if alert_type else ""
+        lines = [f"**Watchtower Signal Performance — last {days_back} days{filter_str}**", ""]
 
-        lines.append(f"Total alerts tracked: **{total}**")
-        lines.append(f"Win threshold: ≥{report['win_threshold_pct']}% gain", )
+        if total == 0:
+            return "No signals logged yet. Tracking starts automatically at the next scheduled scan."
+
+        lines.append(f"Signals tracked: **{total}** | Win threshold: ≥{report['win_threshold_pct']}%")
         lines.append("")
 
-        stats = report.get("stats_by_type", {})
-        type_labels = {"intraday": "Intraday Alerts", "gem": "Hidden Gems", "news": "News Catalysts"}
+        type_labels = {
+            "intraday":  "Intraday Alerts  (track 30d)",
+            "news":      "News Catalysts   (track 14d)",
+            "gem":       "Hidden Gems      (track 60d)",
+            "reversal":  "Reversals        (track 90d)",
+            "momentum":  "Momentum         (track 90d)",
+            "breakdown": "Breakdowns       (track 60d)",
+            "insider":   "Insider Burst    (track 60d)",
+            "master":    "Master Screen    (track 90d)",
+        }
 
+        stats = report.get("stats_by_type", {})
         for at, label in type_labels.items():
             s = stats.get(at)
             if not s:
                 continue
-            lines.append(f"**{label}** (n={s['n']})")
-            if s.get("win_rate_d7") is not None:
-                lines.append(f"  Win rate D7:  {s['win_rate_d7']}%")
-            if s.get("win_rate_d30") is not None:
-                lines.append(f"  Win rate D30: {s['win_rate_d30']}%")
-            if s.get("avg_d7_return") is not None:
-                lines.append(f"  Avg D7:       {s['avg_d7_return']:+.2f}%")
-            if s.get("avg_d30_return") is not None:
-                lines.append(f"  Avg D30:      {s['avg_d30_return']:+.2f}%")
+            short_lbl = s.get("short_label", "D7")
+            full_lbl = s.get("full_label", "D30")
+            n_total = s["n_total"]
+            n_filled = s["n_filled"]
+            fill_note = f"{n_filled} fully tracked" if n_filled < n_total else "all tracked"
+            lines.append(f"**{label}**  (n={n_total}, {fill_note})")
+            if s.get("win_rate_short") is not None:
+                lines.append(f"  Win rate {short_lbl}:   {s['win_rate_short']}%")
+            if s.get("win_rate_full") is not None:
+                lines.append(f"  Win rate {full_lbl}:  {s['win_rate_full']}%")
+            if s.get("avg_short_return") is not None:
+                lines.append(f"  Avg {short_lbl} return:  {s['avg_short_return']:+.2f}%")
+            if s.get("avg_full_return") is not None:
+                lines.append(f"  Avg {full_lbl} return: {s['avg_full_return']:+.2f}%")
             if s.get("avg_peak_return") is not None:
-                lines.append(f"  Avg Peak:     {s['avg_peak_return']:+.2f}%")
-            if s.get("best_d30") is not None:
-                lines.append(f"  Best D30:     {s['best_d30']:+.2f}%")
-            if s.get("worst_d30") is not None:
-                lines.append(f"  Worst D30:    {s['worst_d30']:+.2f}%")
+                lines.append(f"  Avg peak return: {s['avg_peak_return']:+.2f}%  ← best close before reverting")
+            if s.get("best") is not None:
+                lines.append(f"  Best / Worst:    {s['best']:+.2f}% / {s['worst']:+.2f}%")
             lines.append("")
 
-        # Recent alerts table
-        rows = report.get("rows", [])[:20]
+        # Recent signal table — show peak so you can see move-up-then-back patterns
+        rows = report.get("rows", [])[:25]
         if rows:
-            lines.append("**Recent Alerts (newest first)**")
-            lines.append(f"{'Date':<12} {'Type':<10} {'Ticker':<8} {'Entry':>8} {'D7%':>7} {'D30%':>7} {'Peak%':>7} {'Status':<10}")
-            lines.append("-" * 72)
+            lines.append("**Recent Signals** (newest first — peak% shows best close in window)")
+            lines.append(f"{'Date':<12} {'Type':<11} {'Ticker':<7} {'Score':>5} {'D7%':>7} {'D30%':>7} {'Peak%':>7} {'Pk Day':>6} {'Status'}")
+            lines.append("-" * 78)
             for r in rows:
                 lines.append(
-                    f"{r['date']:<12} {r['type']:<10} {r['ticker']:<8} "
-                    f"{r['entry']:>8} {r['d7%']:>7} {r['d30%']:>7} {r['peak%']:>7} {r['status']:<10}"
+                    f"{r['date']:<12} {r['type']:<11} {r['ticker']:<7} "
+                    f"{r['score']:>5} {r['d7%']:>7} {r['d30%']:>7} "
+                    f"{r['peak%']:>7} {r['peak_day']:>6}  {r['status']}"
                 )
 
         lines.append("")
-        lines.append("Use export_csv=True to get the full dataset.")
+        lines.append("Use export_csv=True for the full dataset with all d-columns.")
         return "\n".join(lines)
 
     except Exception as e:

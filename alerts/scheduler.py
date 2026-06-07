@@ -92,6 +92,59 @@ def run_daily_social_scan():
         log.error(f"[scheduler] Social buzz scan error: {e}")
 
 
+def run_daily_screens_scan():
+    """
+    Daily scan of all longer-hold screens — runs at 6:00 AM ET before market open.
+    Logs results to alert_log automatically (no email — data only).
+    Covers: reversal, momentum, breakdown, insider burst.
+    """
+    try:
+        from analysis.alert_tracker import log_alerts
+
+        # Reversal screen
+        try:
+            from screen.reversal_screen import run_screen as reversal_screen
+            results = reversal_screen(min_drawdown=15.0)
+            if results:
+                log_alerts(results, "reversal")
+                log.info(f"[scheduler] Reversal scan: {len(results)} signals logged.")
+        except Exception as e:
+            log.warning(f"[scheduler] Reversal scan error: {e}")
+
+        # Momentum screen
+        try:
+            from screen.momentum_screen import run_screen as momentum_screen
+            results = momentum_screen(max_pullback=10.0)
+            if results:
+                log_alerts(results, "momentum")
+                log.info(f"[scheduler] Momentum scan: {len(results)} signals logged.")
+        except Exception as e:
+            log.warning(f"[scheduler] Momentum scan error: {e}")
+
+        # Breakdown screen
+        try:
+            from screen.breakdown_screen import run_screen as breakdown_screen
+            results = breakdown_screen(broad=True)
+            if results:
+                log_alerts(results, "breakdown")
+                log.info(f"[scheduler] Breakdown scan: {len(results)} signals logged.")
+        except Exception as e:
+            log.warning(f"[scheduler] Breakdown scan error: {e}")
+
+        # Insider burst screen
+        try:
+            from screen.insider_burst_screen import run_screen as insider_screen
+            results = insider_screen()
+            if results:
+                log_alerts(results, "insider")
+                log.info(f"[scheduler] Insider scan: {len(results)} signals logged.")
+        except Exception as e:
+            log.warning(f"[scheduler] Insider scan error: {e}")
+
+    except Exception as e:
+        log.error(f"[scheduler] Daily screens scan error: {e}")
+
+
 def run_daily_gems_scan():
     """
     Daily hidden gems scan — runs once per day at 6:30 AM ET.
@@ -192,6 +245,15 @@ def start_scheduler():
         run_daily_social_scan,
         CronTrigger(day_of_week="mon-fri", hour="16", minute="30", timezone=et),
         id="daily_social_buzz",
+        replace_existing=True,
+    )
+
+    # Daily screens scan — 6:00 AM ET, Mon-Fri (reversal, momentum, breakdown, insider)
+    # Runs before gems so logging is staggered; no email — data-only logging to alert_log.
+    scheduler.add_job(
+        run_daily_screens_scan,
+        CronTrigger(day_of_week="mon-fri", hour="6", minute="0", timezone=et),
+        id="daily_screens_scan",
         replace_existing=True,
     )
 

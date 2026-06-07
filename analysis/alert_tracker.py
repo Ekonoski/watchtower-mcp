@@ -1,25 +1,48 @@
 """
 Watchtower — Alert performance tracker.
 
-Logs every alert that fires, then fills in daily closing prices
-for 30 trading days so we can measure win rates by signal type.
+Logs every alert/signal that fires, then fills in daily closing prices
+so we can measure win rates and adjust score thresholds over time.
 
-Two entry points used externally:
-  log_alerts(results, alert_type)   — call from email_alerts after sending
-  fill_daily_returns()              — call from scheduler at 4:45 PM ET daily
-  get_performance_report()          — MCP tool: returns stats + CSV rows
+Tracking windows by signal type:
+  intraday   → 30 trading days
+  news       → 14 trading days
+  gem        → 60 trading days
+  reversal   → 90 trading days
+  momentum   → 90 trading days
+  breakdown  → 60 trading days
+  insider    → 60 trading days
+  master     → 90 trading days
+
+External entry points:
+  log_alerts(results, alert_type)   — call after any scan/send
+  fill_daily_returns()              — scheduler 4:45 PM ET daily
+  get_performance_report()          — MCP tool: summary stats + CSV
 """
 
 import logging
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
-# Trading days to track
-_FILL_DAYS = [1, 3, 5, 7, 14, 21, 30]
+# Milestones tracked per type — subset of all possible columns
+_ALL_MILESTONES = [1, 3, 5, 7, 14, 21, 30, 45, 60, 90]
+
+# Per alert-type: how many trading days to track
+TRACK_DAYS: Dict[str, int] = {
+    "intraday":  30,
+    "news":      14,
+    "gem":       60,
+    "reversal":  90,
+    "momentum":  90,
+    "breakdown": 60,
+    "insider":   60,
+    "master":    90,
+}
+
 # Win threshold: >=5% gain counts as a win
 WIN_THRESHOLD = 5.0
 
@@ -39,12 +62,12 @@ def _conn():
 
 
 # ---------------------------------------------------------------------------
-# Logging alerts
+# Log alerts
 # ---------------------------------------------------------------------------
 
 def log_alerts(results: List[dict], alert_type: str) -> int:
     """
-    Insert one row per ticker into alert_log when an alert fires.
+    Insert one row per ticker into alert_log when a signal fires.
     Skips duplicates (same ticker + type + date).
     Returns number of rows inserted.
     """
@@ -56,9 +79,12 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
         return 0
 
     today = date.today()
+    track_days = TRACK_DAYS.get(alert_type, 30)
     inserted = 0
 
     try:
+        spy_price = _fetch_current_price("SPY")
+
         with conn.cursor() as cur:
             for r in results:
                 ticker = r.get("ticker", "")
@@ -71,16 +97,19 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
                     or r.get("last_price")
                     or 0
                 )
-                score = r.get("score", 0)
+                score = (
+                    r.get("score")
+                    or r.get("signal_score")
+                    or r.get("composite_score")
+                    or 0
+                )
                 signal_type = (
                     r.get("signal_type")
                     or r.get("signal")
+                    or r.get("sleeve")
                     or r.get("combined_signal")
-                    or ""
+                    or alert_type
                 )
-
-                # Fetch SPY price for benchmarking
-                spy_price = _fetch_current_price("SPY")
 
                 import json as _json
                 try:
@@ -94,8 +123,8 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
                 cur.execute("""
                     INSERT INTO alert_log
                         (ticker, alert_type, alert_date, entry_price, score,
-                         signal_type, signal_details, spy_entry_price)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                         signal_type, signal_details, spy_entry_price, track_days)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
                     ON CONFLICT (ticker, alert_type, alert_date) DO NOTHING
                 """, (
                     ticker, alert_type, today,
@@ -104,6 +133,7 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
                     signal_type or None,
                     details_json,
                     float(spy_price) if spy_price else None,
+                    track_days,
                 ))
                 if cur.rowcount:
                     inserted += 1
@@ -133,8 +163,9 @@ def fill_daily_returns() -> int:
     """
     For every alert with status='tracking', compute how many trading days
     have elapsed since alert_date, fetch the current close, and fill
-    whichever d-columns are due. Marks complete after day 30.
+    whichever milestone columns are due.
 
+    Marks complete once filled_through_day >= track_days.
     Returns number of alerts updated.
     """
     conn = _conn()
@@ -147,8 +178,8 @@ def fill_daily_returns() -> int:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, ticker, alert_date, entry_price, filled_through_day,
-                       spy_entry_price
+                SELECT id, ticker, alert_type, alert_date, entry_price,
+                       filled_through_day, spy_entry_price, track_days
                 FROM alert_log
                 WHERE status = 'tracking'
                   AND alert_date <= %s
@@ -160,70 +191,61 @@ def fill_daily_returns() -> int:
             log.info("[alert_tracker] No active alerts to fill.")
             return 0
 
-        # Count trading days between two dates
-        for (alert_id, ticker, alert_date, entry_price,
-             filled_through, spy_entry) in rows:
+        spy_price = _fetch_current_price("SPY")
+
+        for (alert_id, ticker, alert_type, alert_date, entry_price,
+             filled_through, spy_entry, track_days) in rows:
 
             trading_days_elapsed = _count_trading_days(alert_date, today)
-            if trading_days_elapsed <= (filled_through or 0):
-                continue  # nothing new to fill
+            filled_through = filled_through or 0
+            if trading_days_elapsed <= filled_through:
+                continue
 
             current_price = _fetch_current_price(ticker)
-            spy_price = _fetch_current_price("SPY")
-
             if not current_price or not entry_price:
                 continue
 
+            entry = float(entry_price)
             current_day = trading_days_elapsed
-            updates: Dict[str, float] = {}
+            max_days = track_days or TRACK_DAYS.get(alert_type, 30)
 
-            # Fill whichever milestone columns are now due
-            for milestone in _FILL_DAYS:
-                if (filled_through or 0) < milestone <= current_day:
-                    col_price = f"d{milestone}_price"
-                    col_ret = f"d{milestone}_return"
-                    ret_pct = (current_price - float(entry_price)) / float(entry_price) * 100
-                    updates[col_price] = current_price
-                    updates[col_ret] = round(ret_pct, 4)
-
-            if not updates:
+            # Determine which milestones are now due
+            due_milestones = [
+                m for m in _ALL_MILESTONES
+                if m <= max_days and filled_through < m <= current_day
+            ]
+            if not due_milestones:
                 continue
 
-            # Update peak
-            peak_info = _compute_peak(ticker, alert_date, today, float(entry_price))
+            ret_pct = round((current_price - entry) / entry * 100, 4)
+            updates: Dict[str, float] = {}
+            for milestone in due_milestones:
+                updates[f"d{milestone}_price"] = current_price
+                updates[f"d{milestone}_return"] = ret_pct
 
-            # Build SET clause
-            set_parts = [f"{k} = %s" for k in updates]
-            set_parts += [
-                "filled_through_day = %s",
-                "d_peak_return = %s",
-                "d_peak_day = %s",
-            ]
+            # SPY benchmark at key milestones
             if spy_price and spy_entry:
-                spy_ret = (spy_price - float(spy_entry)) / float(spy_entry) * 100
-                if current_day >= 7:
-                    set_parts.append("spy_d7_return = %s")
-                    updates["spy_d7_return"] = round(spy_ret, 4)
-                if current_day >= 30:
-                    set_parts.append("spy_d30_return = %s")
-                    updates["spy_d30_return"] = round(spy_ret, 4)
+                spy_entry_f = float(spy_entry)
+                spy_ret = round((spy_price - spy_entry_f) / spy_entry_f * 100, 4)
+                if any(m >= 7 for m in due_milestones):
+                    updates["spy_d7_return"] = spy_ret
+                if any(m >= 30 for m in due_milestones):
+                    updates["spy_d30_return"] = spy_ret
 
-            is_complete = current_day >= 30
+            # Peak tracking
+            peak_ret, peak_day = _compute_peak(ticker, alert_date, today, entry)
+            is_complete = current_day >= max_days
+
+            # Build dynamic UPDATE
+            set_parts = [f"{k} = %s" for k in updates]
+            set_parts += ["filled_through_day = %s", "d_peak_return = %s", "d_peak_day = %s"]
             if is_complete:
                 set_parts.append("status = 'complete'")
 
-            values = list(updates.values()) + [
-                current_day,
-                peak_info[0],  # peak return
-                peak_info[1],  # peak day
-            ]
-            if "spy_d7_return" in updates:
-                values.append(updates["spy_d7_return"])
-            if "spy_d30_return" in updates:
-                values.append(updates["spy_d30_return"])
+            values = list(updates.values()) + [current_day, peak_ret, peak_day]
+            values.append(alert_id)
 
             sql = f"UPDATE alert_log SET {', '.join(set_parts)} WHERE id = %s"
-            values.append(alert_id)
 
             try:
                 with conn.cursor() as cur2:
@@ -231,7 +253,7 @@ def fill_daily_returns() -> int:
                 conn.commit()
                 updated += 1
             except Exception as e:
-                log.warning(f"[alert_tracker] fill row {alert_id} error: {e}")
+                log.warning(f"[alert_tracker] fill row {alert_id} ({ticker}): {e}")
                 try:
                     conn.rollback()
                 except Exception:
@@ -253,10 +275,10 @@ def fill_daily_returns() -> int:
 # Performance report
 # ---------------------------------------------------------------------------
 
-def get_performance_report(days_back: int = 90) -> dict:
+def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
     """
-    Returns a performance summary dict and CSV rows for the MCP tool.
-    Covers alerts from the past `days_back` days.
+    Returns a performance summary dict and rows for the MCP tool.
+    Optionally filter by alert_type. Covers the last `days_back` days.
     """
     conn = _conn()
     if not conn:
@@ -266,19 +288,26 @@ def get_performance_report(days_back: int = 90) -> dict:
 
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            base_sql = """
                 SELECT
                     ticker, alert_type, alert_date, signal_type,
                     entry_price, score,
                     d1_return, d3_return, d5_return, d7_return,
                     d14_return, d21_return, d30_return,
+                    d45_return, d60_return, d90_return,
                     d_peak_return, d_peak_day,
                     spy_d7_return, spy_d30_return,
-                    status
+                    track_days, status
                 FROM alert_log
                 WHERE alert_date >= %s
-                ORDER BY alert_date DESC, d30_return DESC NULLS LAST
-            """, (cutoff,))
+            """
+            params = [cutoff]
+            if alert_type:
+                base_sql += " AND alert_type = %s"
+                params.append(alert_type)
+            base_sql += " ORDER BY alert_date DESC, COALESCE(d30_return, d7_return) DESC NULLS LAST"
+
+            cur.execute(base_sql, params)
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
     except Exception as e:
@@ -292,50 +321,68 @@ def get_performance_report(days_back: int = 90) -> dict:
     if not rows:
         return {"summary": "No alerts logged yet.", "rows": []}
 
-    # Compute stats by alert_type
+    # Compute stats grouped by alert_type
     stats = {}
-    for at in ("intraday", "gem", "news"):
-        subset = [r for r in rows if r["alert_type"] == at and r["d7_return"] is not None]
+    for at in TRACK_DAYS:
+        subset = [r for r in rows if r["alert_type"] == at]
         if not subset:
             continue
-        returns_7 = [float(r["d7_return"]) for r in subset]
-        returns_30 = [float(r["d30_return"]) for r in subset if r["d30_return"] is not None]
-        wins_7 = sum(1 for x in returns_7 if x >= WIN_THRESHOLD)
-        wins_30 = sum(1 for x in returns_30 if x >= WIN_THRESHOLD)
-        peak_returns = [float(r["d_peak_return"]) for r in subset if r["d_peak_return"] is not None]
+
+        max_td = TRACK_DAYS[at]
+        # Use the longest filled milestone as the primary return column
+        primary_col = f"d{max_td}_return" if max_td <= 90 else "d90_return"
+        short_col = "d7_return"
+
+        filled_primary = [r for r in subset if r.get(primary_col) is not None]
+        filled_short = [r for r in subset if r.get(short_col) is not None]
+
+        def avg(vals): return round(sum(vals) / len(vals), 2) if vals else None
+        def win_rate(vals): return round(sum(1 for x in vals if x >= WIN_THRESHOLD) / len(vals) * 100, 1) if vals else None
+
+        primary_rets = [float(r[primary_col]) for r in filled_primary]
+        short_rets = [float(r[short_col]) for r in filled_short]
+        peak_rets = [float(r["d_peak_return"]) for r in subset if r.get("d_peak_return") is not None]
+
         stats[at] = {
-            "n": len(subset),
-            "win_rate_d7": round(wins_7 / len(returns_7) * 100, 1) if returns_7 else None,
-            "win_rate_d30": round(wins_30 / len(returns_30) * 100, 1) if returns_30 else None,
-            "avg_d7_return": round(sum(returns_7) / len(returns_7), 2) if returns_7 else None,
-            "avg_d30_return": round(sum(returns_30) / len(returns_30), 2) if returns_30 else None,
-            "avg_peak_return": round(sum(peak_returns) / len(peak_returns), 2) if peak_returns else None,
-            "best_d30": round(max(returns_30), 2) if returns_30 else None,
-            "worst_d30": round(min(returns_30), 2) if returns_30 else None,
+            "n_total": len(subset),
+            "n_filled": len(filled_primary),
+            "track_days": max_td,
+            "win_rate_short": win_rate(short_rets),
+            "win_rate_full": win_rate(primary_rets),
+            "avg_short_return": avg(short_rets),
+            "avg_full_return": avg(primary_rets),
+            "avg_peak_return": avg(peak_rets),
+            "best": round(max(primary_rets), 2) if primary_rets else None,
+            "worst": round(min(primary_rets), 2) if primary_rets else None,
+            "short_label": f"D{7}",
+            "full_label": f"D{max_td}",
         }
 
-    # Format rows for CSV / display
+    # Format rows for display/CSV
     formatted = []
     for r in rows:
+        at = r["alert_type"]
+        td = TRACK_DAYS.get(at, 30)
         formatted.append({
-            "ticker":       r["ticker"],
-            "type":         r["alert_type"],
-            "date":         str(r["alert_date"]),
-            "signal":       r["signal_type"] or "",
-            "entry":        f"${float(r['entry_price']):.2f}" if r["entry_price"] else "",
-            "score":        f"{float(r['score']):.1f}" if r["score"] else "",
-            "d1%":          _fmt(r["d1_return"]),
-            "d3%":          _fmt(r["d3_return"]),
-            "d5%":          _fmt(r["d5_return"]),
-            "d7%":          _fmt(r["d7_return"]),
-            "d14%":         _fmt(r["d14_return"]),
-            "d21%":         _fmt(r["d21_return"]),
-            "d30%":         _fmt(r["d30_return"]),
-            "peak%":        _fmt(r["d_peak_return"]),
-            "peak_day":     str(r["d_peak_day"]) if r["d_peak_day"] else "",
-            "spy_d7%":      _fmt(r["spy_d7_return"]),
-            "spy_d30%":     _fmt(r["spy_d30_return"]),
-            "status":       r["status"],
+            "ticker":     r["ticker"],
+            "type":       at,
+            "date":       str(r["alert_date"]),
+            "signal":     r["signal_type"] or "",
+            "entry":      f"${float(r['entry_price']):.2f}" if r["entry_price"] else "",
+            "score":      f"{float(r['score']):.1f}" if r["score"] else "",
+            "d1%":        _fmt(r.get("d1_return")),
+            "d3%":        _fmt(r.get("d3_return")),
+            "d7%":        _fmt(r.get("d7_return")),
+            "d14%":       _fmt(r.get("d14_return")),
+            "d30%":       _fmt(r.get("d30_return")),
+            "d60%":       _fmt(r.get("d60_return")) if td >= 60 else "n/a",
+            "d90%":       _fmt(r.get("d90_return")) if td >= 90 else "n/a",
+            "peak%":      _fmt(r.get("d_peak_return")),
+            "peak_day":   str(r["d_peak_day"]) if r.get("d_peak_day") else "",
+            "spy_d7%":    _fmt(r.get("spy_d7_return")),
+            "spy_d30%":   _fmt(r.get("spy_d30_return")),
+            "track_days": str(td),
+            "status":     r["status"],
         })
 
     return {
@@ -364,7 +411,6 @@ def generate_csv(report: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _fetch_current_price(ticker: str) -> Optional[float]:
-    """Fetch latest close via Polygon snapshot."""
     try:
         from polygon import RESTClient
         api_key = os.environ.get("POLYGON_API_KEY", "")
@@ -374,23 +420,26 @@ def _fetch_current_price(ticker: str) -> Optional[float]:
         snap = client.get_snapshot_ticker("stocks", ticker)
         day = getattr(snap, "day", None)
         if day:
-            return float(getattr(day, "c", None) or 0) or None
+            price = float(getattr(day, "c", None) or 0)
+            if price:
+                return price
         prev = getattr(snap, "prev_day", None)
         if prev:
-            return float(getattr(prev, "c", None) or 0) or None
+            price = float(getattr(prev, "c", None) or 0)
+            if price:
+                return price
     except Exception:
         pass
     return None
 
 
 def _count_trading_days(start: date, end: date) -> int:
-    """Count trading days (Mon-Fri, no holiday adjustment) between two dates."""
     if end <= start:
         return 0
     count = 0
     current = start + timedelta(days=1)
     while current <= end:
-        if current.weekday() < 5:  # Mon-Fri
+        if current.weekday() < 5:
             count += 1
         current += timedelta(days=1)
     return count
@@ -398,10 +447,6 @@ def _count_trading_days(start: date, end: date) -> int:
 
 def _compute_peak(ticker: str, alert_date: date, today: date,
                   entry_price: float) -> Tuple[Optional[float], Optional[int]]:
-    """
-    Find the best closing price in the window since alert_date.
-    Uses Polygon daily bars. Returns (peak_return_pct, peak_trading_day).
-    """
     try:
         from polygon import RESTClient
         api_key = os.environ.get("POLYGON_API_KEY", "")
@@ -409,17 +454,16 @@ def _compute_peak(ticker: str, alert_date: date, today: date,
             return None, None
         client = RESTClient(api_key)
         bars = list(client.list_aggs(
-            ticker,
-            1, "day",
+            ticker, 1, "day",
             alert_date.strftime("%Y-%m-%d"),
             today.strftime("%Y-%m-%d"),
-            limit=40,
+            limit=120,
         ))
         if not bars:
             return None, None
         best_ret = None
         best_day = None
-        for i, bar in enumerate(bars[1:], start=1):  # skip alert_date bar itself
+        for i, bar in enumerate(bars[1:], start=1):
             close = float(getattr(bar, "c", 0) or 0)
             if not close:
                 continue
