@@ -46,52 +46,61 @@ from reversal_screen import (
 )
 
 
-def _load_insider_tickers(conn, days: int = 60) -> Dict[str, dict]:
-    """Try to load recent insider buys from DB. Returns {} if table doesn't exist."""
+def _load_insider_tickers(conn, quarters: int = 2) -> Dict[str, dict]:
+    """Load recent insider stats — tickers where insiders are net buyers."""
     try:
         from psycopg2.extras import RealDictCursor
+        # Get the most recent N quarters and look for net buying
         sql = """
             SELECT ticker,
-                   COUNT(*) AS buy_count,
-                   SUM(shares) AS total_shares,
-                   SUM(value) AS total_value,
-                   MAX(transaction_date) AS last_buy
-            FROM insider_transactions
-            WHERE transaction_type ILIKE '%%buy%%'
-              AND transaction_date >= current_date - %(days)s * interval '1 day'
+                   SUM(acquired_transactions) AS total_buys,
+                   SUM(disposed_transactions) AS total_sells,
+                   SUM(total_acquired) AS total_acquired,
+                   SUM(total_disposed) AS total_disposed,
+                   AVG(acquired_disposed_ratio) AS avg_ratio,
+                   SUM(total_purchases) AS total_purchases,
+                   SUM(total_sales) AS total_sales
+            FROM insider_stats
+            WHERE (fiscal_year, fiscal_quarter) IN (
+                SELECT DISTINCT fiscal_year, fiscal_quarter
+                FROM insider_stats
+                ORDER BY fiscal_year DESC, fiscal_quarter DESC
+                LIMIT %(quarters)s
+            )
             GROUP BY ticker
-            HAVING COUNT(*) >= 1
-            ORDER BY total_value DESC NULLS LAST
+            HAVING SUM(acquired_transactions) > SUM(disposed_transactions)
+               AND SUM(acquired_transactions) > 0
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, {"days": days})
+            cur.execute(sql, {"quarters": quarters})
             rows = cur.fetchall()
         return {r["ticker"]: dict(r) for r in rows}
     except Exception:
         return {}
 
 
-def score_insider_signal(insider: Optional[dict], vol_surge: float) -> float:
-    """Score 0-1: insider DB data (preferred) or vol-surge proxy."""
-    if insider:
-        buy_count = insider.get("buy_count", 0) or 0
-        total_value = float(insider.get("total_value") or 0)
-        if buy_count >= 3 or total_value >= 1_000_000:
-            return 1.0
-        if buy_count >= 2 or total_value >= 500_000:
-            return 0.8
-        return 0.6
+def score_insider_signal(insider: dict) -> float:
+    """Score 0-1 from insider_stats: strength of net buying activity."""
+    total_buys = float(insider.get("total_buys") or 0)
+    total_sells = float(insider.get("total_sells") or 0)
+    avg_ratio = float(insider.get("avg_ratio") or 1.0)
+    total_acquired = float(insider.get("total_acquired") or 0)
+    total_disposed = float(insider.get("total_disposed") or 0)
 
-    # Fallback: volume surge proxy for informed buying
-    if vol_surge >= 2.5:
-        return 0.9
-    if vol_surge >= 2.0:
-        return 0.75
-    if vol_surge >= 1.5:
-        return 0.55
-    if vol_surge >= 1.2:
-        return 0.35
-    return 0.1
+    # Net acquisition ratio
+    net_ratio = avg_ratio if avg_ratio else (
+        total_acquired / total_disposed if total_disposed > 0 else 2.0
+    )
+
+    if net_ratio >= 3.0 and total_buys >= 3:
+        return 1.0
+    if net_ratio >= 2.0 and total_buys >= 2:
+        return 0.85
+    if net_ratio >= 1.5:
+        return 0.70
+    if net_ratio >= 1.1:
+        return 0.50
+    return 0.30
 
 
 def score_technical_setup(df: pd.DataFrame) -> dict:
@@ -154,17 +163,18 @@ def score_technical_setup(df: pd.DataFrame) -> dict:
     }
 
 
-def run_screen(days: int = 60, single_ticker: str = None,
-               broad: bool = False, min_vol_surge: float = 1.2) -> List[dict]:
+def run_screen(quarters: int = 2, single_ticker: str = None,
+               broad: bool = False) -> List[dict]:
     conn = _conn()
     try:
         quality = load_quality_tickers(conn, broad=broad)
-        insider_data = _load_insider_tickers(conn, days=days)
+        insider_data = _load_insider_tickers(conn, quarters=quarters)
         if single_ticker:
             tickers = [single_ticker.upper()]
+            insider_data = {t: v for t, v in insider_data.items() if t == single_ticker.upper()}
         else:
-            # Include tickers from insider DB + full quality universe
-            tickers = list(set(list(quality.keys()) + list(insider_data.keys())))
+            # Only score tickers with actual insider buying
+            tickers = list(insider_data.keys())
         load_tickers = list(set(tickers + ["SPY"]))
         prices = load_prices(conn, load_tickers)
     finally:
@@ -174,27 +184,19 @@ def run_screen(days: int = 60, single_ticker: str = None,
     if "SPY" in prices:
         spy_regime = compute_spy_regime(prices["SPY"])
 
-    using_db = bool(insider_data)
-
     results = []
     for t in tickers:
         df = prices.get(t)
         if df is None or df.empty:
             continue
 
-        vol_surge = compute_volume_surge(df)
-        insider = insider_data.get(t)
-
-        # If no DB data, filter to meaningful vol surge
-        if not using_db and vol_surge < min_vol_surge:
-            continue
-
+        insider = insider_data.get(t, {})
         tech = score_technical_setup(df)
-        s_insider = score_insider_signal(insider, vol_surge)
+        s_insider = score_insider_signal(insider)
+        vol_surge = compute_volume_surge(df)
 
         composite = (0.55 * s_insider + 0.45 * tech["tech_score"]) * 100
 
-        # Regime boost
         if spy_regime is True:
             composite = min(100.0, composite * 1.03)
 
@@ -204,15 +206,13 @@ def run_screen(days: int = 60, single_ticker: str = None,
             "ticker": t,
             "sleeve": "insider",
             "score": round(composite, 1),
-            "insider_db": using_db,
+            "insider_buy_count": insider.get("total_buys"),
+            "insider_sell_count": insider.get("total_sells"),
+            "insider_ratio": round(float(insider.get("avg_ratio") or 0), 2),
             "vol_surge": round(vol_surge, 2),
             **q,
             **{k: v for k, v in tech.items() if k != "tech_score"},
         }
-        if insider:
-            row["insider_buy_count"] = insider.get("buy_count")
-            row["insider_total_value"] = insider.get("total_value")
-            row["insider_last_buy"] = str(insider.get("last_buy", ""))
         if spy_regime is not None:
             row["spy_regime"] = spy_regime
 
@@ -222,26 +222,25 @@ def run_screen(days: int = 60, single_ticker: str = None,
     return results
 
 
-def print_summary(results: List[dict], days: int):
-    using_db = any(r.get("insider_db") for r in results)
-    mode = "insider DB buys" if using_db else "volume burst proxy"
+def print_summary(results: List[dict], quarters: int):
     print(f"\n{'=' * 100}")
-    print(f"  INSIDER BURST SCREEN — Quality Names with Informed Buying ({mode})")
-    print(f"  {date.today().isoformat()}  |  Lookback: {days}d  |  {len(results)} candidates")
+    print(f"  INSIDER BURST SCREEN — Net Insider Buying + Technical Confirmation")
+    print(f"  {date.today().isoformat()}  |  Lookback: {quarters}Q  |  {len(results)} candidates")
     print(f"{'=' * 100}")
     if not results:
         print("\n  No candidates found.\n")
         return
     print(f"\n  {'TICKER':<7} {'COMPANY':<25} {'SECTOR':<20} {'SCORE':>6} "
-          f"{'VOL↑':>5} {'RSI':>5} {'PRICE':>8} {'%OFF':>6}")
-    print(f"  {'─'*7} {'─'*25} {'─'*20} {'─'*6} {'─'*5} {'─'*5} {'─'*8} {'─'*6}")
+          f"{'RATIO':>6} {'BUYS':>5} {'RSI':>5} {'PRICE':>8} {'%OFF':>6}")
+    print(f"  {'─'*7} {'─'*25} {'─'*20} {'─'*6} {'─'*6} {'─'*5} {'─'*5} {'─'*8} {'─'*6}")
     for r in results:
         rsi_s = f"{r['rsi']:.0f}" if r.get("rsi") and not (isinstance(r["rsi"], float) and np.isnan(r["rsi"])) else " N/A"
         price_s = f"{r['current_price']:.2f}" if r.get("current_price") and not np.isnan(r.get("current_price", float('nan'))) else "  N/A"
         poff_s = f"{r['pct_off_high']:.1f}%" if r.get("pct_off_high") is not None else "  N/A"
         print(f"  {r['ticker']:<7} {(r.get('company_name') or '')[:24]:<25} "
               f"{(r.get('sector') or '')[:19]:<20} "
-              f"{r['score']:>5.0f} {r['vol_surge']:>5.2f} {rsi_s:>5} "
+              f"{r['score']:>5.0f} {r.get('insider_ratio', 0):>6.2f} "
+              f"{r.get('insider_buy_count', 0):>5} {rsi_s:>5} "
               f"{price_s:>8} {poff_s:>6}")
 
 
@@ -250,18 +249,15 @@ def main():
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--ticker")
     ap.add_argument("--broad", action="store_true")
-    ap.add_argument("--days", type=int, default=60, help="insider lookback window (days)")
-    ap.add_argument("--min-surge", type=float, default=1.2,
-                    help="minimum vol surge for fallback mode (default 1.2)")
+    ap.add_argument("--quarters", type=int, default=2, help="quarters of insider data to look back")
     args = ap.parse_args()
 
     results = run_screen(
-        days=args.days,
+        quarters=args.quarters,
         single_ticker=args.ticker,
         broad=args.broad,
-        min_vol_surge=args.min_surge,
     )
-    print_summary(results[:args.top], args.days)
+    print_summary(results[:args.top], args.quarters)
 
 
 if __name__ == "__main__":

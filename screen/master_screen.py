@@ -40,11 +40,17 @@ from reversal_screen import (
     EMA_SHORT, EMA_LONG, EMA_TREND, RSI_PERIOD,
 )
 
-# Weights
-W_FUND = 0.50
-W_TECH = 0.50
+try:
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    RealDictCursor = None
 
-# Fundamental sub-weights (within 50%)
+# Weights: fundamentals 40%, technicals 35%, analyst/valuation signals 25%
+W_FUND = 0.40
+W_TECH = 0.35
+W_SIGNAL = 0.25
+
+# Fundamental sub-weights
 W_ROIC = 0.35
 W_REV_GROWTH = 0.25
 W_FCF = 0.20
@@ -208,11 +214,108 @@ def score_technicals(df: pd.DataFrame) -> dict:
     }
 
 
+def load_signal_data(conn) -> Dict[str, dict]:
+    """Load latest analyst revisions + financial scores keyed by ticker."""
+    out: Dict[str, dict] = {}
+    try:
+        # Analyst revisions: consensus, upside, grade
+        sql = """
+            SELECT DISTINCT ON (ticker) ticker, grade_consensus,
+                   upside_to_target_pct, revision_30d_pct, revision_90d_pct,
+                   grade_strong_buy, grade_buy, grade_hold, grade_sell, grade_total
+            FROM analyst_revisions
+            ORDER BY ticker, as_of_date DESC
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql)
+            for r in cur.fetchall():
+                out.setdefault(r["ticker"], {}).update(dict(r))
+    except Exception:
+        pass
+    try:
+        # Financial scores: Piotroski + Altman Z
+        sql = """
+            SELECT DISTINCT ON (ticker) ticker, piotroski_score, altman_z_score
+            FROM financial_scores
+            ORDER BY ticker, as_of_date DESC
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql)
+            for r in cur.fetchall():
+                out.setdefault(r["ticker"], {}).update(dict(r))
+    except Exception:
+        pass
+    return out
+
+
+def score_signals(sig: dict) -> float:
+    """Score 0-1 from analyst ratings + financial scores."""
+    score = 0.0
+    count = 0
+
+    # Piotroski (0-9): higher = stronger fundamentals
+    piotroski = sig.get("piotroski_score")
+    if piotroski is not None:
+        count += 1
+        p = int(piotroski)
+        if p >= 8:
+            score += 1.0
+        elif p >= 6:
+            score += 0.75
+        elif p >= 4:
+            score += 0.45
+        else:
+            score += 0.15
+
+    # Analyst consensus upside
+    upside = sig.get("upside_to_target_pct")
+    if upside is not None:
+        count += 1
+        u = float(upside)
+        if u >= 20:
+            score += 1.0
+        elif u >= 10:
+            score += 0.75
+        elif u >= 0:
+            score += 0.4
+        else:
+            score += 0.1
+
+    # Analyst revision momentum (30d)
+    rev30 = sig.get("revision_30d_pct")
+    if rev30 is not None:
+        count += 1
+        r = float(rev30)
+        if r >= 5:
+            score += 1.0
+        elif r >= 2:
+            score += 0.75
+        elif r >= 0:
+            score += 0.45
+        else:
+            score += 0.1
+
+    # Altman Z: >3 safe, 1.8-3 grey, <1.8 distressed
+    altman = sig.get("altman_z_score")
+    if altman is not None:
+        count += 1
+        z = float(altman)
+        if z >= 3.0:
+            score += 1.0
+        elif z >= 1.8:
+            score += 0.5
+        else:
+            score += 0.1
+
+    return score / count if count > 0 else 0.5
+
+
 def run_screen(single_ticker: str = None, broad: bool = False,
                min_score: float = 0.0) -> List[dict]:
     conn = _conn()
     try:
         quality = load_quality_tickers(conn, broad=broad)
+        signal_data = load_signal_data(conn)
         if single_ticker:
             tickers = [single_ticker.upper()]
         else:
@@ -230,13 +333,14 @@ def run_screen(single_ticker: str = None, broad: bool = False,
     for t in tickers:
         df = prices.get(t)
         q = quality.get(t, {})
+        sig = signal_data.get(t, {})
 
         fund_score = score_fundamentals(q)
         tech = score_technicals(df) if df is not None else {"tech_score": 0.0}
+        sig_score = score_signals(sig)
 
-        composite = (W_FUND * fund_score + W_TECH * tech["tech_score"]) * 100
+        composite = (W_FUND * fund_score + W_TECH * tech["tech_score"] + W_SIGNAL * sig_score) * 100
 
-        # Regime boost
         if spy_regime is True:
             composite = min(100.0, composite * 1.02)
 
@@ -249,6 +353,11 @@ def run_screen(single_ticker: str = None, broad: bool = False,
             "score": round(composite, 1),
             "fund_score": round(fund_score * 100, 1),
             "tech_score": round(tech.get("tech_score", 0) * 100, 1),
+            "signal_score": round(sig_score * 100, 1),
+            "piotroski": sig.get("piotroski_score"),
+            "analyst_upside_pct": sig.get("upside_to_target_pct"),
+            "revision_30d_pct": sig.get("revision_30d_pct"),
+            "grade_consensus": sig.get("grade_consensus"),
             **q,
             **{k: v for k, v in tech.items() if k != "tech_score"},
         }
