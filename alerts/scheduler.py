@@ -41,13 +41,26 @@ def start_scheduler():
     scheduler = BackgroundScheduler(timezone=et)
 
     # Every 30 min, Mon–Fri, 7:00 AM – 4:00 PM ET
+    # Fires at: 7:00, 7:30, 8:00, 8:30, 9:00, 9:30, 10:00, 10:30 ... 15:30
     scheduler.add_job(
         run_scheduled_scan,
         CronTrigger(day_of_week="mon-fri", hour="7-15", minute="0,30", timezone=et),
-        id="intraday_scan",
+        id="intraday_scan_30min",
+        replace_existing=True,
+    )
+
+    # Extra scan at 9:45 AM ET — fills the 15-min gap at the open (9:30 → 9:45 → 10:00)
+    # Gap-and-go and VWAP breakout setups form fast in the first 30 minutes
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="45", timezone=et),
+        id="intraday_scan_open_945",
         replace_existing=True,
     )
 
     scheduler.start()
-    log.info("[scheduler] Intraday alert scheduler started. Runs every 30 min, 7 AM–4 PM ET, Mon–Fri.")
+    log.info(
+        "[scheduler] Intraday alert scheduler started (America/New_York). "
+        "30-min cadence 7 AM–4 PM ET + extra scan at 9:45 AM for open window."
+    )
     return scheduler
