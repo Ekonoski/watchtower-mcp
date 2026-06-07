@@ -1,0 +1,123 @@
+"""
+Watchtower — Background scheduler for all automated alerts.
+
+Intraday alerts: every 15-30 min, Mon-Fri 7 AM–4 PM ET.
+Hidden gems (daily): once per day at 6:30 AM ET, Mon-Fri.
+"""
+import logging
+
+log = logging.getLogger(__name__)
+
+
+def run_scheduled_scan():
+    """Intraday scan — called every 15-30 min during trading hours."""
+    try:
+        from screen.intraday_screen import run_screen
+        from alerts.email_alerts import send_intraday_alert
+
+        results = run_screen(min_score=40.0, broad=False)
+        if not results:
+            log.info("[scheduler] No intraday signals above threshold.")
+            return
+
+        is_mkt = results[0].get("is_market_hours", True)
+        mins = results[0].get("minutes_elapsed", 0)
+        sent = send_intraday_alert(results, minutes_elapsed=mins, is_market_hours=is_mkt)
+        log.info(f"[scheduler] Intraday scan: {len(results)} signals. Email sent: {sent}")
+    except Exception as e:
+        log.error(f"[scheduler] Intraday scan error: {e}")
+
+
+def run_daily_gems_scan():
+    """
+    Daily hidden gems scan — runs once per day at 6:30 AM ET.
+    Scans the full US market (~10k stocks) via Polygon for up-and-comer setups.
+    Slower than intraday scan — only appropriate for daily cadence.
+    """
+    try:
+        from screen.upcomer_screen import run_screen
+        from alerts.email_alerts import send_hidden_gems_alert
+
+        log.info("[scheduler] Starting daily hidden gems scan (full market universe)...")
+        results = run_screen(min_score=35.0, top_n=15, with_synthesis=False)
+        if not results:
+            log.info("[scheduler] No hidden gems found above threshold today.")
+            return
+
+        sent = send_hidden_gems_alert(results)
+        log.info(f"[scheduler] Hidden gems scan: {len(results)} gems found. Email sent: {sent}")
+    except Exception as e:
+        log.error(f"[scheduler] Hidden gems scan error: {e}")
+
+
+def start_scheduler():
+    """Start the APScheduler background scheduler. Call once at server startup."""
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        import pytz
+    except ImportError:
+        log.warning("[scheduler] apscheduler or pytz not installed — scheduled alerts disabled.")
+        return None
+
+    et = pytz.timezone("America/New_York")
+    scheduler = BackgroundScheduler(timezone=et)
+
+    # Pre-market: every 30 min, 7:00–9:15 AM ET
+    # Fires at: 7:00, 7:30, 8:00, 8:30, 9:00
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="7-8", minute="0,30", timezone=et),
+        id="intraday_scan_premarket",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="0", timezone=et),
+        id="intraday_scan_900",
+        replace_existing=True,
+    )
+
+    # Market open through noon: every 15 min, 9:30 AM–12:00 PM ET
+    # Fires at: 9:30, 9:45, 10:00, 10:15, 10:30, 10:45, 11:00, 11:15, 11:30, 11:45, 12:00
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="9-11", minute="15,30,45,0", timezone=et),
+        id="intraday_scan_morning_15min",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="12", minute="0", timezone=et),
+        id="intraday_scan_noon",
+        replace_existing=True,
+    )
+
+    # Afternoon: every 30 min, 12:30–4:00 PM ET
+    # Fires at: 12:30, 13:00, 13:30, 14:00, 14:30, 15:00, 15:30
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="12-15", minute="30,0", timezone=et),
+        id="intraday_scan_afternoon_30min",
+        replace_existing=True,
+    )
+
+    # Daily hidden gems scan — 6:30 AM ET, Mon-Fri
+    # Runs before market open so it's in your inbox before the day starts.
+    # Full market scan takes longer so runs once, not repeatedly.
+    scheduler.add_job(
+        run_daily_gems_scan,
+        CronTrigger(day_of_week="mon-fri", hour="6", minute="30", timezone=et),
+        id="daily_hidden_gems",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    log.info(
+        "[scheduler] Scheduler started (America/New_York). "
+        "Hidden gems: 6:30 AM daily → "
+        "Pre-market intraday 30-min (7-9 AM) → "
+        "15-min at open through noon (9:30 AM-12 PM) → "
+        "30-min afternoon (12:30-4 PM ET)."
+    )
+    return scheduler

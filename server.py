@@ -76,7 +76,7 @@ def watchtower_run_screen(
     elif screen == "insider":
         results = run_insider()[:top_n]
     elif screen in ("upcomer", "hidden_gems", "gems"):
-        results = run_upcomer(min_score=30.0, top_n=top_n)  # always full universe
+        results = run_upcomer(min_score=30.0, top_n=top_n, with_synthesis=False)
     else:
         return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider, upcomer"
 
@@ -137,7 +137,7 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
     These are early-stage 10x candidates, not established momentum names.
     """
     *_, run_upcomer = _get_screens()
-    results = run_upcomer(min_score=30.0, top_n=top_n)
+    results = run_upcomer(min_score=30.0, top_n=top_n, with_synthesis=False)
     if not results:
         return "No hidden gems found above threshold right now."
 

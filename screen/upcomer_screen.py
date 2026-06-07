@@ -1,25 +1,25 @@
 """
 Watchtower — Hidden Gems / Up-and-Comer screen.
 
-Completely separate from momentum_screen.py. This is NOT "strong getting stronger" —
-it hunts for stocks that most investors have NOT yet put on their radar.
+Completely separate from momentum_screen.py. Hunts for stocks most investors
+have NOT yet put on their radar — diamonds in the rough.
 
 Data strategy (two-phase to handle ~10k tickers efficiently):
-  Phase 1 — Polygon snapshot pass: pull all US equity snapshots in one API call,
-             apply cheap filters (price, volume, change%) to cut to ~500 candidates.
-  Phase 2 — Historical bars: fetch 300d of daily bars from Polygon for each
-             candidate, score base breakout, RSI lift, volume accumulation.
-  Phase 3 — Supabase fundamentals: enrich survivors with revenue/earnings/analyst
-             data from financial_scores and analyst_revisions.
+  Phase 1 — Polygon snapshot of ALL US equities in one API call.
+             Cheap price/volume/drawdown filters cut to ~300-600 candidates.
+  Phase 2 — Fetch 300d daily bars from Polygon for each candidate.
+             Score base breakout, RSI lift, volume accumulation.
+  Phase 3 — Enrich with Supabase fundamentals (financial_scores,
+             analyst_revisions) for tickers we have data on.
 
 Scoring model (sum to 100):
   - Base breakout (long consolidation + volume expansion):   25 pts
-  - RSI lift from low / momentum starting:                  20 pts
-  - Fundamental acceleration (rev/earnings trend):          20 pts
+  - RSI lift from oversold/neutral:                         20 pts
+  - Fundamental acceleration (rev/earnings QoQ):            20 pts
   - Small/mid cap bonus (dollar volume proxy):              10 pts
-  - Sector heat / tailwind emerging:                        10 pts
+  - Sector heat / emerging tailwind:                        10 pts
   - Analyst catalyst (big PT upside or uncovered):          10 pts
-  - Volume accumulation (up-vol / down-vol):                 5 pts
+  - Volume accumulation (up-vol / down-vol ratio):           5 pts
 
 Usage:
     set -a && source .env && set +a
@@ -32,7 +32,7 @@ import os
 import sys
 import time
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 try:
     import numpy as np
@@ -48,7 +48,7 @@ from reversal_screen import (
     compute_ema,
     compute_macd,
     compute_volume_ratio,
-    EMA_SHORT, EMA_LONG, EMA_TREND, RSI_PERIOD,
+    EMA_SHORT, EMA_LONG, RSI_PERIOD,
 )
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -56,7 +56,8 @@ MIN_DRAWDOWN = 0.18    # at least 18% off 52w high — not a momentum name
 MAX_DRAWDOWN = 0.60    # not a completely destroyed stock
 MIN_PRICE    = 2.0     # filter out penny stocks
 MAX_PRICE    = 500.0   # keep small/mid focused
-MIN_AVG_VOL  = 50_000  # minimum average daily volume (liquidity floor)
+MIN_AVG_VOL  = 50_000  # minimum daily volume (liquidity floor)
+MAX_CANDIDATES = 600   # cap Phase 2 for performance
 
 # Scoring weights
 W_BASE_BREAKOUT  = 0.25
@@ -81,8 +82,7 @@ def _get_polygon_client():
 def _fetch_all_snapshots() -> List[dict]:
     """
     Pull Polygon snapshot for ALL US stocks in one API call.
-    Returns list of dicts with ticker, price, change_pct, volume, avg_volume.
-    Filters to basic liquidity/price thresholds on the way out.
+    Returns pre-filtered list of candidate dicts.
     """
     client = _get_polygon_client()
     if not client:
@@ -94,12 +94,11 @@ def _fetch_all_snapshots() -> List[dict]:
         for s in snapshots:
             try:
                 ticker = getattr(s, "ticker", None)
-                if not ticker or len(ticker) > 5:  # skip options/warrants
+                if not ticker or len(ticker) > 5:
                     continue
 
                 day = getattr(s, "day", None)
                 prev_day = getattr(s, "prev_day", None)
-
                 if not day:
                     continue
 
@@ -109,8 +108,6 @@ def _fetch_all_snapshots() -> List[dict]:
 
                 if not price or not volume:
                     continue
-
-                # Cheap pre-filters
                 if price < MIN_PRICE or price > MAX_PRICE:
                     continue
                 if volume < MIN_AVG_VOL:
@@ -118,11 +115,17 @@ def _fetch_all_snapshots() -> List[dict]:
 
                 change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
 
-                # Get 52w high from Polygon snapshot if available
-                min_52w = getattr(s, "min", None)
                 max_52w = getattr(s, "max", None)
+                min_52w = getattr(s, "min", None)
                 hi_52w = getattr(max_52w, "price", None) if max_52w else None
                 lo_52w = getattr(min_52w, "price", None) if min_52w else None
+
+                # Drawdown pre-filter using snapshot data
+                drawdown_est = None
+                if hi_52w and hi_52w > 0:
+                    drawdown_est = (hi_52w - price) / hi_52w
+                    if drawdown_est < MIN_DRAWDOWN or drawdown_est > MAX_DRAWDOWN:
+                        continue
 
                 candidates.append({
                     "ticker": ticker,
@@ -132,6 +135,7 @@ def _fetch_all_snapshots() -> List[dict]:
                     "hi_52w": hi_52w,
                     "lo_52w": lo_52w,
                     "prev_close": prev_close,
+                    "drawdown_est": drawdown_est,
                 })
             except Exception:
                 continue
@@ -141,34 +145,11 @@ def _fetch_all_snapshots() -> List[dict]:
     return candidates
 
 
-def _phase1_filter(snapshots: List[dict]) -> List[dict]:
-    """
-    Apply cheap drawdown + basic filters using snapshot data.
-    Cuts ~10k tickers down to ~300-600 candidates for Phase 2.
-    """
-    out = []
-    for s in snapshots:
-        price = s.get("price", 0)
-        hi_52w = s.get("hi_52w")
-
-        if hi_52w and hi_52w > 0 and price > 0:
-            drawdown = (hi_52w - price) / hi_52w
-            if MIN_DRAWDOWN <= drawdown <= MAX_DRAWDOWN:
-                s["drawdown_est"] = drawdown
-                out.append(s)
-        else:
-            # No 52w high in snapshot — include with unknown drawdown, let Phase 2 decide
-            s["drawdown_est"] = None
-            out.append(s)
-
-    return out
-
-
-def _fetch_bars_polygon(ticker: str, days: int = 300) -> List[dict]:
-    """Fetch daily bars from Polygon for a single ticker."""
+def _fetch_bars_polygon(ticker: str, days: int = 300) -> pd.DataFrame:
+    """Fetch daily bars from Polygon and return as DataFrame."""
     client = _get_polygon_client()
     if not client:
-        return []
+        return pd.DataFrame()
     try:
         end = date.today()
         start = end - timedelta(days=days + 60)
@@ -180,35 +161,91 @@ def _fetch_bars_polygon(ticker: str, days: int = 300) -> List[dict]:
             to=end.isoformat(),
             limit=50000,
         ))
-        bars = []
+        if not aggs:
+            return pd.DataFrame()
+        rows = []
         for a in aggs:
-            bars.append({
+            rows.append({
                 "trade_date": date.fromtimestamp(a.timestamp / 1000),
-                "close": a.close,
-                "volume": a.volume,
-                "high": a.high,
-                "low": a.low,
-                "open": a.open,
+                "close": float(a.close),
+                "volume": float(a.volume),
+                "high": float(a.high),
+                "low": float(a.low),
+                "open": float(a.open),
             })
-        return bars
+        df = pd.DataFrame(rows).sort_values("trade_date").reset_index(drop=True)
+        return df
     except Exception:
-        return []
-
-
-def _bars_to_df(bars: List[dict]) -> pd.DataFrame:
-    if not bars:
         return pd.DataFrame()
-    df = pd.DataFrame(bars).sort_values("trade_date").reset_index(drop=True)
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
-    return df
+
+
+# ── Sector heat (computed once, looked up per ticker) ────────────────────────
+
+def _build_sector_heat_map(candidates: List[dict], ticker_sector_map: Dict[str, str]) -> Dict[str, float]:
+    """
+    Compute sector heat scores from snapshot data.
+    Groups candidates by sector using ticker→sector map from Supabase.
+    Returns dict of sector → heat score (0-1).
+    """
+    sector_prices: Dict[str, List[float]] = {}
+    sector_volumes: Dict[str, List[float]] = {}
+
+    for c in candidates:
+        ticker = c["ticker"]
+        sector = ticker_sector_map.get(ticker, "Unknown")
+        change_pct = c.get("change_pct", 0.0) or 0.0
+        volume = c.get("volume", 0.0) or 0.0
+
+        sector_prices.setdefault(sector, []).append(change_pct)
+        sector_volumes.setdefault(sector, []).append(volume)
+
+    heat_map: Dict[str, float] = {}
+    for sector, changes in sector_prices.items():
+        if len(changes) < 3:
+            continue
+        avg_change = float(np.mean(changes))
+        # Normalize: >3% avg daily gain = very hot, flat = neutral
+        if avg_change > 3.0:
+            heat = 1.0
+        elif avg_change > 1.5:
+            heat = 0.8
+        elif avg_change > 0.5:
+            heat = 0.6
+        elif avg_change > 0.0:
+            heat = 0.5
+        elif avg_change > -1.0:
+            heat = 0.35
+        else:
+            heat = 0.2
+        heat_map[sector] = round(heat, 3)
+
+    return heat_map
+
+
+def _load_ticker_sector_map(conn, tickers: List[str]) -> Dict[str, str]:
+    """Load ticker → sector mapping from Supabase tickers table."""
+    out: Dict[str, str] = {}
+    if not tickers or not conn:
+        return out
+    placeholders = ",".join(["%s"] * len(tickers))
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT ticker, sector FROM tickers WHERE ticker IN ({placeholders})",
+                tickers,
+            )
+            for row in cur.fetchall():
+                out[row[0]] = row[1] or "Unknown"
+    except Exception:
+        pass
+    return out
 
 
 # ── Supabase fundamental enrichment ─────────────────────────────────────────
 
 def _load_signal_data(conn, tickers: List[str]) -> Dict[str, dict]:
     out: Dict[str, dict] = {t: {} for t in tickers}
-    if not tickers:
+    if not tickers or not conn:
         return out
     placeholders = ",".join(["%s"] * len(tickers))
 
@@ -259,6 +296,7 @@ def _load_signal_data(conn, tickers: List[str]) -> Dict[str, dict]:
 # ── Scoring functions ────────────────────────────────────────────────────────
 
 def _detect_base(prices: pd.Series, lookback: int = 60) -> dict:
+    """Detect long consolidation base and whether price is breaking out of it."""
     if len(prices) < lookback + 10:
         return {"base_length": 0, "is_breaking": False, "range_pct": 1.0}
 
@@ -277,11 +315,12 @@ def _detect_base(prices: pd.Series, lookback: int = 60) -> dict:
 
 
 def score_base_breakout(prices: pd.Series, volumes: pd.Series) -> float:
+    """Score 0-1: long base + volume expansion on breakout."""
     base = _detect_base(prices)
 
     if not base["is_breaking"]:
         if base["base_length"] >= 40 and base["range_pct"] < 0.15:
-            return 0.5
+            return 0.5   # coiling tight — breakout potential
         if base["base_length"] >= 20:
             return 0.3
         return 0.1
@@ -303,31 +342,36 @@ def score_base_breakout(prices: pd.Series, volumes: pd.Series) -> float:
 
 
 def score_rsi_lift(rsi_series: pd.Series) -> float:
+    """
+    Score 0-1: RSI lifting from oversold/neutral into momentum.
+    Sweet spot: was below 45, now rising toward 50-65.
+    NOT overbought (>70) — that belongs on the momentum screen.
+    """
     if len(rsi_series) < 10:
         return 0.5
 
     rsi_now = rsi_series.iloc[-1]
-    rsi_10d_ago = rsi_series.iloc[-10]
-    rsi_rise = rsi_now - rsi_10d_ago
+    rsi_10d = rsi_series.iloc[-10]
+    rsi_rise = rsi_now - rsi_10d
 
-    if np.isnan(rsi_now) or np.isnan(rsi_10d_ago):
+    if np.isnan(rsi_now) or np.isnan(rsi_10d):
         return 0.3
 
-    # Was oversold/neutral, now lifting — the early setup we want
-    if rsi_10d_ago < 45 and rsi_now >= 50 and rsi_rise > 10:
-        return 1.0
-    if rsi_10d_ago < 50 and rsi_now >= 48 and rsi_rise > 5:
+    if rsi_10d < 45 and rsi_now >= 50 and rsi_rise > 10:
+        return 1.0   # was oversold, now lifting strongly — ideal early setup
+    if rsi_10d < 50 and rsi_now >= 48 and rsi_rise > 5:
         return 0.85
     if rsi_now >= 45 and rsi_rise > 3:
         return 0.7
     if rsi_now >= 40 and rsi_rise > 0:
         return 0.5
     if rsi_now > 70:
-        return 0.2  # too extended — momentum screen territory
+        return 0.2   # too extended — momentum screen territory
     return 0.3
 
 
 def score_fundamental_acceleration(sig: dict) -> float:
+    """Score 0-1: reward QoQ revenue/earnings acceleration and financial health."""
     score = 0.0
     weight_used = 0.0
 
@@ -366,78 +410,87 @@ def score_fundamental_acceleration(sig: dict) -> float:
         weight_used += 1.0
 
     if weight_used == 0:
-        return 0.4  # no data — neutral, let technicals decide
+        return 0.4  # no data — neutral, let technicals carry the score
     return score / weight_used
 
 
 def score_analyst_catalyst(sig: dict, current_price: float) -> float:
+    """
+    Score 0-1: big upside to analyst PT = still undiscovered.
+    No analyst coverage at all = also a potential hidden gem signal.
+    """
     grade = sig.get("grade_consensus", "")
     pt_avg = sig.get("price_target_avg")
 
-    if grade in ("Strong Buy", "Buy") and pt_avg and current_price > 0:
-        upside = (pt_avg - current_price) / current_price
-        if upside > 0.50:
-            return 1.0
-        if upside > 0.30:
-            return 0.8
-        if upside > 0.15:
-            return 0.6
-        return 0.4
-
     if pt_avg and current_price > 0:
         upside = (pt_avg - current_price) / current_price
-        if upside > 0.40:
-            return 0.9  # any grade with huge upside = undiscovered
-        if upside > 0.20:
-            return 0.6
-        return 0.4
+        if grade in ("Strong Buy", "Buy"):
+            if upside > 0.50:
+                return 1.0
+            if upside > 0.30:
+                return 0.8
+            if upside > 0.15:
+                return 0.6
+            return 0.4
+        else:
+            # Any grade with huge upside = analyst hasn't caught on yet
+            if upside > 0.50:
+                return 0.9
+            if upside > 0.30:
+                return 0.7
+            if upside > 0.15:
+                return 0.5
+            return 0.3
 
-    if not grade:
-        return 0.6  # no analyst coverage = potential hidden gem
+    if not grade and not pt_avg:
+        return 0.6  # no analyst coverage = potentially undiscovered
 
     return 0.3
 
 
 def score_market_cap_proxy(price: float, avg_vol: float) -> float:
-    """Reward small/mid cap using daily dollar volume as proxy."""
+    """
+    Score 0-1: reward small/mid cap using daily dollar volume as proxy.
+    Less covered = more room to run = higher score.
+    """
     if price <= 0 or avg_vol <= 0:
         return 0.5
 
     dollar_vol = price * avg_vol
 
     if dollar_vol < 5_000_000:
-        return 1.0   # micro cap — truly off radar
+        return 1.0    # micro cap — truly off radar
     if dollar_vol < 20_000_000:
-        return 0.85  # small cap
+        return 0.85   # small cap
     if dollar_vol < 100_000_000:
-        return 0.6   # mid cap
+        return 0.6    # mid cap
     if dollar_vol < 500_000_000:
-        return 0.3   # large cap
-    return 0.1       # mega cap — everyone already knows it
+        return 0.3    # large cap — already on everyone's screen
+    return 0.1        # mega cap — no edge here
 
 
-# ── Core scoring ─────────────────────────────────────────────────────────────
+# ── Core ticker scorer ───────────────────────────────────────────────────────
 
 def analyze_ticker(
     ticker: str,
     df: pd.DataFrame,
     sig: dict,
+    sector_heat_score: float = 0.5,
     snapshot: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Score a single ticker for up-and-comer potential. Returns None if filtered."""
-    if len(df) < 60:
+    """Score a single ticker for up-and-comer potential. Returns None if filtered out."""
+    if df.empty or len(df) < 60:
         return None
 
     close = df["close"]
     volume = df["volume"]
     last = close.iloc[-1]
 
-    # 52w high/low — prefer Polygon snapshot value, fall back to bars
+    # 52w high — prefer Polygon snapshot value (more accurate), fall back to bars
     hi_52w_snap = (snapshot or {}).get("hi_52w")
-    if hi_52w_snap and hi_52w_snap > 0:
-        hi_52w = hi_52w_snap
-    else:
-        hi_52w = close.iloc[-252:].max() if len(close) >= 252 else close.max()
+    hi_52w = hi_52w_snap if (hi_52w_snap and hi_52w_snap > 0) else (
+        close.iloc[-252:].max() if len(close) >= 252 else close.max()
+    )
 
     if hi_52w <= 0 or last <= 0:
         return None
@@ -449,28 +502,18 @@ def analyze_ticker(
     rsi = compute_rsi(close)
     ema_s = compute_ema(close, EMA_SHORT)
     ema_l = compute_ema(close, EMA_LONG)
-    vol_ratio = compute_volume_ratio(df)
 
+    # volume_ratio needs close + volume columns — both present in Polygon bars df
+    vol_ratio = compute_volume_ratio(df)
     avg_vol_30 = volume.iloc[-30:].mean() if len(volume) >= 30 else volume.mean()
 
     s_base    = score_base_breakout(close, volume)
     s_rsi     = score_rsi_lift(rsi)
     s_fund    = score_fundamental_acceleration(sig)
     s_cap     = score_market_cap_proxy(last, avg_vol_30)
+    s_sector  = sector_heat_score
     s_analyst = score_analyst_catalyst(sig, last)
     s_vol     = min(1.0, vol_ratio / 2.0) if not np.isnan(vol_ratio) else 0.5
-
-    # Sector heat — try sector_heat module, default neutral
-    s_sector = 0.5
-    try:
-        from sector_heat import sector_score
-        s_sector = sector_score(ticker)
-    except Exception:
-        try:
-            from screen.sector_heat import sector_score
-            s_sector = sector_score(ticker)
-        except Exception:
-            pass
 
     composite = (
         W_BASE_BREAKOUT  * s_base    +
@@ -492,9 +535,9 @@ def analyze_ticker(
     if s_fund >= 0.7:
         notes.append("accelerating fundamentals")
     if s_cap >= 0.85:
-        notes.append("small/mid cap — off-radar")
+        notes.append("small/mid — off-radar")
     if s_analyst >= 0.7:
-        notes.append("big upside to PT")
+        notes.append("big PT upside")
     if s_vol >= 0.7:
         notes.append("accumulation vol")
 
@@ -516,11 +559,13 @@ def analyze_ticker(
         "piotroski_score": sig.get("piotroski_score"),
         "grade_consensus": sig.get("grade_consensus", ""),
         "price_target_avg": sig.get("price_target_avg"),
+        "sector": sig.get("sector", ""),
         "rationale": "; ".join(notes) if notes else "early potential",
         "_s_base": round(s_base, 2),
         "_s_rsi": round(s_rsi, 2),
         "_s_fund": round(s_fund, 2),
         "_s_cap": round(s_cap, 2),
+        "_s_sector": round(s_sector, 2),
         "_s_analyst": round(s_analyst, 2),
     }
 
@@ -531,118 +576,155 @@ def run_screen(
     min_score: float = 35.0,
     top_n: int = 10,
     single_ticker: Optional[str] = None,
+    with_synthesis: bool = False,
 ) -> List[dict]:
     """
-    Run the hidden gems / up-and-comer screen.
+    Run the hidden gems / up-and-comer screen against the full US market.
 
-    Phase 1: Polygon snapshot of ALL ~10k US stocks → cheap filter to candidates.
-    Phase 2: Fetch 300d daily bars from Polygon for each candidate → score.
-    Phase 3: Enrich with Supabase fundamentals for tickers we have data on.
+    Phase 1: Polygon snapshot all ~10k US equities → cheap filter → ~300-600 candidates.
+    Phase 2: 300d daily bars from Polygon per candidate → score.
+    Phase 3: Supabase fundamentals + sector map enrichment.
+    Phase 4 (optional): Grok synthesis narrative.
 
-    Falls back to Supabase daily_prices universe if Polygon is unavailable.
+    Falls back to Supabase daily_prices universe if Polygon unavailable.
     """
+    conn = None
+    try:
+        conn = _conn()
+    except Exception:
+        pass
+
     # ── Single ticker shortcut ───────────────────────────────────────────────
     if single_ticker:
         ticker = single_ticker.upper()
-        bars = _fetch_bars_polygon(ticker)
-        df = _bars_to_df(bars)
-        if df.empty:
-            # Fall back to Supabase
+        df = _fetch_bars_polygon(ticker)
+
+        if df.empty and conn:
             try:
                 from reversal_screen import load_prices
-                conn = _conn()
                 frames = load_prices(conn, [ticker])
                 df = frames.get(ticker, pd.DataFrame())
             except Exception:
                 pass
 
         sig = {}
-        try:
-            conn = _conn()
+        sector_map = {}
+        if conn:
             sig = _load_signal_data(conn, [ticker]).get(ticker, {})
+            sector_map = _load_ticker_sector_map(conn, [ticker])
+            sig["sector"] = sector_map.get(ticker, "")
+
+        result = analyze_ticker(ticker, df, sig, sector_heat_score=0.5)
+        results = [result] if result else []
+
+        if with_synthesis and results:
+            results = _synthesize(results)
+        return results
+
+    # ── Phase 1: Polygon full market snapshot ────────────────────────────────
+    print("[upcomer] Phase 1: fetching all US equity snapshots...", file=sys.stderr)
+    candidates = _fetch_all_snapshots()
+    snap_map = {c["ticker"]: c for c in candidates}
+    use_polygon = bool(candidates)
+
+    if use_polygon:
+        print(f"[upcomer] Phase 1 complete: {len(candidates)} candidates after pre-filter", file=sys.stderr)
+    else:
+        print("[upcomer] Polygon unavailable — falling back to Supabase universe", file=sys.stderr)
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT DISTINCT ticker FROM daily_prices "
+                        "WHERE trade_date >= CURRENT_DATE - INTERVAL '10 days'"
+                    )
+                    db_tickers = [r[0] for r in cur.fetchall()]
+                candidates = [{"ticker": t, "drawdown_est": None} for t in db_tickers]
+                snap_map = {}
+            except Exception as e:
+                return [{"error": f"Data unavailable: {e}"}]
+
+    # Cap and sort — confirmed drawdown candidates first
+    confirmed = [c for c in candidates if c.get("drawdown_est") is not None]
+    unconfirmed = [c for c in candidates if c.get("drawdown_est") is None]
+    ordered = (confirmed + unconfirmed)[:MAX_CANDIDATES]
+    all_tickers = [c["ticker"] for c in ordered]
+
+    # ── Phase 3 prep: load fundamentals + sector map in bulk ─────────────────
+    sigs: Dict[str, dict] = {t: {} for t in all_tickers}
+    sector_map: Dict[str, str] = {}
+    if conn:
+        try:
+            sigs = _load_signal_data(conn, all_tickers)
+        except Exception:
+            pass
+        try:
+            sector_map = _load_ticker_sector_map(conn, all_tickers)
+            for t in all_tickers:
+                sigs[t]["sector"] = sector_map.get(t, "Unknown")
         except Exception:
             pass
 
-        result = analyze_ticker(ticker, df, sig)
-        return [result] if result else []
+    # Build sector heat map from snapshot data + sector assignments
+    sector_heat_map = _build_sector_heat_map(candidates, sector_map)
 
-    # ── Phase 1: Polygon snapshot of full US market ──────────────────────────
-    print(f"[upcomer] Phase 1: fetching all US equity snapshots...", file=sys.stderr)
-    snapshots = _fetch_all_snapshots()
-    snap_map = {s["ticker"]: s for s in snapshots}
-
-    if snapshots:
-        candidates = _phase1_filter(snapshots)
-        print(f"[upcomer] Phase 1: {len(snapshots)} tickers → {len(candidates)} candidates after drawdown filter", file=sys.stderr)
-    else:
-        # Polygon unavailable — fall back to Supabase daily_prices universe
-        print("[upcomer] Polygon unavailable — falling back to Supabase universe", file=sys.stderr)
-        candidates = []
-        try:
-            conn = _conn()
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT DISTINCT ticker FROM daily_prices "
-                    "WHERE trade_date >= CURRENT_DATE - INTERVAL '10 days'"
-                )
-                tickers_db = [r[0] for r in cur.fetchall()]
-            candidates = [{"ticker": t, "drawdown_est": None} for t in tickers_db]
-        except Exception as e:
-            return [{"error": f"Data unavailable: {e}"}]
-
-    # ── Phase 2: Historical bars + scoring ───────────────────────────────────
-    # Sort candidates: prioritize those with confirmed drawdown in range
-    confirmed = [c for c in candidates if c.get("drawdown_est") is not None]
-    unconfirmed = [c for c in candidates if c.get("drawdown_est") is None]
-    ordered = confirmed + unconfirmed
-
-    # Cap at 600 for performance — already pre-filtered by drawdown
-    ordered = ordered[:600]
-
+    # ── Phase 2: historical bars + scoring ───────────────────────────────────
     print(f"[upcomer] Phase 2: scoring {len(ordered)} candidates...", file=sys.stderr)
-
-    # Load Supabase fundamentals for all candidates in one query
-    all_tickers = [c["ticker"] for c in ordered]
-    sigs: Dict[str, dict] = {}
-    try:
-        conn = _conn()
-        sigs = _load_signal_data(conn, all_tickers)
-    except Exception:
-        sigs = {t: {} for t in all_tickers}
-
     results = []
+
     for cand in ordered:
         ticker = cand["ticker"]
         snap = snap_map.get(ticker)
 
-        if snapshots:
-            # Fetch bars from Polygon
-            bars = _fetch_bars_polygon(ticker)
-            df = _bars_to_df(bars)
+        if use_polygon:
+            df = _fetch_bars_polygon(ticker)
         else:
-            # Supabase fallback
-            try:
-                from reversal_screen import load_prices
-                frames = load_prices(conn, [ticker])
-                df = frames.get(ticker, pd.DataFrame())
-            except Exception:
-                df = pd.DataFrame()
+            df = pd.DataFrame()
+            if conn:
+                try:
+                    from reversal_screen import load_prices
+                    frames = load_prices(conn, [ticker])
+                    df = frames.get(ticker, pd.DataFrame())
+                except Exception:
+                    pass
 
         if df.empty or len(df) < 60:
             continue
 
         sig = sigs.get(ticker, {})
-        result = analyze_ticker(ticker, df, sig, snapshot=snap)
+        ticker_sector = sector_map.get(ticker, "Unknown")
+        sector_heat = sector_heat_map.get(ticker_sector, 0.5)
+
+        result = analyze_ticker(ticker, df, sig,
+                                sector_heat_score=sector_heat,
+                                snapshot=snap)
         if result and result["score"] >= min_score:
             results.append(result)
 
-        # Small delay to be a good API citizen (Polygon Starter = unlimited but rate-limited)
-        if snapshots:
-            time.sleep(0.05)
+        if use_polygon:
+            time.sleep(0.05)  # be a good Polygon API citizen
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    print(f"[upcomer] Done. {len(results)} gems found above {min_score} score.", file=sys.stderr)
-    return results[:top_n]
+    results = results[:top_n]
+    print(f"[upcomer] Done. {len(results)} gems found above score {min_score}.", file=sys.stderr)
+
+    # ── Phase 4: optional Grok synthesis ────────────────────────────────────
+    if with_synthesis and results:
+        results = _synthesize(results)
+
+    return results
+
+
+def _synthesize(results: List[dict]) -> List[dict]:
+    """Add Grok narrative synthesis to the result set."""
+    try:
+        from analysis.grok_synthesizer import synthesize_screen_results
+        narrative = synthesize_screen_results("upcomer", results, len(results))
+        if narrative:
+            results[0]["synthesis"] = narrative
+    except Exception:
+        pass
+    return results
 
 
 # ── CLI output ───────────────────────────────────────────────────────────────
@@ -652,27 +734,33 @@ def _print_results(results: List[dict]) -> None:
         print("No hidden gems found above threshold.")
         return
 
-    print(f"\n{'─'*95}")
+    print(f"\n{'─'*100}")
     print(f"  WATCHTOWER — HIDDEN GEMS / UP-AND-COMERS   ({date.today()})")
-    print(f"{'─'*95}")
+    print(f"{'─'*100}")
     print(f"  {'TICKER':<8} {'SCORE':>5}  {'PRICE':>7}  {'52wHi':>7}  {'DD%':>5}  "
-          f"{'RSI':>5}  {'GRADE':<14}  RATIONALE")
-    print(f"{'─'*95}")
+          f"{'RSI':>5}  {'SECTOR':<18}  RATIONALE")
+    print(f"{'─'*100}")
 
     for r in results:
-        grade = r.get("grade_consensus") or "—"
+        sector = (r.get("sector") or "")[:16]
         pt = r.get("price_target_avg")
-        grade_str = f"{grade[:8]} ${pt:.0f}" if pt else grade[:12]
+        pt_str = f" PT${pt:.0f}" if pt else ""
         print(
             f"  {r['ticker']:<8} {r['score']:>5.0f}  "
             f"${r['current_price']:>6.2f}  "
             f"${r['hi_52w']:>6.2f}  "
             f"{r['drawdown_pct']:>4.0f}%  "
             f"{r.get('rsi') or 0:>5.1f}  "
-            f"{grade_str:<16}  "
-            f"{r.get('rationale', '')}"
+            f"{sector:<18}  "
+            f"{r.get('rationale', '')}{pt_str}"
         )
-    print(f"{'─'*95}\n")
+
+    if results[0].get("synthesis"):
+        print(f"\n{'─'*100}")
+        print("GROK SYNTHESIS:")
+        print(results[0]["synthesis"])
+
+    print(f"{'─'*100}\n")
 
 
 if __name__ == "__main__":
@@ -680,11 +768,13 @@ if __name__ == "__main__":
     parser.add_argument("--min-score", type=float, default=35.0)
     parser.add_argument("--top-n", type=int, default=15)
     parser.add_argument("--ticker", type=str, default=None)
+    parser.add_argument("--with-synthesis", action="store_true")
     args = parser.parse_args()
 
     results = run_screen(
         min_score=args.min_score,
         top_n=args.top_n,
         single_ticker=args.ticker,
+        with_synthesis=args.with_synthesis,
     )
     _print_results(results)
