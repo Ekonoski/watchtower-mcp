@@ -45,7 +45,8 @@ def _get_screens():
     from screen.breakdown_screen import run_screen as run_breakdown
     from screen.master_screen import run_screen as run_master
     from screen.insider_burst_screen import run_screen as run_insider
-    return run_reversal, run_momentum, run_breakdown, run_master, run_insider
+    from screen.volume_burst_screen import run_screen as run_volume_burst
+    return run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_volume_burst
 
 
 @mcp.tool()
@@ -62,10 +63,11 @@ def watchtower_run_screen(
     - breakdown: bearish ideas
     - master: broad fundamental composite
     - insider: insider activity driven
+    - volume_burst: unusual volume surges — breakouts and exhaustion signals
 
     Use with_plan=true to include suggested trade plan (ATR stop + position size).
     """
-    run_reversal, run_momentum, run_breakdown, run_master, run_insider = _get_screens()
+    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_volume_burst = _get_screens()
 
     if screen == "reversal":
         results = run_reversal(min_drawdown=15.0)[:top_n]
@@ -77,8 +79,10 @@ def watchtower_run_screen(
         results = run_master()[:top_n]
     elif screen == "insider":
         results = run_insider()[:top_n]
+    elif screen == "volume_burst":
+        results = run_volume_burst(min_surge=1.75)[:top_n]
     else:
-        return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider"
+        return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider, volume_burst"
 
     lines = [f"**{screen.upper()} SCREEN RESULTS** (Top {len(results)})"]
     for r in results:
@@ -100,7 +104,7 @@ def watchtower_run_screen(
 @mcp.tool()
 def watchtower_get_momentum(top_n: int = 5) -> str:
     """Get current top momentum / up-and-comers from Watchtower's momentum sleeve."""
-    _, run_momentum, *_ = _get_screens()
+    _, run_momentum, *_ = _get_screens()  # noqa: F841
     results = run_momentum(max_pullback=12.0)[:top_n]
     lines = ["**MOMENTUM SCREEN RESULTS** (Top {})".format(len(results))]
     for r in results:
