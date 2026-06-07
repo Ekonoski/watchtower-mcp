@@ -41,7 +41,8 @@ def _get_screens():
     from screen.breakdown_screen import run_screen as run_breakdown
     from screen.master_screen import run_screen as run_master
     from screen.insider_burst_screen import run_screen as run_insider
-    return run_reversal, run_momentum, run_breakdown, run_master, run_insider
+    from screen.upcomer_screen import run_screen as run_upcomer
+    return run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer
 
 
 @mcp.tool()
@@ -54,14 +55,15 @@ def watchtower_run_screen(
 
     Supports:
     - reversal: beaten-down quality stocks turning up (8/13 EMA, RSI recovery, etc.)
-    - momentum: strong up-and-comers
-    - breakdown: bearish ideas
+    - momentum: strong getting stronger — near 52w highs, established trends
+    - breakdown: bearish ideas, shorting candidates
     - master: broad fundamental composite
     - insider: insider activity driven
+    - upcomer: hidden gems / 10x potential — off-radar small/mid caps breaking out of bases
 
     Use with_plan=true to include suggested trade plan (ATR stop + position size).
     """
-    run_reversal, run_momentum, run_breakdown, run_master, run_insider = _get_screens()
+    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer = _get_screens()
 
     if screen == "reversal":
         results = run_reversal(min_drawdown=15.0)[:top_n]
@@ -73,8 +75,10 @@ def watchtower_run_screen(
         results = run_master()[:top_n]
     elif screen == "insider":
         results = run_insider()[:top_n]
+    elif screen in ("upcomer", "hidden_gems", "gems"):
+        results = run_upcomer(min_score=30.0, top_n=top_n)
     else:
-        return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider"
+        return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider, upcomer"
 
     lines = [f"**{screen.upper()} SCREEN RESULTS** (Top {len(results)})"]
     for r in results:
@@ -114,6 +118,47 @@ def watchtower_get_bearish_ideas(top_n: int = 5) -> str:
     for r in results:
         score = r.get("breakdown_score", "N/A")
         lines.append(f"- **{r.get('ticker')}** | {r.get('company_name', '')[:28]} | Score: {score}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_hidden_gems(top_n: int = 10, broad: bool = False) -> str:
+    """
+    Scan for hidden gems and up-and-comer stocks — completely separate from the momentum screen.
+
+    Finds off-radar small/mid cap stocks that:
+    - Are 18-60% off their 52-week highs (NOT near highs like momentum names)
+    - Are breaking out of long consolidation bases on expanding volume
+    - Show fundamental acceleration (QoQ revenue/earnings improving)
+    - Have big upside to analyst price targets (or no analyst coverage yet)
+    - Small/mid cap bias — the less covered, the more potential
+
+    These are early-stage 10x candidates, not established momentum names.
+    Set broad=true to scan the full universe (slower).
+    """
+    *_, run_upcomer = _get_screens()
+    results = run_upcomer(min_score=30.0, top_n=top_n, broad=broad)
+    if not results:
+        return "No hidden gems found above threshold right now."
+
+    lines = [f"**HIDDEN GEMS / UP-AND-COMER SCREEN** (Top {len(results)})"]
+    lines.append("*Stocks 18-60% off highs, breaking bases, with fundamental acceleration*\n")
+    for r in results:
+        score = r.get("score", 0)
+        ticker = r.get("ticker", "")
+        price = r.get("current_price", 0)
+        dd = r.get("drawdown_pct", 0)
+        rsi = r.get("rsi") or 0
+        rationale = r.get("rationale", "")
+        pt = r.get("price_target_avg")
+        upside_str = ""
+        if pt and price > 0:
+            upside = (pt - price) / price * 100
+            upside_str = f" | PT upside: {upside:+.0f}%"
+        lines.append(
+            f"- **{ticker}** | Score: {score:.0f} | ${price:.2f} | "
+            f"Off high: {dd:.0f}% | RSI: {rsi:.0f}{upside_str} | {rationale}"
+        )
     return "\n".join(lines)
 
 
