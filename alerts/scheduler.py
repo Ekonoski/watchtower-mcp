@@ -40,27 +40,49 @@ def start_scheduler():
     et = pytz.timezone("America/New_York")
     scheduler = BackgroundScheduler(timezone=et)
 
-    # Every 30 min, Mon–Fri, 7:00 AM – 4:00 PM ET
-    # Fires at: 7:00, 7:30, 8:00, 8:30, 9:00, 9:30, 10:00, 10:30 ... 15:30
+    # Pre-market: every 30 min, 7:00–9:15 AM ET
+    # Fires at: 7:00, 7:30, 8:00, 8:30, 9:00
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="7-15", minute="0,30", timezone=et),
-        id="intraday_scan_30min",
+        CronTrigger(day_of_week="mon-fri", hour="7-8", minute="0,30", timezone=et),
+        id="intraday_scan_premarket",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="0", timezone=et),
+        id="intraday_scan_900",
         replace_existing=True,
     )
 
-    # Extra scan at 9:45 AM ET — fills the 15-min gap at the open (9:30 → 9:45 → 10:00)
-    # Gap-and-go and VWAP breakout setups form fast in the first 30 minutes
+    # Market open through noon: every 15 min, 9:30 AM–12:00 PM ET
+    # Fires at: 9:30, 9:45, 10:00, 10:15, 10:30, 10:45, 11:00, 11:15, 11:30, 11:45, 12:00
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="9", minute="45", timezone=et),
-        id="intraday_scan_open_945",
+        CronTrigger(day_of_week="mon-fri", hour="9-11", minute="15,30,45,0", timezone=et),
+        id="intraday_scan_morning_15min",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="12", minute="0", timezone=et),
+        id="intraday_scan_noon",
+        replace_existing=True,
+    )
+
+    # Afternoon: every 30 min, 12:30–4:00 PM ET
+    # Fires at: 12:30, 13:00, 13:30, 14:00, 14:30, 15:00, 15:30
+    scheduler.add_job(
+        run_scheduled_scan,
+        CronTrigger(day_of_week="mon-fri", hour="12-15", minute="30,0", timezone=et),
+        id="intraday_scan_afternoon_30min",
         replace_existing=True,
     )
 
     scheduler.start()
     log.info(
         "[scheduler] Intraday alert scheduler started (America/New_York). "
-        "30-min cadence 7 AM–4 PM ET + extra scan at 9:45 AM for open window."
+        "Pre-market 30-min (7-9 AM) → 15-min at open through noon (9:30 AM-12 PM) "
+        "→ 30-min afternoon (12:30-4 PM ET)."
     )
     return scheduler
