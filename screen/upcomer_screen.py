@@ -363,12 +363,6 @@ def analyze_ticker(
     if drawdown < MIN_DRAWDOWN or drawdown > MAX_DRAWDOWN:
         return None
 
-    # Must be above long-term 200 EMA (basic survival)
-    ema_200 = compute_ema(close, 200)
-    if len(ema_200) > 0 and not np.isnan(ema_200.iloc[-1]):
-        if last < ema_200.iloc[-1] * 0.80:
-            return None  # broken down too far below 200d
-
     rsi = compute_rsi(close)
     ema_s = compute_ema(close, EMA_SHORT)
     ema_l = compute_ema(close, EMA_LONG)
