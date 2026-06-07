@@ -117,6 +117,55 @@ def watchtower_run_screen(
 
 
 @mcp.tool()
+def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: bool = False) -> str:
+    """Scan for intraday setups forming right now using live Polygon data (15-min delayed on Starter tier).
+
+    Detects: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL, VOLUME_SURGE.
+
+    Use ticker="ONDS" to check a specific stock intraday.
+    Use with_synthesis=true for Grok AI narrative on the top setups.
+    Best used during market hours (9:30 AM - 4:00 PM ET).
+    """
+    from screen.intraday_screen import run_screen as run_intraday
+    t = ticker.upper() if ticker else None
+    results = run_intraday(single_ticker=t)[:top_n]
+
+    if not results:
+        return "No intraday setups detected above threshold right now."
+    if results and results[0].get("error"):
+        return f"Intraday scan error: {results[0]['error']}"
+
+    # Check market hours from first result
+    is_market_hours = results[0].get("is_market_hours", True) if results else True
+    minutes_elapsed = results[0].get("minutes_elapsed", 0) if results else 0
+    header = "**INTRADAY SCAN** (Live Polygon — 15-min delayed)"
+    if not is_market_hours:
+        header += " ⚠️ Market closed — showing last session data"
+    else:
+        header += f" | {minutes_elapsed}min into session"
+
+    lines = [header]
+    for r in results:
+        line = (f"- **{r.get('ticker')}** | {r.get('signal_type',''):<18} | Score: {r.get('score',0):.0f}"
+                f" | {r.get('change_pct',0):+.1f}% | Vol: {r.get('vol_pace_ratio',0):.1f}x"
+                f" | {'↑VWAP' if r.get('above_vwap') else '↓VWAP'}"
+                f" | ${r.get('current_price',0):.2f}"
+                f"  {r.get('rationale','')}")
+        lines.append(line)
+
+    if with_synthesis:
+        try:
+            from analysis.grok_synthesizer import synthesize_screen_results
+            narrative = synthesize_screen_results("intraday", results, top_n=min(top_n, len(results)))
+            if narrative:
+                lines.append(f"\n**AI Analysis:**\n{narrative}")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
     """Score any single stock across all Watchtower screens and return a full multi-sleeve report.
 
@@ -129,12 +178,14 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
 
     lines = [f"**WATCHTOWER FULL ANALYSIS — {t}**"]
 
+    from screen.intraday_screen import run_screen as run_intraday
     screen_fns = [
         ("reversal",     lambda: run_reversal(min_drawdown=0.0, single_ticker=t, show_all=True)),
         ("momentum",     lambda: run_momentum(max_pullback=100.0, single_ticker=t)),
         ("breakdown",    lambda: run_breakdown(min_breakdown=0.0, single_ticker=t)),
         ("master",       lambda: run_master(single_ticker=t)),
         ("volume_burst", lambda: run_volume_burst(min_surge=0.5, single_ticker=t)),
+        ("intraday",     lambda: run_intraday(min_score=0.0, single_ticker=t)),
     ]
 
     best_results = []
