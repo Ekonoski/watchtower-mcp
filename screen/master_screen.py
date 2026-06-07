@@ -38,6 +38,7 @@ from reversal_screen import (
     compute_volume_ratio,
     compute_spy_regime,
     EMA_SHORT, EMA_LONG, EMA_TREND, RSI_PERIOD,
+    _patch_polygon_snapshots,
 )
 
 try:
@@ -324,6 +325,8 @@ def run_screen(single_ticker: str = None, broad: bool = False,
         prices = load_prices(conn, load_tickers)
     finally:
         conn.close()
+
+    prices = _patch_polygon_snapshots(prices)
 
     spy_regime = None
     if "SPY" in prices:

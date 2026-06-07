@@ -52,6 +52,7 @@ from reversal_screen import (
     compute_volume_ratio,  # up/dn ratio; we will invert for down-vol
     EMA_SHORT, EMA_LONG, EMA_TREND,
     RSI_PERIOD,
+    _patch_polygon_snapshots,
 )
 
 # Polygon for live high-fidelity data + options (GMMSS)

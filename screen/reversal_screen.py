@@ -339,6 +339,51 @@ def score_price_vs_ema(close: float, ema50: float) -> float:
     return 0.0
 
 
+# ── Polygon snapshot refresh ─────────────────────────────────────────────────
+
+def _patch_polygon_snapshots(frames: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+    """Refresh today's close/volume for all tickers in one Polygon snapshot call.
+
+    Gracefully returns frames unchanged if Polygon key is missing or any error occurs.
+    """
+    try:
+        from analysis.polygon_data import get_client
+        client = get_client()
+        if client is None:
+            return frames
+
+        tickers_req = ",".join(list(frames.keys())[:250])
+        snaps = client.get_snapshot_all("stocks", params={"tickers": tickers_req})
+        today = pd.Timestamp(date.today())
+
+        for snap in (snaps or []):
+            try:
+                t = snap.ticker
+                if t not in frames:
+                    continue
+                day = getattr(snap, "day", None)
+                if day is None:
+                    continue
+                close_val = getattr(day, "c", None)
+                if not close_val:
+                    continue
+                df = frames[t]
+                if not df.empty and df["trade_date"].iloc[-1] >= today:
+                    continue
+                vol_val = float(getattr(day, "v", None) or df["volume"].iloc[-1])
+                new_row = pd.DataFrame([{
+                    "trade_date": today,
+                    "close": float(close_val),
+                    "volume": vol_val,
+                }])
+                frames[t] = pd.concat([df, new_row], ignore_index=True)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return frames
+
+
 # ── Main analysis ─────────────────────────────────────────────────────────────
 
 def analyze_ticker(df: pd.DataFrame) -> Optional[dict]:
@@ -430,15 +475,11 @@ def run_screen(min_drawdown: float = 15.0, single_ticker: str = None,
     finally:
         conn.close()
 
+    prices = _patch_polygon_snapshots(prices)
+
     spy_regime = None
     if "SPY" in prices:
         spy_regime = compute_spy_regime(prices["SPY"])
-
-    # Live Polygon enrichment (optional, best-effort)
-    try:
-        from analysis.polygon_data import compute_live_technicals_from_polygon
-    except Exception:
-        compute_live_technicals_from_polygon = lambda t, d=60: {}
 
     results = []
     for t in tickers:
@@ -449,14 +490,8 @@ def run_screen(min_drawdown: float = 15.0, single_ticker: str = None,
         if analysis is None:
             continue
 
-        try:
-            poly_live = compute_live_technicals_from_polygon(t)
-            if poly_live:
-                if poly_live.get("live_vol_surge"):
-                    analysis["vol_surge"] = poly_live["live_vol_surge"]
-                analysis["data_source"] = poly_live.get("live_data_source", "db+polygon")
-        except Exception:
-            pass
+        # Update vol_surge from already-patched prices DataFrame
+        analysis["vol_surge"] = compute_volume_surge(df)
 
         fundamentals = quality.get(t, {})
 

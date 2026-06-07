@@ -53,6 +53,7 @@ from reversal_screen import (
     compute_spy_regime,
     EMA_SHORT, EMA_LONG, EMA_TREND,
     RSI_PERIOD,
+    _patch_polygon_snapshots,
 )
 
 # Polygon for live high-fidelity data (GMMSS momentum/up-and-comers)
@@ -321,6 +322,8 @@ def run_screen(max_pullback: float = 10.0, single_ticker: str = None,
         prices = load_prices(conn, load_tickers)
     finally:
         conn.close()
+
+    prices = _patch_polygon_snapshots(prices)
 
     spy_regime = None
     if "SPY" in prices:

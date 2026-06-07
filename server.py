@@ -54,6 +54,7 @@ def watchtower_run_screen(
     screen: str,
     top_n: int = 5,
     with_plan: bool = True,
+    with_synthesis: bool = False,
 ) -> str:
     """Run one of Watchtower's stock screens live.
 
@@ -66,6 +67,7 @@ def watchtower_run_screen(
     - volume_burst: unusual volume surges — breakouts and exhaustion signals
 
     Use with_plan=true to include suggested trade plan (ATR stop + position size).
+    Use with_synthesis=true to append a Grok AI narrative synthesizing the top results (requires XAI_API_KEY).
     """
     run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_volume_burst = _get_screens()
 
@@ -97,6 +99,15 @@ def watchtower_run_screen(
             p = r["plan"]
             line += f" | Stop: ${p.get('stop_price', 0):.2f} | Size: {p.get('position_pct', 0):.1f}%"
         lines.append(line)
+
+    if with_synthesis:
+        try:
+            from analysis.grok_synthesizer import synthesize_screen_results
+            narrative = synthesize_screen_results(screen, results, top_n=min(top_n, len(results)))
+            if narrative:
+                lines.append(f"\n**AI Analysis:**\n{narrative}")
+        except Exception:
+            pass
 
     return "\n".join(lines)
 

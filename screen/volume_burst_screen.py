@@ -46,6 +46,7 @@ from reversal_screen import (
     compute_volume_surge,
     compute_spy_regime,
     EMA_SHORT, EMA_LONG, EMA_TREND, RSI_PERIOD,
+    _patch_polygon_snapshots,
 )
 
 # Minimum surge to even consider a ticker
@@ -213,6 +214,8 @@ def run_screen(
         prices = load_prices(conn, load_tickers)
     finally:
         conn.close()
+
+    prices = _patch_polygon_snapshots(prices)
 
     spy_regime = None
     if "SPY" in prices:
