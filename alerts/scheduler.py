@@ -19,7 +19,7 @@ def run_scheduled_scan():
         # Run intraday price/volume scan
         results = run_screen(min_score=40.0)  # broad=True by default — full US market
 
-        # Run news scan in parallel — always, even if no intraday signals
+        # Run news scan — always, even if no intraday signals
         news_alerts = []
         try:
             news_alerts = run_news_scan(lookback_minutes=35)
@@ -30,6 +30,22 @@ def run_scheduled_scan():
         if not results and not news_alerts:
             log.info("[scheduler] No intraday signals or news catalysts above threshold.")
             return
+
+        # Add social buzz for top intraday signal tickers
+        social_buzz_map = {}
+        if results:
+            try:
+                from analysis.social_buzz import query_ticker_sentiment
+                # Only fetch for top 5 signals to keep it fast
+                for r in results[:5]:
+                    ticker = r.get("ticker", "")
+                    if ticker:
+                        buzz = query_ticker_sentiment(ticker)
+                        social_buzz_map[ticker] = buzz
+                        r["social_buzz"] = buzz
+                log.info(f"[scheduler] Social buzz fetched for {len(social_buzz_map)} tickers.")
+            except Exception as e:
+                log.warning(f"[scheduler] Social buzz error (non-fatal): {e}")
 
         is_mkt = results[0].get("is_market_hours", True) if results else True
         mins = results[0].get("minutes_elapsed", 0) if results else 0
@@ -45,6 +61,21 @@ def run_scheduled_scan():
         )
     except Exception as e:
         log.error(f"[scheduler] Intraday scan error: {e}")
+
+
+def run_daily_social_scan():
+    """
+    Daily social buzz scan — runs at 4:30 PM ET after market close.
+    Fetches Grok X sentiment for all tickers in social_buzz table,
+    writes sentiment + rank_surge back to Supabase.
+    """
+    try:
+        from analysis.social_buzz import run_social_buzz_scan
+        log.info("[scheduler] Starting daily social buzz scan...")
+        results = run_social_buzz_scan()
+        log.info(f"[scheduler] Social buzz scan: {len(results)} tickers updated.")
+    except Exception as e:
+        log.error(f"[scheduler] Social buzz scan error: {e}")
 
 
 def run_daily_gems_scan():
@@ -118,6 +149,15 @@ def start_scheduler():
         run_scheduled_scan,
         CronTrigger(day_of_week="mon-fri", hour="12-15", minute="30,0", timezone=et),
         id="intraday_scan_afternoon_30min",
+        replace_existing=True,
+    )
+
+    # Daily social buzz scan — 4:30 PM ET, Mon-Fri (after market close)
+    # Fetches Grok X sentiment for all tracked tickers, writes to social_buzz table.
+    scheduler.add_job(
+        run_daily_social_scan,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="30", timezone=et),
+        id="daily_social_buzz",
         replace_existing=True,
     )
 

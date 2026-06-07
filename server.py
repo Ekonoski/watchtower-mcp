@@ -296,6 +296,16 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
         lines.append("")
         lines.append("*Sleeves with errors: " + ", ".join(s["sleeve"] for s in errored) + "*")
 
+    # Social buzz — live X sentiment via Grok
+    try:
+        from analysis.social_buzz import query_ticker_sentiment, format_buzz_for_display
+        buzz = query_ticker_sentiment(ticker)
+        lines.append("")
+        lines.append("**X / SOCIAL BUZZ**")
+        lines.append(format_buzz_for_display(ticker, buzz))
+    except Exception:
+        pass
+
     # Grok synthesis across all sleeves
     if with_synthesis:
         try:
@@ -311,12 +321,25 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
                     context += f" — {rationale}"
                 context += "\n"
 
+            # Include social sentiment in synthesis context if available
+            try:
+                from analysis.social_buzz import query_ticker_sentiment
+                buzz = query_ticker_sentiment(ticker)
+                context += (
+                    f"\nX/Social: {buzz.get('sentiment','neutral')} "
+                    f"(score {buzz.get('sentiment_score', 0):+.2f}, "
+                    f"{buzz.get('buzz_level','low')} buzz) — {buzz.get('summary','')}"
+                )
+            except Exception:
+                pass
+
             resp = grok.chat(
                 system=(
                     "You are Eric Konoski's personal trading analyst on the Watchtower GMMSS system. "
-                    "Given multi-sleeve scores for a single stock, synthesize a clear, actionable read. "
-                    "Be direct. State the dominant signal, the conviction level, the best entry approach, "
-                    "and the main risk. 3-4 sentences max."
+                    "Given multi-sleeve scores AND live X/social sentiment for a single stock, "
+                    "synthesize a clear, actionable read. Be direct. State the dominant signal, "
+                    "conviction level, best entry approach, and the main risk. "
+                    "Factor in social sentiment as a confirming or contradicting signal. 3-4 sentences max."
                 ),
                 user=context,
                 json_mode=False,
@@ -332,6 +355,27 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
             pass
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_social_buzz(ticker: str) -> str:
+    """
+    Get live X / social media sentiment for a stock via Grok's real-time X access.
+
+    Returns what traders are saying on X right now — sentiment direction,
+    buzz level, a 1-sentence summary, and any notable narrative driving chatter.
+    This is genuinely real-time even on our delayed data setup since Grok
+    queries X directly.
+    """
+    ticker = ticker.upper().strip()
+    try:
+        from analysis.social_buzz import query_ticker_sentiment, format_buzz_for_display
+        buzz = query_ticker_sentiment(ticker)
+        lines = [f"**X / Social Buzz — ${ticker}**", ""]
+        lines.append(format_buzz_for_display(ticker, buzz))
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Social buzz unavailable for ${ticker}: {e}"
 
 
 @mcp.tool()

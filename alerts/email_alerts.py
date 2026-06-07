@@ -231,6 +231,23 @@ def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool
         price = r.get("current_price", 0)
         rationale = r.get("rationale", "")
 
+        # Social buzz sub-row
+        buzz = r.get("social_buzz", {})
+        buzz_html = ""
+        if buzz and buzz.get("summary"):
+            buzz_sentiment = buzz.get("sentiment", "neutral")
+            buzz_score = buzz.get("sentiment_score", 0.0)
+            buzz_summary = buzz.get("summary", "")
+            buzz_level = buzz.get("buzz_level", "low")
+            buzz_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "⚪"}.get(buzz_sentiment, "⚪")
+            buzz_level_icon = {"high": "🔥", "medium": "📢", "low": "💤"}.get(buzz_level, "")
+            buzz_html = f"""
+        <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb;">
+          <td colspan="8" style="padding:4px 10px 8px 28px;font-size:11px;color:#6b7280;">
+            {buzz_emoji} X/Social: <strong>{buzz_sentiment}</strong> ({buzz_score:+.2f}) {buzz_level_icon} — {buzz_summary}
+          </td>
+        </tr>"""
+
         rows_html += f"""
         <tr>
           <td style="padding:8px 10px;font-weight:bold;font-size:14px;">{ticker}</td>
@@ -246,7 +263,7 @@ def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool
           <td style="padding:8px 10px;text-align:right;">${price:.2f}</td>
           <td style="padding:8px 10px;color:#6b7280;font-size:13px;">{rationale}</td>
         </tr>
-        """
+        {buzz_html}"""
 
     html = f"""<!DOCTYPE html>
 <html>
