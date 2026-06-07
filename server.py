@@ -125,27 +125,12 @@ def watchtower_get_gmmss_context() -> str:
 
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────
 
-@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
-async def oauth_server_metadata(request: Request):
-    base = str(request.base_url).rstrip("/")
-    return JSONResponse({
-        "issuer": base,
-        "authorization_endpoint": f"{base}/authorize",
-        "token_endpoint": f"{base}/token",
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
-        "code_challenge_methods_supported": ["S256", "plain"],
-        "token_endpoint_auth_methods_supported": ["none"],
-    })
-
-
-@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
-async def oauth_protected_resource(request: Request):
-    base = str(request.base_url).rstrip("/")
-    return JSONResponse({
-        "resource": base,
-        "authorization_servers": [base],
-    })
+# NOTE: /.well-known endpoints intentionally omitted.
+# When they exist, Grok auto-discovers OAuth and tries to run the flow via its
+# server-side connector manager (not a browser), which can't do the redirect.
+# Without them, Grok falls back to showing the manual OAuth credentials form,
+# which lets the user fill in /authorize and /token — and the browser-based
+# redirect flow works correctly.
 
 
 @mcp.custom_route("/authorize", methods=["GET"])
