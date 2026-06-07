@@ -163,6 +163,178 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
 
 @mcp.tool()
+def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
+    """
+    Run a single stock through ALL Watchtower screens and return a complete picture.
+
+    Covers every sleeve:
+    - Reversal (Sleeve 1): beaten-down quality setup?
+    - Momentum (Sleeve 2): strong getting stronger?
+    - Breakdown (Sleeve 3): bearish/short candidate?
+    - Master: fundamental composite score
+    - Insider: net insider buying?
+    - Volume Burst: abnormal volume signal?
+    - Upcomer / Hidden Gem: off-radar 10x potential?
+    - Intraday: live signal right now (GAP_AND_GO, VWAP_BREAKOUT, etc.)?
+
+    Returns a ranked multi-sleeve analysis with scores and rationale for each.
+    Use this when you want a full 360° view of any stock.
+    """
+    ticker = ticker.upper().strip()
+    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer = _get_screens()
+
+    sleeve_results = []
+
+    # Run every screen with the single ticker
+    screen_configs = [
+        ("REVERSAL",     lambda: run_reversal(min_drawdown=5.0, single_ticker=ticker)),
+        ("MOMENTUM",     lambda: run_momentum(max_pullback=20.0, single_ticker=ticker)),
+        ("BREAKDOWN",    lambda: run_breakdown(min_breakdown=20.0, single_ticker=ticker)),
+        ("MASTER",       lambda: run_master(single_ticker=ticker)),
+        ("INSIDER",      lambda: run_insider(single_ticker=ticker)),
+        ("UPCOMER",      lambda: run_upcomer(min_score=0.0, top_n=1, single_ticker=ticker)),
+    ]
+
+    for sleeve_name, fn in screen_configs:
+        try:
+            results = fn()
+            if results and not results[0].get("error"):
+                r = results[0]
+                score = (
+                    r.get("reversal_score") or r.get("momentum_score") or
+                    r.get("breakdown_score") or r.get("score") or 0
+                )
+                sleeve_results.append({
+                    "sleeve": sleeve_name,
+                    "score": score,
+                    "data": r,
+                })
+        except Exception as e:
+            sleeve_results.append({"sleeve": sleeve_name, "score": 0, "error": str(e)[:80]})
+
+    # Intraday — live snapshot
+    try:
+        from screen.intraday_screen import run_screen as run_intraday
+        intraday = run_intraday(min_score=0.0, single_ticker=ticker)
+        if intraday and not intraday[0].get("error"):
+            r = intraday[0]
+            sleeve_results.append({
+                "sleeve": "INTRADAY",
+                "score": r.get("score", 0),
+                "data": r,
+            })
+    except Exception as e:
+        sleeve_results.append({"sleeve": "INTRADAY", "score": 0, "error": str(e)[:80]})
+
+    # Volume burst
+    try:
+        from screen.volume_burst_screen import run_screen as run_volume_burst
+        vb = run_volume_burst(single_ticker=ticker, min_surge=1.0)
+        if vb and not vb[0].get("error"):
+            r = vb[0]
+            sleeve_results.append({
+                "sleeve": "VOLUME_BURST",
+                "score": r.get("score", 0),
+                "data": r,
+            })
+    except Exception as e:
+        sleeve_results.append({"sleeve": "VOLUME_BURST", "score": 0, "error": str(e)[:80]})
+
+    # Format output
+    lines = [f"## Watchtower Full Analysis — ${ticker}", ""]
+
+    # Sort by score descending so strongest signals appear first
+    scored = [s for s in sleeve_results if not s.get("error")]
+    errored = [s for s in sleeve_results if s.get("error")]
+    scored.sort(key=lambda x: x["score"] or 0, reverse=True)
+
+    for s in scored:
+        sleeve = s["sleeve"]
+        score = s["score"] or 0
+        data = s.get("data", {})
+
+        # Signal strength indicator
+        if score >= 70:
+            strength = "🔥 STRONG"
+        elif score >= 50:
+            strength = "✅ MODERATE"
+        elif score >= 30:
+            strength = "👀 WEAK"
+        else:
+            strength = "⬜ LOW"
+
+        line = f"**{sleeve}** | {strength} | Score: {score:.0f}"
+
+        # Sleeve-specific detail
+        if sleeve == "INTRADAY":
+            signal = data.get("signal_type", "")
+            rationale = data.get("rationale", "")
+            change = data.get("change_pct", 0)
+            vol_pace = data.get("vol_pace_ratio", 0)
+            if signal:
+                line += f" | Signal: {signal} | Chg: {change:+.1f}% | Vol pace: {vol_pace:.1f}x"
+            if rationale:
+                line += f"\n  → {rationale}"
+        elif sleeve == "UPCOMER":
+            dd = data.get("drawdown_pct", 0)
+            rationale = data.get("rationale", "")
+            line += f" | Off high: {dd:.0f}%"
+            if rationale:
+                line += f"\n  → {rationale}"
+        elif sleeve == "VOLUME_BURST":
+            signal = data.get("signal", "")
+            surge = data.get("surge_ratio", 0)
+            line += f" | Signal: {signal} | Surge: {surge:.1f}x"
+        else:
+            rationale = data.get("rationale", "") or data.get("plan_rationale", "")
+            if rationale:
+                line += f"\n  → {rationale}"
+
+        lines.append(line)
+
+    if errored:
+        lines.append("")
+        lines.append("*Sleeves with errors: " + ", ".join(s["sleeve"] for s in errored) + "*")
+
+    # Grok synthesis across all sleeves
+    if with_synthesis:
+        try:
+            from analysis.grok_client import GrokClient
+            grok = GrokClient()
+
+            context = f"Full Watchtower analysis for ${ticker}:\n"
+            for s in scored:
+                context += f"- {s['sleeve']}: score {s['score']:.0f}"
+                data = s.get("data", {})
+                rationale = data.get("rationale", "") or data.get("signal_type", "")
+                if rationale:
+                    context += f" — {rationale}"
+                context += "\n"
+
+            resp = grok.chat(
+                system=(
+                    "You are Eric Konoski's personal trading analyst on the Watchtower GMMSS system. "
+                    "Given multi-sleeve scores for a single stock, synthesize a clear, actionable read. "
+                    "Be direct. State the dominant signal, the conviction level, the best entry approach, "
+                    "and the main risk. 3-4 sentences max."
+                ),
+                user=context,
+                json_mode=False,
+                temperature=0.35,
+                max_tokens=300,
+            )
+            synthesis = resp.get("text", "").strip()
+            if synthesis:
+                lines.append("")
+                lines.append("---")
+                lines.append(f"**Grok Synthesis:** {synthesis}")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def watchtower_get_gmmss_context() -> str:
     """Get full current context: regime + top momentum + top bearish ideas + methodology."""
     return "GMMSS context: Bull regime (see current_regime.json in repo). Use watchtower_run_screen or the individual getters for live sleeves. Full synthesis available when all keys (POLYGON, XAI) are configured on Railway."
@@ -265,6 +437,19 @@ async def health(request: Request):
             "watchtower_get_gmmss_context",
         ],
     })
+
+
+# ── Scheduler startup ────────────────────────────────────────────────────────
+
+import logging
+logging.basicConfig(level=logging.INFO)
+
+try:
+    from alerts.scheduler import start_scheduler
+    _scheduler = start_scheduler()
+except Exception as _sched_err:
+    logging.warning(f"[server] Scheduler failed to start (alerts disabled): {_sched_err}")
+    _scheduler = None
 
 
 # ── ASGI app with Bearer auth on /mcp ─────────────────────────────────────────
