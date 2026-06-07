@@ -76,7 +76,7 @@ def watchtower_run_screen(
     elif screen == "insider":
         results = run_insider()[:top_n]
     elif screen in ("upcomer", "hidden_gems", "gems"):
-        results = run_upcomer(min_score=30.0, top_n=top_n)
+        results = run_upcomer(min_score=30.0, top_n=top_n)  # always full universe
     else:
         return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider, upcomer"
 
@@ -122,11 +122,12 @@ def watchtower_get_bearish_ideas(top_n: int = 5) -> str:
 
 
 @mcp.tool()
-def watchtower_get_hidden_gems(top_n: int = 10, broad: bool = False) -> str:
+def watchtower_get_hidden_gems(top_n: int = 10) -> str:
     """
     Scan for hidden gems and up-and-comer stocks — completely separate from the momentum screen.
 
-    Finds off-radar small/mid cap stocks that:
+    Scans the full daily_prices universe (not just the quality 40) to find truly
+    off-radar small/mid cap stocks that:
     - Are 18-60% off their 52-week highs (NOT near highs like momentum names)
     - Are breaking out of long consolidation bases on expanding volume
     - Show fundamental acceleration (QoQ revenue/earnings improving)
@@ -134,10 +135,9 @@ def watchtower_get_hidden_gems(top_n: int = 10, broad: bool = False) -> str:
     - Small/mid cap bias — the less covered, the more potential
 
     These are early-stage 10x candidates, not established momentum names.
-    Set broad=true to scan the full universe (slower).
     """
     *_, run_upcomer = _get_screens()
-    results = run_upcomer(min_score=30.0, top_n=top_n, broad=broad)
+    results = run_upcomer(min_score=30.0, top_n=top_n)
     if not results:
         return "No hidden gems found above threshold right now."
 

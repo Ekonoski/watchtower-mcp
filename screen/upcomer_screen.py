@@ -437,16 +437,17 @@ def analyze_ticker(
 def run_screen(
     min_score: float = 35.0,
     top_n: int = 10,
-    broad: bool = False,
     single_ticker: Optional[str] = None,
 ) -> List[dict]:
     """
     Run the up-and-comer / hidden gems screen.
 
+    Always scans the full daily_prices universe — that's the point.
+    The quality universe of 40 tickers is too small to find off-radar gems.
+
     Args:
         min_score: Minimum composite score (0-100) to include.
         top_n: Max results to return (sorted by score).
-        broad: If True, include all tickers in DB (not just quality universe).
         single_ticker: If set, score only this ticker regardless of universe.
 
     Returns:
@@ -457,26 +458,27 @@ def run_screen(
     except Exception as e:
         return [{"error": f"DB connection failed: {e}"}]
 
-    # Universe
+    # Universe — default to full daily_prices universe (that's the whole point)
     if single_ticker:
         tickers = [single_ticker.upper()]
-    elif broad:
+    else:
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT ticker FROM daily_prices WHERE date >= CURRENT_DATE - INTERVAL '10 days'")
+                cur.execute(
+                    "SELECT DISTINCT ticker FROM daily_prices "
+                    "WHERE trade_date >= CURRENT_DATE - INTERVAL '10 days'"
+                )
                 tickers = [r[0] for r in cur.fetchall()]
         except Exception:
-            tickers = load_quality_tickers(conn)
-    else:
-        # quality universe + watchlist
-        tickers = load_quality_tickers(conn)
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT ticker FROM watchlist WHERE active = TRUE")
-                watchlist = [r[0] for r in cur.fetchall()]
-            tickers = list(set(tickers + watchlist))
-        except Exception:
-            pass
+            # fallback to quality universe + watchlist
+            tickers = list(load_quality_tickers(conn).keys())
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT ticker FROM watchlist WHERE active = TRUE")
+                    watchlist = [r[0] for r in cur.fetchall()]
+                tickers = list(set(tickers + watchlist))
+            except Exception:
+                pass
 
     # Load price history
     frames = load_prices(conn, tickers, lookback_days=400)
@@ -543,14 +545,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Watchtower Hidden Gems / Up-and-Comer screen")
     parser.add_argument("--min-score", type=float, default=35.0)
     parser.add_argument("--top-n", type=int, default=15)
-    parser.add_argument("--broad", action="store_true")
     parser.add_argument("--ticker", type=str, default=None)
     args = parser.parse_args()
 
     results = run_screen(
         min_score=args.min_score,
         top_n=args.top_n,
-        broad=args.broad,
         single_ticker=args.ticker,
     )
     _print_results(results)
