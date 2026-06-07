@@ -17,7 +17,7 @@ def run_scheduled_scan():
         from analysis.news_scanner import run_news_scan
 
         # Run intraday price/volume scan
-        results = run_screen(min_score=40.0, broad=False)
+        results = run_screen(min_score=40.0)  # broad=True by default — full US market
 
         # Run news scan in parallel — always, even if no intraday signals
         news_alerts = []
