@@ -1,57 +1,30 @@
 """
-Watchtower — Email alerts via Gmail SMTP (preferred) or Resend fallback.
+Watchtower — Email alerts via Resend.
 Intraday alerts: sent every 15-30 min during trading hours.
 Daily hidden gems: sent once per day (pre-market, ~6 AM ET).
 """
 import json
 import logging
 import os
-import smtplib
 import urllib.request
 import urllib.error
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 _log = logging.getLogger(__name__)
 from typing import List, Optional
 
-# Gmail SMTP (preferred — avoids Cloudflare blocking on Resend's API)
-GMAIL_USER = os.environ.get("GMAIL_USER", "")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
-
-# Resend (fallback)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "Watchtower <onboarding@resend.dev>")
 ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
 
 
 def _send_email(subject: str, html: str) -> bool:
-    """Send an HTML email via Gmail SMTP if configured, else Resend."""
+    """Send an HTML email via Resend."""
     if not ALERT_EMAIL_TO:
         _log.error("[email] ALERT_EMAIL_TO not set.")
         return False
-
-    # --- Gmail SMTP (preferred) ---
-    if GMAIL_USER and GMAIL_APP_PASSWORD:
-        try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = subject
-            msg["From"] = f"Watchtower <{GMAIL_USER}>"
-            msg["To"] = ALERT_EMAIL_TO
-            msg.attach(MIMEText(html, "html"))
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-                smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-                smtp.sendmail(GMAIL_USER, ALERT_EMAIL_TO, msg.as_string())
-            _log.info(f"[email] Gmail SMTP sent: {subject[:60]}")
-            return True
-        except Exception as e:
-            _log.error(f"[email] Gmail SMTP failed: {e}")
-            return False
-
-    # --- Resend fallback ---
     if not RESEND_API_KEY:
-        _log.error("[email] No email credentials configured (GMAIL_USER+GMAIL_APP_PASSWORD or RESEND_API_KEY).")
+        _log.error("[email] RESEND_API_KEY not set.")
         return False
 
     payload = {
@@ -67,21 +40,20 @@ def _send_email(subject: str, html: str) -> bool:
             headers={
                 "Authorization": f"Bearer {RESEND_API_KEY}",
                 "Content-Type": "application/json",
-                "User-Agent": "watchtower-mcp/1.0",
             },
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             sent = resp.status in (200, 201)
         if sent:
-            _log.info(f"[email] Resend sent: {subject[:60]}")
+            _log.info(f"[email] Resend sent OK → {ALERT_EMAIL_TO}: {subject[:60]}")
         return sent
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8", errors="replace")
         except Exception:
             body = ""
-        _log.error(f"[email] Resend HTTPError {e.code}: {body[:300]}")
+        _log.error(f"[email] Resend HTTPError {e.code}: {body[:500]}")
         return False
     except Exception as e:
         _log.error(f"[email] Resend send failed: {e}")
