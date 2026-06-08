@@ -102,7 +102,6 @@ def get_market_pulse() -> dict:
         raw = grok.chat(
             system=_MARKET_PULSE_SYSTEM,
             user=_MARKET_PULSE_USER,
-            temperature=0.3,
         )
         text = raw.strip()
         if text.startswith("```"):

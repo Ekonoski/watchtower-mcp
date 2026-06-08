@@ -271,13 +271,13 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
 
     out = {}
     try:
-        snaps = client.get_snapshot_all("stocks", ticker_any_of=",".join(tickers))
+        snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(tickers)})
         for s in snaps:
             ticker = getattr(s, "ticker", None)
             if not ticker:
                 continue
             day = getattr(s, "day", None)
-            prev_day = getattr(s, "prev_day", None)
+            prev_day = getattr(s, "prevDay", None)
             if not day:
                 continue
 
