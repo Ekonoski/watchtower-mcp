@@ -387,6 +387,21 @@ def watchtower_get_gmmss_context() -> str:
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────
 
 @mcp.tool()
+def watchtower_force_scan() -> str:
+    """
+    Manually trigger the intraday scan + news scan right now.
+    Same as the scheduled job — runs the full pipeline and sends the email if signals are found.
+    Useful for testing or forcing a scan outside the normal schedule.
+    """
+    try:
+        from alerts.scheduler import run_scheduled_scan
+        run_scheduled_scan()
+        return "Scan triggered. Check your email — if signals were found above threshold, the alert was sent."
+    except Exception as e:
+        return f"Error triggering scan: {e}"
+
+
+@mcp.tool()
 def watchtower_alert_performance(
     days_back: int = 90,
     alert_type: str = None,
