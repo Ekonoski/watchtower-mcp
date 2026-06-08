@@ -1,52 +1,66 @@
 """
-Watchtower — Email alerts via Resend.
+Watchtower — Email alerts via Gmail SMTP (primary) or Resend (fallback).
 Intraday alerts: sent every 15-30 min during trading hours.
 Daily hidden gems: sent once per day (pre-market, ~6 AM ET).
 """
 import json
 import logging
 import os
+import smtplib
 import urllib.request
 import urllib.error
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 _log = logging.getLogger(__name__)
 from typing import List, Optional
 
+GMAIL_USER = os.environ.get("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "Watchtower <onboarding@resend.dev>")
 ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
 
 
 def _send_email(subject: str, html: str) -> bool:
-    """Send an HTML email via Resend."""
+    """Send HTML email via Gmail SMTP if configured, else Resend."""
     if not ALERT_EMAIL_TO:
         _log.error("[email] ALERT_EMAIL_TO not set.")
         return False
+
+    if GMAIL_USER and GMAIL_APP_PASSWORD:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = f"Watchtower <{GMAIL_USER}>"
+            msg["To"] = ALERT_EMAIL_TO
+            msg.attach(MIMEText(html, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+                smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                smtp.sendmail(GMAIL_USER, ALERT_EMAIL_TO, msg.as_string())
+            _log.info(f"[email] Gmail sent → {ALERT_EMAIL_TO}: {subject[:60]}")
+            return True
+        except Exception as e:
+            _log.error(f"[email] Gmail SMTP failed: {e}")
+            return False
+
     if not RESEND_API_KEY:
-        _log.error("[email] RESEND_API_KEY not set.")
+        _log.error("[email] No email credentials set (GMAIL_USER+GMAIL_APP_PASSWORD or RESEND_API_KEY).")
         return False
 
-    payload = {
-        "from": RESEND_FROM,
-        "to": [ALERT_EMAIL_TO],
-        "subject": subject,
-        "html": html,
-    }
+    payload = {"from": RESEND_FROM, "to": [ALERT_EMAIL_TO], "subject": subject, "html": html}
     try:
         req = urllib.request.Request(
             "https://api.resend.com/emails",
             data=json.dumps(payload).encode(),
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             sent = resp.status in (200, 201)
         if sent:
-            _log.info(f"[email] Resend sent OK → {ALERT_EMAIL_TO}: {subject[:60]}")
+            _log.info(f"[email] Resend sent → {ALERT_EMAIL_TO}: {subject[:60]}")
         return sent
     except urllib.error.HTTPError as e:
         try:
