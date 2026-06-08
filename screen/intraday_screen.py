@@ -279,8 +279,13 @@ def run_screen(
                     continue
                 price = getattr(day, "c", 0) or 0
                 vol = getattr(day, "v", 0) or 0
+                # Pre-market: today's volume is near-zero, use prev day to check liquidity
                 if price * vol < MIN_DOLLAR_VOL:
-                    continue
+                    prev = getattr(snap, "prevDay", None)
+                    prev_price = getattr(prev, "c", 0) or 0 if prev else 0
+                    prev_vol = getattr(prev, "v", 0) or 0 if prev else 0
+                    if prev_price * prev_vol < MIN_DOLLAR_VOL:
+                        continue
                 snapshots[ticker] = snap
             except Exception:
                 continue
