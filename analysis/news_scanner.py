@@ -282,9 +282,12 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
                 continue
 
             price = getattr(day, "c", None) or 0
+            # Fall back to prev day close if today hasn't traded yet (low-volume ETFs, etc.)
+            if not price and prev_day:
+                price = getattr(prev_day, "c", None) or 0
             volume = getattr(day, "v", None) or 0
             prev_close = getattr(prev_day, "c", None) if prev_day else None
-            change_pct = ((price - prev_close) / prev_close * 100) if (prev_close and prev_close > 0) else 0
+            change_pct = ((price - prev_close) / prev_close * 100) if (prev_close and prev_close > 0 and price) else 0
 
             # Volume vs previous day
             prev_vol = getattr(prev_day, "v", None) if prev_day else None

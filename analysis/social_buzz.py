@@ -98,17 +98,13 @@ def get_market_pulse() -> dict:
         grok = _get_grok()
         if not grok:
             return {}
-        import json
-        raw = grok.chat(
+        result = grok.chat(
             system=_MARKET_PULSE_SYSTEM,
             user=_MARKET_PULSE_USER,
+            json_mode=True,
         )
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return json.loads(text.strip())
+        parsed = result.get("parsed") or {}
+        return parsed
     except Exception:
         return {}
 
