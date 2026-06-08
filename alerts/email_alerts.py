@@ -334,7 +334,7 @@ def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool
     <!-- Summary -->
     <div style="padding:16px 28px;background:#f9fafb;border-bottom:1px solid #e5e7eb;">
       <p style="margin:0;color:#374151;font-size:14px;">
-        <strong>{len(results)} setup{'s' if len(results) != 1 else ''}</strong> found above threshold.
+        {"<strong>No setups</strong> above threshold this scan — market quiet." if not results else f"<strong>{len(results)} setup{'s' if len(results) != 1 else ''}</strong> found above threshold."}
       </p>
     </div>
 
@@ -384,11 +384,8 @@ def send_intraday_alert(
     Format and send an intraday alert email via Resend.
 
     Returns True if the email was sent successfully, False otherwise.
-    Fails silently if env vars are missing or both results and news are empty.
+    Fails silently if env vars are missing.
     """
-    if not results and not news_alerts:
-        return False
-
     try:
         import pytz
         et = pytz.timezone("America/New_York")
@@ -398,8 +395,11 @@ def send_intraday_alert(
 
     n = len(results)
     n_news = len(news_alerts) if news_alerts else 0
-    news_suffix = f" + {n_news} news catalyst{'s' if n_news != 1 else ''}" if n_news else ""
-    subject = f"Watchtower Alert — {n} setup{'s' if n != 1 else ''}{news_suffix} | {time_str}"
+    if n == 0 and n_news == 0:
+        subject = f"Watchtower — No signals | {time_str}"
+    else:
+        news_suffix = f" + {n_news} news catalyst{'s' if n_news != 1 else ''}" if n_news else ""
+        subject = f"Watchtower Alert — {n} setup{'s' if n != 1 else ''}{news_suffix} | {time_str}"
     html = _build_html(results, minutes_elapsed, is_market_hours, news_alerts=news_alerts)
 
     sent = _send_email(subject, html)

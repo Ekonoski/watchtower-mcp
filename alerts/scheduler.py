@@ -28,10 +28,6 @@ def run_scheduled_scan():
         except Exception as e:
             log.warning(f"[scheduler] News scan error (non-fatal): {e}")
 
-        if not results and not news_alerts:
-            log.info("[scheduler] No intraday signals or news catalysts above threshold.")
-            return
-
         # Add social buzz for top intraday signal tickers
         social_buzz_map = {}
         if results:
