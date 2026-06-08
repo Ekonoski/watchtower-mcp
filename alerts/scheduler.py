@@ -33,7 +33,6 @@ def run_scheduled_scan():
         if results:
             try:
                 from analysis.social_buzz import query_ticker_sentiment
-                # Only fetch for top 5 signals to keep it fast
                 for r in results[:5]:
                     ticker = r.get("ticker", "")
                     if ticker:
@@ -44,6 +43,15 @@ def run_scheduled_scan():
             except Exception as e:
                 log.warning(f"[scheduler] Social buzz error (non-fatal): {e}")
 
+        # Market pulse — what's trending on X right now (always, every scan)
+        market_pulse = {}
+        try:
+            from analysis.social_buzz import get_market_pulse
+            market_pulse = get_market_pulse()
+            log.info(f"[scheduler] Market pulse fetched: {market_pulse.get('overall_sentiment', 'n/a')}")
+        except Exception as e:
+            log.warning(f"[scheduler] Market pulse error (non-fatal): {e}")
+
         is_mkt = results[0].get("is_market_hours", True) if results else True
         mins = results[0].get("minutes_elapsed", 0) if results else 0
         sent = send_intraday_alert(
@@ -51,6 +59,7 @@ def run_scheduled_scan():
             minutes_elapsed=mins,
             is_market_hours=is_mkt,
             news_alerts=news_alerts,
+            market_pulse=market_pulse,
         )
         log.info(
             f"[scheduler] Scan complete. {len(results)} signals, "

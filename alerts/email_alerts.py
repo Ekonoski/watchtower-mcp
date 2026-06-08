@@ -257,8 +257,55 @@ def _build_news_section(news_alerts: List[dict]) -> str:
     {synthesis_section}"""
 
 
+def _build_market_pulse_section(pulse: dict) -> str:
+    """Build the X/Grok market pulse section for the intraday email."""
+    if not pulse:
+        return ""
+
+    sentiment = pulse.get("overall_sentiment", "mixed")
+    mood = pulse.get("market_mood", "mixed")
+    summary = pulse.get("summary", "")
+    themes = pulse.get("top_themes", [])
+    top_tickers = pulse.get("top_tickers", [])
+
+    sentiment_color = {"bullish": "#16a34a", "bearish": "#dc2626", "mixed": "#d97706"}.get(sentiment, "#6b7280")
+    mood_emoji = {"risk-on": "🟢", "risk-off": "🔴", "mixed": "🟡"}.get(mood, "⚪")
+
+    ticker_rows = ""
+    for t in top_tickers[:6]:
+        sym = t.get("ticker", "")
+        buzz = t.get("buzz", "")
+        tsent = t.get("sentiment", "neutral")
+        tcolor = {"bullish": "#16a34a", "bearish": "#dc2626", "neutral": "#6b7280"}.get(tsent, "#6b7280")
+        ticker_rows += f"""
+        <tr>
+          <td style="padding:6px 10px;font-weight:700;font-size:13px;">{sym}</td>
+          <td style="padding:6px 10px;">
+            <span style="color:{tcolor};font-weight:600;font-size:12px;">{tsent.upper()}</span>
+          </td>
+          <td style="padding:6px 10px;color:#374151;font-size:12px;">{buzz}</td>
+        </tr>"""
+
+    themes_html = " &nbsp;·&nbsp; ".join(f"<strong>{th}</strong>" for th in themes[:4]) if themes else ""
+
+    return f"""
+    <div style="padding:14px 28px;background:#f0f9ff;border-top:2px solid #bae6fd;">
+      <h2 style="margin:0 0 6px;color:#0369a1;font-size:15px;font-weight:700;">
+        𝕏 Market Pulse — What Traders Are Talking About
+      </h2>
+      <p style="margin:0 0 8px;font-size:12px;color:#0284c7;">
+        {mood_emoji} <strong style="color:{sentiment_color};">{sentiment.upper()}</strong>
+        &nbsp;·&nbsp; {mood.upper()}
+        {"&nbsp;·&nbsp; " + themes_html if themes_html else ""}
+      </p>
+      <p style="margin:0 0 10px;font-size:13px;color:#374151;">{summary}</p>
+      {"<table style='width:100%;border-collapse:collapse;font-size:13px;'><thead><tr style='background:#e0f2fe;'><th style='padding:6px 10px;text-align:left;color:#0369a1;'>Ticker</th><th style='padding:6px 10px;text-align:left;color:#0369a1;'>Sentiment</th><th style='padding:6px 10px;text-align:left;color:#0369a1;'>What's Being Said</th></tr></thead><tbody>" + ticker_rows + "</tbody></table>" if ticker_rows else ""}
+    </div>"""
+
+
 def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool,
-                news_alerts: Optional[List[dict]] = None) -> str:
+                news_alerts: Optional[List[dict]] = None,
+                market_pulse: Optional[dict] = None) -> str:
     """Build the HTML email body."""
     try:
         import pytz
@@ -375,6 +422,8 @@ def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool
 
     {_build_news_section(news_alerts or [])}
 
+    {_build_market_pulse_section(market_pulse or {})}
+
     <!-- Footer -->
     <div style="padding:16px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;">
       <p style="margin:0;color:#9ca3af;font-size:12px;">
@@ -393,6 +442,7 @@ def send_intraday_alert(
     minutes_elapsed: int = 0,
     is_market_hours: bool = True,
     news_alerts: Optional[List[dict]] = None,
+    market_pulse: Optional[dict] = None,
 ) -> bool:
     """
     Format and send an intraday alert email via Resend.
@@ -414,7 +464,7 @@ def send_intraday_alert(
     else:
         news_suffix = f" + {n_news} news catalyst{'s' if n_news != 1 else ''}" if n_news else ""
         subject = f"Watchtower Alert — {n} setup{'s' if n != 1 else ''}{news_suffix} | {time_str}"
-    html = _build_html(results, minutes_elapsed, is_market_hours, news_alerts=news_alerts)
+    html = _build_html(results, minutes_elapsed, is_market_hours, news_alerts=news_alerts, market_pulse=market_pulse)
 
     sent = _send_email(subject, html)
     if sent and results:

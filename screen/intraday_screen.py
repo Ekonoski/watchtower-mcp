@@ -94,6 +94,7 @@ def classify_intraday(
     current_price: float,
     today_low: float,
     prev_close: float,
+    premarket: bool = False,
 ) -> tuple:
     """
     Returns (signal_type: str, score: float, rationale: str).
@@ -101,41 +102,49 @@ def classify_intraday(
     Bullish: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL
     Bearish: VWAP_REJECTION, INTRADAY_BREAKDOWN, GAP_DOWN_CONFIRM, DISTRIBUTION
     Neutral: VOLUME_SURGE
+
+    premarket=True loosens vol pace (1.5x→1.2x) and gap (3%→2%) thresholds
+    since pre-market volume is structurally lower.
     """
     at_hod = today_high > 0 and (today_high - current_price) / today_high <= 0.005
     at_lod = today_low > 0 and (current_price - today_low) / today_low <= 0.005
 
+    # Pre-market uses lower thresholds — volume is structurally thin before 9:30
+    vol_thresh = 1.2 if premarket else 1.5
+    gap_thresh = 2.0 if premarket else 3.0
+    gap_vol_thresh = 1.5 if premarket else 2.0
+
     # ── BULLISH ───────────────────────────────────────────────────────────────
 
     # 1. GAP_AND_GO — gapped up, still holding, volume confirming
-    if (gap_pct >= 3.0
+    if (gap_pct >= gap_thresh
             and prev_close > 0
             and (current_price - prev_close) >= 0.5 * (today_high - prev_close)
-            and vol_pace_ratio >= 2.0):
-        score = min(100, 55 + gap_pct * 2 + (vol_pace_ratio - 2.0) * 5)
+            and vol_pace_ratio >= gap_vol_thresh):
+        score = min(100, 55 + gap_pct * 2 + (vol_pace_ratio - gap_vol_thresh) * 5)
         return "GAP_AND_GO", score, f"Gapped +{gap_pct:.1f}%, holding with {vol_pace_ratio:.1f}x volume pace"
 
     # 2. INTRADAY_BREAKOUT — at HOD above VWAP with volume
-    if above_vwap and at_hod and vol_pace_ratio >= 1.5 and change_pct > 0:
-        score = min(100, 50 + (vol_pace_ratio - 1.5) * 8 + change_pct * 2)
+    if above_vwap and at_hod and vol_pace_ratio >= vol_thresh and change_pct > 0:
+        score = min(100, 50 + (vol_pace_ratio - vol_thresh) * 8 + change_pct * 2)
         return "INTRADAY_BREAKOUT", score, f"At HOD above VWAP, {vol_pace_ratio:.1f}x volume pace"
 
     # 3. VWAP_BREAKOUT — above VWAP, not at HOD yet
-    if above_vwap and not at_hod and vol_pace_ratio >= 1.5 and change_pct > 0:
-        score = min(100, 45 + (vol_pace_ratio - 1.5) * 6)
+    if above_vwap and not at_hod and vol_pace_ratio >= vol_thresh and change_pct > 0:
+        score = min(100, 45 + (vol_pace_ratio - vol_thresh) * 6)
         return "VWAP_BREAKOUT", score, f"Above VWAP with {vol_pace_ratio:.1f}x volume pace"
 
     # 4. FLUSH_REVERSAL — flushed hard, now back above VWAP
     if (change_pct < 0 and above_vwap
             and prev_close > 0 and today_low < prev_close * 0.97
-            and vol_pace_ratio >= 1.5):
-        score = min(100, 45 + (vol_pace_ratio - 1.5) * 6 + abs(change_pct))
+            and vol_pace_ratio >= vol_thresh):
+        score = min(100, 45 + (vol_pace_ratio - vol_thresh) * 6 + abs(change_pct))
         return "FLUSH_REVERSAL", score, "Flushed to lows, now reclaiming VWAP"
 
     # 5. GAP_REVERSAL — gapped down, recovering above VWAP
-    if (gap_pct <= -3.0 and change_pct > gap_pct * 0.5
-            and above_vwap and vol_pace_ratio >= 1.5):
-        score = min(100, 50 + (vol_pace_ratio - 1.5) * 5)
+    if (gap_pct <= -gap_thresh and change_pct > gap_pct * 0.5
+            and above_vwap and vol_pace_ratio >= vol_thresh):
+        score = min(100, 50 + (vol_pace_ratio - vol_thresh) * 5)
         return "GAP_REVERSAL", score, f"Gapped down {gap_pct:.1f}%, recovering above VWAP"
 
     # ── BEARISH ───────────────────────────────────────────────────────────────
@@ -143,26 +152,26 @@ def classify_intraday(
     # 6. VWAP_REJECTION — rallied to VWAP, got rejected, fading below with volume
     if (not above_vwap and change_pct < 0
             and prev_close > 0 and today_high >= prev_close * 0.99
-            and vol_pace_ratio >= 1.5):
-        score = min(100, 45 + (vol_pace_ratio - 1.5) * 6 + abs(change_pct))
+            and vol_pace_ratio >= vol_thresh):
+        score = min(100, 45 + (vol_pace_ratio - vol_thresh) * 6 + abs(change_pct))
         return "VWAP_REJECTION", score, f"Rejected at VWAP, fading {change_pct:.1f}% on {vol_pace_ratio:.1f}x volume"
 
     # 7. INTRADAY_BREAKDOWN — at LOD below VWAP with volume
     if (not above_vwap and at_lod
-            and vol_pace_ratio >= 1.5 and change_pct < -1.0):
-        score = min(100, 50 + (vol_pace_ratio - 1.5) * 8 + abs(change_pct) * 2)
+            and vol_pace_ratio >= vol_thresh and change_pct < -1.0):
+        score = min(100, 50 + (vol_pace_ratio - vol_thresh) * 8 + abs(change_pct) * 2)
         return "INTRADAY_BREAKDOWN", score, f"At LOD below VWAP, {vol_pace_ratio:.1f}x volume — breakdown"
 
     # 8. GAP_DOWN_CONFIRM — gapped down, failing to recover VWAP, bearish continuation
-    if (gap_pct <= -3.0 and not above_vwap
+    if (gap_pct <= -gap_thresh and not above_vwap
             and change_pct <= gap_pct * 0.5
-            and vol_pace_ratio >= 1.5):
-        score = min(100, 55 + abs(gap_pct) * 1.5 + (vol_pace_ratio - 1.5) * 5)
+            and vol_pace_ratio >= vol_thresh):
+        score = min(100, 55 + abs(gap_pct) * 1.5 + (vol_pace_ratio - vol_thresh) * 5)
         return "GAP_DOWN_CONFIRM", score, f"Gapped down {gap_pct:.1f}%, failing to recover — bears in control"
 
     # 9. DISTRIBUTION — near HOD but heavy volume on down candles (proxy: high vol, negative change)
-    if (at_hod and not above_vwap and vol_pace_ratio >= 2.0 and change_pct < -0.5):
-        score = min(100, 45 + (vol_pace_ratio - 2.0) * 6)
+    if (at_hod and not above_vwap and vol_pace_ratio >= (1.5 if premarket else 2.0) and change_pct < -0.5):
+        score = min(100, 45 + (vol_pace_ratio - (1.5 if premarket else 2.0)) * 6)
         return "DISTRIBUTION", score, f"High volume selling near HOD — distribution signal"
 
     # ── NEUTRAL ───────────────────────────────────────────────────────────────
@@ -375,6 +384,7 @@ def run_screen(
                 current_price=current_price,
                 today_low=today_low,
                 prev_close=prev_close,
+                premarket=not is_market_hours,
             )
 
             if signal_type == "NEUTRAL" or score < min_score:

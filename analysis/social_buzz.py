@@ -63,6 +63,57 @@ Return a JSON object where each key is a ticker symbol:
 }}"""
 
 
+_MARKET_PULSE_SYSTEM = """You are a real-time market intelligence analyst with live access to X (Twitter).
+Your job is to report what traders and investors are actively discussing on X right now.
+Be specific — name tickers, sectors, and themes. Return ONLY valid JSON, no other text."""
+
+_MARKET_PULSE_USER = """What are traders on X talking about RIGHT NOW in the stock market?
+
+Look at the last 1-2 hours of X posts. Report:
+- Top tickers generating the most buzz (price action, news, unusual moves)
+- Dominant sector themes (e.g. AI, energy, biotech catalysts)
+- Overall market sentiment (risk-on / risk-off / mixed)
+- Any breaking news or catalysts driving discussion
+
+Return JSON with these exact fields:
+{{
+  "overall_sentiment": "bullish" | "bearish" | "mixed",
+  "market_mood": "risk-on" | "risk-off" | "mixed",
+  "top_tickers": [
+    {{"ticker": "SYMBOL", "buzz": "why it's trending in 1 sentence", "sentiment": "bullish"|"bearish"|"neutral"}},
+    ... up to 6 tickers
+  ],
+  "top_themes": ["theme1", "theme2", "theme3"],
+  "summary": "2-3 sentence synthesis of what's driving market conversation on X right now"
+}}"""
+
+
+def get_market_pulse() -> dict:
+    """
+    Ask Grok what traders on X are talking about right now.
+    Returns a dict with overall_sentiment, top_tickers, top_themes, summary.
+    Returns empty dict on failure.
+    """
+    try:
+        grok = _get_grok()
+        if not grok:
+            return {}
+        import json
+        raw = grok.chat(
+            system=_MARKET_PULSE_SYSTEM,
+            user=_MARKET_PULSE_USER,
+            temperature=0.3,
+        )
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        return json.loads(text.strip())
+    except Exception:
+        return {}
+
+
 def _get_grok():
     try:
         from analysis.grok_client import GrokClient
