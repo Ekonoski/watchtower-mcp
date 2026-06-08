@@ -16,10 +16,14 @@ import uvicorn
 
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "").strip()
 PORT = int(os.environ.get("PORT", 8080))
+# Railway sets RAILWAY_PUBLIC_DOMAIN to the service's public hostname.
+# FastMCP's transport_security validates the Host header against this value.
+PUBLIC_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "localhost")
 
 mcp = FastMCP(
     "watchtower",
     streamable_http_path="/mcp",
+    host=PUBLIC_DOMAIN,
 )
 
 PUBLIC_PATHS = {"/health"}
@@ -42,7 +46,8 @@ def _get_screens():
     from screen.master_screen import run_screen as run_master
     from screen.insider_burst_screen import run_screen as run_insider
     from screen.upcomer_screen import run_screen as run_upcomer
-    return run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer
+    from screen.volume_burst_screen import run_screen as run_volume_burst
+    return run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer, run_volume_burst
 
 
 @mcp.tool()
@@ -50,6 +55,8 @@ def watchtower_run_screen(
     screen: str,
     top_n: int = 5,
     with_plan: bool = True,
+    with_synthesis: bool = False,
+    ticker: str = "",
 ) -> str:
     """Run one of Watchtower's stock screens live.
 
@@ -60,25 +67,32 @@ def watchtower_run_screen(
     - master: broad fundamental composite
     - insider: insider activity driven
     - upcomer: hidden gems / 10x potential — off-radar small/mid caps breaking out of bases
+    - volume_burst: unusual volume surges — breakouts and exhaustion signals
 
+    Use ticker="AAPL" to score any single stock through the chosen screen, regardless of
+    whether it's in the quality universe. Great for on-demand stock lookups.
     Use with_plan=true to include suggested trade plan (ATR stop + position size).
+    Use with_synthesis=true to append a Grok AI narrative synthesizing the top results (requires XAI_API_KEY).
     """
-    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer = _get_screens()
+    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer, run_volume_burst = _get_screens()
+    t = ticker.upper() if ticker else None
 
     if screen == "reversal":
-        results = run_reversal(min_drawdown=15.0)[:top_n]
+        results = run_reversal(min_drawdown=15.0, single_ticker=t)[:top_n]
     elif screen == "momentum":
-        results = run_momentum(max_pullback=12.0)[:top_n]
+        results = run_momentum(max_pullback=12.0, single_ticker=t)[:top_n]
     elif screen == "breakdown":
-        results = run_breakdown(min_breakdown=45.0)[:top_n]
+        results = run_breakdown(min_breakdown=45.0, single_ticker=t)[:top_n]
     elif screen == "master":
-        results = run_master()[:top_n]
+        results = run_master(single_ticker=t)[:top_n]
     elif screen == "insider":
-        results = run_insider()[:top_n]
+        results = run_insider(single_ticker=t)[:top_n]
     elif screen in ("upcomer", "hidden_gems", "gems"):
         results = run_upcomer(min_score=30.0, top_n=top_n, with_synthesis=False)
+    elif screen == "volume_burst":
+        results = run_volume_burst(min_surge=1.75, single_ticker=t)[:top_n]
     else:
-        return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider, upcomer"
+        return f"Unknown screen '{screen}'. Valid options: reversal, momentum, breakdown, master, insider, upcomer, volume_burst"
 
     lines = [f"**{screen.upper()} SCREEN RESULTS** (Top {len(results)})"]
     for r in results:
@@ -94,13 +108,141 @@ def watchtower_run_screen(
             line += f" | Stop: ${p.get('stop_price', 0):.2f} | Size: {p.get('position_pct', 0):.1f}%"
         lines.append(line)
 
+    if with_synthesis:
+        try:
+            from analysis.grok_synthesizer import synthesize_screen_results
+            narrative = synthesize_screen_results(screen, results, top_n=min(top_n, len(results)))
+            if narrative:
+                lines.append(f"\n**AI Analysis:**\n{narrative}")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: bool = False) -> str:
+    """Scan for intraday setups forming right now using live Polygon data (15-min delayed on Starter tier).
+
+    Bullish: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL
+    Bearish: VWAP_REJECTION, INTRADAY_BREAKDOWN, GAP_DOWN_CONFIRM, DISTRIBUTION
+    Neutral: VOLUME_SURGE (unusual activity, direction unclear)
+
+    Use ticker="ONDS" to check a specific stock intraday.
+    Use with_synthesis=true for Grok AI narrative on the top setups.
+    Best used during market hours (9:30 AM - 4:00 PM ET).
+    """
+    from screen.intraday_screen import run_screen as run_intraday
+    t = ticker.upper() if ticker else None
+    results = run_intraday(single_ticker=t)[:top_n]
+
+    if not results:
+        return "No intraday setups detected above threshold right now."
+    if results and results[0].get("error"):
+        return f"Intraday scan error: {results[0]['error']}"
+
+    # Check market hours from first result
+    is_market_hours = results[0].get("is_market_hours", True) if results else True
+    minutes_elapsed = results[0].get("minutes_elapsed", 0) if results else 0
+    header = "**INTRADAY SCAN** (Live Polygon — 15-min delayed)"
+    if not is_market_hours:
+        header += " ⚠️ Market closed — showing last session data"
+    else:
+        header += f" | {minutes_elapsed}min into session"
+
+    lines = [header]
+    for r in results:
+        line = (f"- **{r.get('ticker')}** | {r.get('signal_type',''):<18} | Score: {r.get('score',0):.0f}"
+                f" | {r.get('change_pct',0):+.1f}% | Vol: {r.get('vol_pace_ratio',0):.1f}x"
+                f" | {'↑VWAP' if r.get('above_vwap') else '↓VWAP'}"
+                f" | ${r.get('current_price',0):.2f}"
+                f"  {r.get('rationale','')}")
+        lines.append(line)
+
+    if with_synthesis:
+        try:
+            from analysis.grok_synthesizer import synthesize_screen_results
+            narrative = synthesize_screen_results("intraday", results, top_n=min(top_n, len(results)))
+            if narrative:
+                lines.append(f"\n**AI Analysis:**\n{narrative}")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
+    """Score any single stock across all Watchtower screens and return a full multi-sleeve report.
+
+    Works for any ticker with price history — not limited to the quality universe.
+    Runs reversal, momentum, breakdown, master, and volume_burst screens on the ticker
+    and returns all scores side by side so you can see exactly how it stacks up.
+    """
+    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_volume_burst = _get_screens()
+    t = ticker.upper()
+
+    lines = [f"**WATCHTOWER FULL ANALYSIS — {t}**"]
+
+    from screen.intraday_screen import run_screen as run_intraday
+    screen_fns = [
+        ("reversal",     lambda: run_reversal(min_drawdown=0.0, single_ticker=t, show_all=True)),
+        ("momentum",     lambda: run_momentum(max_pullback=100.0, single_ticker=t)),
+        ("breakdown",    lambda: run_breakdown(min_breakdown=0.0, single_ticker=t)),
+        ("master",       lambda: run_master(single_ticker=t)),
+        ("volume_burst", lambda: run_volume_burst(min_surge=0.5, single_ticker=t)),
+        ("intraday",     lambda: run_intraday(min_score=0.0, single_ticker=t)),
+    ]
+
+    best_results = []
+    for screen_name, fn in screen_fns:
+        try:
+            res = fn()
+            if res:
+                r = res[0]
+                score = (r.get("reversal_score") or r.get("momentum_score")
+                         or r.get("breakdown_score") or r.get("score") or 0)
+                signal = r.get("signal") or r.get("signal_type") or ""
+                rsi = r.get("rsi")
+                price = r.get("current_price")
+                pct_off = r.get("pct_off_high") or r.get("pct_from_high")
+                vol_surge = r.get("vol_surge")
+
+                detail = f"  Score: {score:.0f}" if isinstance(score, float) else f"  Score: {score}"
+                if signal:
+                    detail += f" | Signal: {signal}"
+                if rsi is not None:
+                    detail += f" | RSI: {rsi:.0f}"
+                if pct_off is not None:
+                    detail += f" | %OffHigh: {pct_off:.1f}%"
+                if vol_surge is not None:
+                    detail += f" | VolSurge: {vol_surge:.2f}x"
+                if price is not None:
+                    detail += f" | Price: ${price:.2f}"
+                lines.append(f"\n**{screen_name.upper()}**\n{detail}")
+                best_results.append((screen_name, r))
+            else:
+                lines.append(f"\n**{screen_name.upper()}**\n  No signal / insufficient data")
+        except Exception as e:
+            lines.append(f"\n**{screen_name.upper()}**\n  Error: {e}")
+
+    if with_synthesis and best_results:
+        try:
+            from analysis.grok_synthesizer import synthesize_screen_results
+            all_rows = [r for _, r in best_results]
+            narrative = synthesize_screen_results(f"full analysis of {t}", all_rows, top_n=len(all_rows))
+            if narrative:
+                lines.append(f"\n**AI SYNTHESIS**\n{narrative}")
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 
 @mcp.tool()
 def watchtower_get_momentum(top_n: int = 5) -> str:
     """Get current top momentum / up-and-comers from Watchtower's momentum sleeve."""
-    _, run_momentum, *_ = _get_screens()
+    _, run_momentum, *_ = _get_screens()  # noqa: F841
     results = run_momentum(max_pullback=12.0)[:top_n]
     lines = ["**MOMENTUM SCREEN RESULTS** (Top {})".format(len(results))]
     for r in results:
@@ -498,27 +640,12 @@ def watchtower_alert_performance(
         return f"Error: {e}"
 
 
-@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
-async def oauth_server_metadata(request: Request):
-    base = str(request.base_url).rstrip("/")
-    return JSONResponse({
-        "issuer": base,
-        "authorization_endpoint": f"{base}/authorize",
-        "token_endpoint": f"{base}/token",
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
-        "code_challenge_methods_supported": ["S256", "plain"],
-        "token_endpoint_auth_methods_supported": ["none"],
-    })
-
-
-@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
-async def oauth_protected_resource(request: Request):
-    base = str(request.base_url).rstrip("/")
-    return JSONResponse({
-        "resource": base,
-        "authorization_servers": [base],
-    })
+# NOTE: /.well-known endpoints intentionally omitted.
+# When they exist, Grok auto-discovers OAuth and tries to run the flow via its
+# server-side connector manager (not a browser), which can't do the redirect.
+# Without them, Grok falls back to showing the manual OAuth credentials form,
+# which lets the user fill in /authorize and /token — and the browser-based
+# redirect flow works correctly.
 
 
 @mcp.custom_route("/authorize", methods=["GET"])
@@ -643,7 +770,11 @@ raw_app = mcp.streamable_http_app()
 
 
 class AuthASGIWrapper:
-    """Lightweight ASGI wrapper — enforces Bearer auth on /mcp, passes OAuth paths through."""
+    """Lightweight ASGI wrapper — enforces Bearer auth on /mcp, passes OAuth paths through.
+
+    Also rewrites the Host header to 'localhost' for /mcp requests so the MCP SDK's
+    built-in DNS-rebinding protection doesn't reject Railway's public hostname (421).
+    """
 
     def __init__(self, app):
         self.app = app
@@ -653,21 +784,26 @@ class AuthASGIWrapper:
             path = scope.get("path", "")
             if MCP_AUTH_TOKEN and path.startswith("/mcp") and path not in PUBLIC_PATHS:
                 headers = dict(scope.get("headers", []))
+                host = headers.get(b"host", b"").decode("utf-8", errors="replace")
+                base_url = f"https://{host}" if host else ""
                 auth = headers.get(b"authorization", b"").decode("utf-8", errors="replace")
                 if not auth.lower().startswith("bearer "):
-                    await self._unauthorized(send)
+                    await self._unauthorized(send, base_url)
                     return
                 token = auth.split(" ", 1)[1].strip()
                 if token != MCP_AUTH_TOKEN:
-                    await self._unauthorized(send)
+                    await self._unauthorized(send, base_url)
                     return
+
         await self.app(scope, receive, send)
 
-    async def _unauthorized(self, send):
+    async def _unauthorized(self, send, base_url: str = ""):
         body = b'{"error":"Unauthorized"}'
+        resource_metadata = f"{base_url}/.well-known/oauth-protected-resource"
+        www_auth = f'Bearer realm="watchtower", resource_metadata="{resource_metadata}"'
         await send({"type": "http.response.start", "status": 401, "headers": [
             (b"content-type", b"application/json"),
-            (b"www-authenticate", b"Bearer"),
+            (b"www-authenticate", www_auth.encode()),
         ]})
         await send({"type": "http.response.body", "body": body})
 

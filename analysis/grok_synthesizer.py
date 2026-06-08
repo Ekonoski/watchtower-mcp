@@ -130,4 +130,57 @@ def batch_synthesize(client, contexts):
             results.append({"ticker": ctx.get("ticker"), "error": str(e)})
     return results
 
-# (Add the full local functions for build_context, synthesize_thesis etc. when pushing the complete file.)
+def synthesize_screen_results(screen: str, results: list, top_n: int = 5) -> str:
+    """Returns a Grok-synthesized narrative for the top screen results. Empty string if unavailable."""
+    try:
+        client = GrokClient()
+    except RuntimeError:
+        return ""
+
+    candidates = results[:top_n]
+    if not candidates:
+        return ""
+
+    lines = [f"Screen: {screen.upper()}  |  Date: {date.today().isoformat()}"]
+    for r in candidates:
+        ticker = r.get("ticker", "?")
+        company = (r.get("company_name") or "")[:28]
+        sector = (r.get("sector") or "")
+        score = (r.get("score") or r.get("reversal_score") or r.get("momentum_score")
+                 or r.get("breakdown_score") or "N/A")
+        rsi = r.get("rsi", "N/A")
+        pct_off = r.get("pct_off_high") if r.get("pct_off_high") is not None else r.get("pct_from_high", "N/A")
+        vol_surge = r.get("vol_surge", "N/A")
+        signal_type = r.get("signal_type", "")
+        rationale = r.get("rationale", "")
+        spy_regime = r.get("spy_regime")
+        regime_s = "Bull" if spy_regime is True else "Bear" if spy_regime is False else str(spy_regime)
+
+        parts = [f"- {ticker} ({company}) | Sector: {sector} | Score: {score}",
+                 f"RSI: {rsi}", f"%OffHigh: {pct_off}", f"VolSurge: {vol_surge}",
+                 f"Regime: {regime_s}"]
+        if signal_type:
+            parts.append(f"Signal: {signal_type}")
+        if rationale:
+            parts.append(rationale)
+        lines.append(" | ".join(parts))
+
+    user_prompt = "\n".join(lines)
+    user_prompt += (
+        f"\n\nYou are looking at the top {len(candidates)} results from Watchtower's {screen} screen. "
+        "Synthesize these into a concise, actionable analyst note (5-8 sentences). "
+        "Which names have the strongest setup and best GMMSS alignment? Note regime fit, any standouts, "
+        "and real risks. Be direct and specific — use the numbers above. Plain text, no JSON, no headers."
+    )
+
+    try:
+        resp = client.chat(
+            system=SYSTEM_PROMPT,
+            user=user_prompt,
+            json_mode=False,
+            temperature=0.35,
+            max_tokens=900,
+        )
+        return resp.get("text", "").strip()
+    except Exception as e:
+        return f"[Synthesis error: {e}]"

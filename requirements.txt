@@ -14,5 +14,5 @@ openai
 polygon-api-client
 
 # Scheduler for automated intraday + daily alerts
-apscheduler
+apscheduler>=3.10.0
 pytz
