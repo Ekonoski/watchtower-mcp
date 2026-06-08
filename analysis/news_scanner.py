@@ -269,10 +269,21 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
     if not client or not tickers:
         return {}
 
+    import logging as _log
+    _logger = _log.getLogger(__name__)
     out = {}
     try:
-        snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(tickers)})
-        for s in snaps:
+        # Pass tickers as a direct kwarg — Polygon client forwards extra kwargs as
+        # query params. Wrapping in list() forces the lazy iterator to execute now
+        # so any HTTP error is caught here rather than silently swallowed mid-loop.
+        snaps = list(client.get_snapshot_all("stocks", tickers=",".join(tickers)))
+        _logger.info(f"[news_scanner] Snapshot returned {len(snaps)} results for {len(tickers)} tickers.")
+    except Exception as e:
+        _logger.warning(f"[news_scanner] Snapshot fetch failed: {e}")
+        return out
+
+    for s in snaps:
+        try:
             ticker = getattr(s, "ticker", None)
             if not ticker:
                 continue
@@ -282,14 +293,11 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
                 continue
 
             price = getattr(day, "c", None) or 0
-            # Fall back to prev day close if today hasn't traded yet (low-volume ETFs, etc.)
             if not price and prev_day:
                 price = getattr(prev_day, "c", None) or 0
             volume = getattr(day, "v", None) or 0
             prev_close = getattr(prev_day, "c", None) if prev_day else None
             change_pct = ((price - prev_close) / prev_close * 100) if (prev_close and prev_close > 0 and price) else 0
-
-            # Volume vs previous day
             prev_vol = getattr(prev_day, "v", None) if prev_day else None
             vol_ratio = (volume / prev_vol) if (prev_vol and prev_vol > 0) else 1.0
 
@@ -299,8 +307,8 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
                 "volume": volume,
                 "vol_ratio": vol_ratio,
             }
-    except Exception:
-        pass
+        except Exception:
+            continue
     return out
 
 
