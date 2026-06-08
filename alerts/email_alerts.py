@@ -4,9 +4,13 @@ Intraday alerts: sent every 15-30 min during trading hours.
 Daily hidden gems: sent once per day (pre-market, ~6 AM ET).
 """
 import json
+import logging
 import os
 import urllib.request
+import urllib.error
 from datetime import datetime
+
+_log = logging.getLogger(__name__)
 from typing import List, Optional
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
@@ -390,7 +394,15 @@ def send_intraday_alert(
             except Exception:
                 pass
         return sent
-    except Exception:
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        _log.error(f"[email] Resend HTTPError {e.code}: {body}")
+        return False
+    except Exception as e:
+        _log.error(f"[email] Resend send failed: {e}")
         return False
 
 
@@ -588,5 +600,13 @@ def send_hidden_gems_alert(results: List[dict]) -> bool:
             except Exception:
                 pass
         return sent
-    except Exception:
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        _log.error(f"[email] Resend HTTPError {e.code}: {body}")
+        return False
+    except Exception as e:
+        _log.error(f"[email] Resend send failed: {e}")
         return False
