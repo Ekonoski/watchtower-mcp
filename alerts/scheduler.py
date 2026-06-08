@@ -5,6 +5,7 @@ Intraday alerts: every 15-30 min, Mon-Fri 7 AM–4 PM ET.
 Hidden gems (daily): once per day at 6:30 AM ET, Mon-Fri.
 """
 import logging
+import traceback
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def run_scheduled_scan():
             f"{len(news_alerts)} news catalysts. Email sent: {sent}"
         )
     except Exception as e:
-        log.error(f"[scheduler] Intraday scan error: {e}")
+        log.error(f"[scheduler] Intraday scan error: {e}\n{traceback.format_exc()}")
 
 
 def run_daily_fill_returns():

@@ -596,16 +596,45 @@ async def health(request: Request):
 
 
 # ── Scheduler startup ────────────────────────────────────────────────────────
+# Guard: only start the scheduler in the first worker process.
+# Railway / uvicorn can run multiple replicas — each would start its own
+# scheduler causing every job to fire N times. A PID file ensures only one
+# process owns the scheduler per container.
 
 import logging
+import os
+import tempfile
+
 logging.basicConfig(level=logging.INFO)
 
-try:
-    from alerts.scheduler import start_scheduler
-    _scheduler = start_scheduler()
-except Exception as _sched_err:
-    logging.warning(f"[server] Scheduler failed to start (alerts disabled): {_sched_err}")
-    _scheduler = None
+_SCHEDULER_LOCK = os.path.join(tempfile.gettempdir(), "watchtower_scheduler.lock")
+_scheduler = None
+
+def _is_scheduler_owner() -> bool:
+    """Return True if this process should own the scheduler."""
+    try:
+        if os.path.exists(_SCHEDULER_LOCK):
+            pid = int(open(_SCHEDULER_LOCK).read().strip())
+            try:
+                os.kill(pid, 0)  # check if that PID is still alive
+                return False     # another process owns it
+            except OSError:
+                pass  # PID is dead — take ownership
+        with open(_SCHEDULER_LOCK, "w") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception:
+        return True  # default to starting if lock check fails
+
+if _is_scheduler_owner():
+    try:
+        from alerts.scheduler import start_scheduler
+        _scheduler = start_scheduler()
+        logging.info(f"[server] Scheduler started by PID {os.getpid()}.")
+    except Exception as _sched_err:
+        logging.warning(f"[server] Scheduler failed to start (alerts disabled): {_sched_err}")
+else:
+    logging.info(f"[server] Scheduler already running in another worker — skipping.")
 
 
 # ── ASGI app with Bearer auth on /mcp ─────────────────────────────────────────
