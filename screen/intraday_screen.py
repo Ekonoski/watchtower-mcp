@@ -202,13 +202,11 @@ def run_screen(
     except Exception:
         conn = None
 
-    quality_rows = []
     quality_map = {}
     watchlist_tickers = []
     if conn is not None:
         try:
-            quality_rows = load_quality_tickers(conn)
-            quality_map = {r["ticker"]: r for r in quality_rows}
+            quality_map = load_quality_tickers(conn)  # already a Dict[ticker -> dict]
         except Exception:
             pass
         try:
@@ -303,7 +301,7 @@ def run_screen(
 
     else:
         # ── Default mode: quality universe + watchlist ─────────────────────────
-        quality_tickers = [r["ticker"] for r in quality_rows]
+        quality_tickers = list(quality_map.keys())
         combined = list(dict.fromkeys(quality_tickers + watchlist_tickers))  # deduped, order-preserving
         universe = combined
 
