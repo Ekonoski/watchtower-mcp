@@ -265,12 +265,18 @@ def run_screen(
         # keeps the universe wide — catches small-cap runners and biotech movers.
         MIN_PRICE = 1.0
         MIN_DOLLAR_VOL = 50_000
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
         try:
-            all_snaps = client.get_snapshot_all("stocks", include_otc=False)
-        except Exception:
+            # Force-materialize the iterator inside try/except — get_snapshot_all
+            # is lazy and Polygon HTTP errors surface during iteration, not at call time.
+            all_snaps = list(client.get_snapshot_all("stocks", include_otc=False))
+            _log.info(f"[intraday_screen] Polygon returned {len(all_snaps)} raw snapshots.")
+        except Exception as e:
+            _log.warning(f"[intraday_screen] Polygon get_snapshot_all failed: {e}")
             all_snaps = []
 
-        for snap in (all_snaps or []):
+        for snap in all_snaps:
             try:
                 ticker = getattr(snap, "ticker", None)
                 if not ticker or len(ticker) > 5:
@@ -296,8 +302,7 @@ def run_screen(
                 continue
 
         universe = list(snapshots.keys())
-        import logging as _logging
-        _logging.getLogger(__name__).info(f"[intraday_screen] Broad universe: {len(universe)} tickers passing $500k liquidity filter.")
+        _log.info(f"[intraday_screen] Broad universe: {len(universe)} tickers passing ${MIN_DOLLAR_VOL:,} liquidity filter.")
 
         # Load 20d avg volumes from Supabase for known tickers
         prices_df = pd.DataFrame()
