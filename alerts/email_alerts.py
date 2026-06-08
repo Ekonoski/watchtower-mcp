@@ -1,21 +1,91 @@
 """
-Watchtower — Email alerts via Resend.
+Watchtower — Email alerts via Gmail SMTP (preferred) or Resend fallback.
 Intraday alerts: sent every 15-30 min during trading hours.
 Daily hidden gems: sent once per day (pre-market, ~6 AM ET).
 """
 import json
 import logging
 import os
+import smtplib
 import urllib.request
 import urllib.error
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 _log = logging.getLogger(__name__)
 from typing import List, Optional
 
+# Gmail SMTP (preferred — avoids Cloudflare blocking on Resend's API)
+GMAIL_USER = os.environ.get("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
+# Resend (fallback)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "Watchtower <onboarding@resend.dev>")
 ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
+
+
+def _send_email(subject: str, html: str) -> bool:
+    """Send an HTML email via Gmail SMTP if configured, else Resend."""
+    if not ALERT_EMAIL_TO:
+        _log.error("[email] ALERT_EMAIL_TO not set.")
+        return False
+
+    # --- Gmail SMTP (preferred) ---
+    if GMAIL_USER and GMAIL_APP_PASSWORD:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = f"Watchtower <{GMAIL_USER}>"
+            msg["To"] = ALERT_EMAIL_TO
+            msg.attach(MIMEText(html, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+                smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                smtp.sendmail(GMAIL_USER, ALERT_EMAIL_TO, msg.as_string())
+            _log.info(f"[email] Gmail SMTP sent: {subject[:60]}")
+            return True
+        except Exception as e:
+            _log.error(f"[email] Gmail SMTP failed: {e}")
+            return False
+
+    # --- Resend fallback ---
+    if not RESEND_API_KEY:
+        _log.error("[email] No email credentials configured (GMAIL_USER+GMAIL_APP_PASSWORD or RESEND_API_KEY).")
+        return False
+
+    payload = {
+        "from": RESEND_FROM,
+        "to": [ALERT_EMAIL_TO],
+        "subject": subject,
+        "html": html,
+    }
+    try:
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+                "User-Agent": "watchtower-mcp/1.0",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            sent = resp.status in (200, 201)
+        if sent:
+            _log.info(f"[email] Resend sent: {subject[:60]}")
+        return sent
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        _log.error(f"[email] Resend HTTPError {e.code}: {body[:300]}")
+        return False
+    except Exception as e:
+        _log.error(f"[email] Resend send failed: {e}")
+        return False
 
 # Signal type → CSS color
 _SIGNAL_COLORS = {
@@ -344,8 +414,6 @@ def send_intraday_alert(
     Returns True if the email was sent successfully, False otherwise.
     Fails silently if env vars are missing or both results and news are empty.
     """
-    if not RESEND_API_KEY or not ALERT_EMAIL_TO:
-        return False
     if not results and not news_alerts:
         return False
 
@@ -362,48 +430,20 @@ def send_intraday_alert(
     subject = f"Watchtower Alert — {n} setup{'s' if n != 1 else ''}{news_suffix} | {time_str}"
     html = _build_html(results, minutes_elapsed, is_market_hours, news_alerts=news_alerts)
 
-    payload = {
-        "from": RESEND_FROM,
-        "to": [ALERT_EMAIL_TO],
-        "subject": subject,
-        "html": html,
-    }
-
-    try:
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=json.dumps(payload).encode(),
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            sent = resp.status == 200
-        if sent and results:
-            try:
-                from analysis.alert_tracker import log_alerts
-                log_alerts(results, "intraday")
-            except Exception:
-                pass
-        if sent and news_alerts:
-            try:
-                from analysis.alert_tracker import log_alerts
-                log_alerts(news_alerts, "news")
-            except Exception:
-                pass
-        return sent
-    except urllib.error.HTTPError as e:
+    sent = _send_email(subject, html)
+    if sent and results:
         try:
-            body = e.read().decode("utf-8", errors="replace")
+            from analysis.alert_tracker import log_alerts
+            log_alerts(results, "intraday")
         except Exception:
-            body = ""
-        _log.error(f"[email] Resend HTTPError {e.code}: {body}")
-        return False
-    except Exception as e:
-        _log.error(f"[email] Resend send failed: {e}")
-        return False
+            pass
+    if sent and news_alerts:
+        try:
+            from analysis.alert_tracker import log_alerts
+            log_alerts(news_alerts, "news")
+        except Exception:
+            pass
+    return sent
 
 
 def _build_gems_html(results: List[dict]) -> str:
@@ -558,8 +598,6 @@ def send_hidden_gems_alert(results: List[dict]) -> bool:
     Intended to run once per day, pre-market (~6 AM ET).
     Returns True if sent successfully.
     """
-    if not RESEND_API_KEY or not ALERT_EMAIL_TO:
-        return False
     if not results:
         return False
 
@@ -571,42 +609,14 @@ def send_hidden_gems_alert(results: List[dict]) -> bool:
         date_str = datetime.utcnow().strftime("%b %d")
 
     n = len(results)
-    subject = f"💎 Watchtower Hidden Gems — {n} up-and-comer{'s' if n != 1 else ''} | {date_str}"
+    subject = f"Watchtower Hidden Gems — {n} up-and-comer{'s' if n != 1 else ''} | {date_str}"
     html = _build_gems_html(results)
 
-    payload = {
-        "from": RESEND_FROM,
-        "to": [ALERT_EMAIL_TO],
-        "subject": subject,
-        "html": html,
-    }
-
-    try:
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=json.dumps(payload).encode(),
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            sent = resp.status == 200
-        if sent:
-            try:
-                from analysis.alert_tracker import log_alerts
-                log_alerts(results, "gem")
-            except Exception:
-                pass
-        return sent
-    except urllib.error.HTTPError as e:
+    sent = _send_email(subject, html)
+    if sent:
         try:
-            body = e.read().decode("utf-8", errors="replace")
+            from analysis.alert_tracker import log_alerts
+            log_alerts(results, "gem")
         except Exception:
-            body = ""
-        _log.error(f"[email] Resend HTTPError {e.code}: {body}")
-        return False
-    except Exception as e:
-        _log.error(f"[email] Resend send failed: {e}")
-        return False
+            pass
+    return sent
