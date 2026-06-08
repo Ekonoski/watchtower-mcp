@@ -291,6 +291,8 @@ def run_screen(
                 continue
 
         universe = list(snapshots.keys())
+        import logging as _logging
+        _logging.getLogger(__name__).info(f"[intraday_screen] Broad universe: {len(universe)} tickers passing $500k liquidity filter.")
 
         # Load 20d avg volumes from Supabase for known tickers
         prices_df = pd.DataFrame()
