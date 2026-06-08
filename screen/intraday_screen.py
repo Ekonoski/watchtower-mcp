@@ -261,9 +261,10 @@ def run_screen(
 
     elif broad:
         # ── Broad mode: full US market via Polygon snapshot ───────────────────
-        # No artificial ticker cap — filter by minimum dollar volume instead.
-        # $500k today = liquid enough to trade, cuts noise from micro/nano junk.
-        MIN_DOLLAR_VOL = 500_000
+        # Min price $1 filters true penny/shell stocks. Min dollar vol $50k
+        # keeps the universe wide — catches small-cap runners and biotech movers.
+        MIN_PRICE = 1.0
+        MIN_DOLLAR_VOL = 50_000
         try:
             all_snaps = client.get_snapshot_all("stocks", include_otc=False)
         except Exception:
@@ -279,10 +280,14 @@ def run_screen(
                     continue
                 price = getattr(day, "c", 0) or 0
                 vol = getattr(day, "v", 0) or 0
+                prev = getattr(snap, "prevDay", None)
+                prev_price = getattr(prev, "c", 0) or 0 if prev else 0
+                # Use best available price for filtering
+                effective_price = price or prev_price
+                if effective_price < MIN_PRICE:
+                    continue
                 # Pre-market: today's volume is near-zero, use prev day to check liquidity
                 if price * vol < MIN_DOLLAR_VOL:
-                    prev = getattr(snap, "prevDay", None)
-                    prev_price = getattr(prev, "c", 0) or 0 if prev else 0
                     prev_vol = getattr(prev, "v", 0) or 0 if prev else 0
                     if prev_price * prev_vol < MIN_DOLLAR_VOL:
                         continue
