@@ -29,6 +29,13 @@ DATA_DELAY_MIN = int(os.environ.get("POLYGON_DATA_DELAY_MIN", "15"))
 # before a ticker can appear in scan results (single-ticker lookups exempt).
 MIN_SIGNAL_DOLLAR_VOL = float(os.environ.get("MIN_SIGNAL_DOLLAR_VOL", "250000"))
 
+# Baseline sanity for the broad scan: new listings and recycled ticker
+# symbols carry junk prevDay data (EROC debuted ~$19 with a phantom $1.74
+# "prior close" → fake +1055% GAP_AND_GO). Require a real prior session
+# and reject absurd computed moves.
+MIN_PREV_DOLLAR_VOL = float(os.environ.get("MIN_PREV_DOLLAR_VOL", "50000"))
+MAX_SANE_CHANGE_PCT = float(os.environ.get("MAX_SANE_CHANGE_PCT", "400"))
+
 try:
     import pytz
     _HAS_PYTZ = True
@@ -459,6 +466,17 @@ def run_screen(
             # flooding the scanner with untradeable "signals").
             if not single_ticker and current_price * today_volume < MIN_SIGNAL_DOLLAR_VOL:
                 continue
+
+            # Baseline sanity — gap/change math is only meaningful against a
+            # real prior session. New listings / recycled symbols carry junk
+            # prevDay data; a computed move past MAX_SANE_CHANGE_PCT is a
+            # data artifact, not a setup.
+            if not single_ticker:
+                prev_volume = _attr(prev_day, "v", "volume", default=0.0) or 0.0
+                if prev_close <= 0 or prev_close * prev_volume < MIN_PREV_DOLLAR_VOL:
+                    continue
+                if abs(change_pct) > MAX_SANE_CHANGE_PCT or abs(gap_pct) > MAX_SANE_CHANGE_PCT:
+                    continue
 
             signal_type, score, rationale = classify_intraday(
                 gap_pct=gap_pct,
