@@ -317,7 +317,7 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
         with conn.cursor() as cur:
             base_sql = """
                 SELECT
-                    ticker, alert_type, alert_date, signal_type,
+                    ticker, alert_type, alert_date, alerted_at, signal_type,
                     entry_price, score,
                     d1_return, d3_return, d5_return, d7_return,
                     d14_return, d21_return, d30_return,
@@ -400,11 +400,23 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
     for r in rows:
         at = r["alert_type"]
         td = TRACK_DAYS.get(at, 30)
+        time_et = ""
+        ts = r.get("alerted_at")
+        if ts is not None:
+            try:
+                import pytz
+                t = ts.astimezone(pytz.timezone("America/New_York"))
+                # Backfilled rows sit at midnight — show time only when real
+                if t.hour or t.minute:
+                    time_et = t.strftime("%H:%M")
+            except Exception:
+                pass
         formatted.append({
             "ticker":     r["ticker"],
             "type":       at,
             "dir":        "short" if _is_bearish(at, r.get("signal_type")) else "long",
             "date":       str(r["alert_date"]),
+            "time":       time_et,
             "signal":     r["signal_type"] or "",
             "entry":      f"${float(r['entry_price']):.2f}" if r["entry_price"] else "",
             "score":      f"{float(r['score']):.1f}" if r["score"] else "",

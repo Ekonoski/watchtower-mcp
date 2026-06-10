@@ -650,7 +650,7 @@ async function loadPerformance() {
   const rows = rep.rows || [];
   $("perf-empty").style.display = rows.length ? "none" : "block";
   $("perf-body").innerHTML = rows.slice(0, 100).map(r => `<tr>
-    <td class="left num">${esc(r.date)}</td><td class="left">${esc(r.type)}</td>
+    <td class="left num">${esc(r.date)}${r.time ? ' <span style="color:var(--muted)">' + esc(r.time) + ' ET</span>' : ""}</td><td class="left">${esc(r.type)}</td>
     <td class="left"><span class="${r.dir === "short" ? "neg" : "pos"}">${esc(r.dir || "long")}</span></td>
     <td class="left tkr">${esc(r.ticker)}</td><td class="num">${esc(String(r.score ?? ""))}</td>
     <td class="num">${esc(String(r["d7%"] ?? ""))}</td><td class="num">${esc(String(r["d30%"] ?? ""))}</td>
