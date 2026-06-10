@@ -130,6 +130,8 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
     cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     articles = []
+    raw_count = 0
+    no_ticker = 0
     try:
         news = client.list_ticker_news(
             published_utc_gte=cutoff_str,
@@ -142,8 +144,10 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
             count += 1
             if count > 200:  # list_ticker_news paginates past `limit` lazily
                 break
+            raw_count += 1
             tickers = getattr(article, "tickers", []) or []
             if not tickers:
+                no_ticker += 1
                 continue
             articles.append({
                 "tickers": [t.upper() for t in tickers if len(t) <= 5],
@@ -154,8 +158,14 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
                 "publisher": getattr(getattr(article, "publisher", None), "name", "") or "",
             })
     except Exception as e:
-        print(f"[news_scanner] Polygon news fetch error: {e}", file=sys.stderr)
+        import logging
+        logging.getLogger(__name__).warning(f"[news_scanner] Polygon news fetch error: {e}")
 
+    import logging
+    logging.getLogger(__name__).info(
+        f"[news_scanner] Fetch since {cutoff_str}: {raw_count} raw articles, "
+        f"{no_ticker} without tickers, {len(articles)} kept."
+    )
     return articles
 
 
@@ -393,9 +403,12 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
 
     known_tickers = _load_known_tickers(conn)
 
+    import logging as _logging
+    _nlog = _logging.getLogger(__name__)
+
     # Step 1: fetch news
     articles = fetch_recent_news(lookback_minutes=lookback_minutes)
-    if not articles:
+    if not articles and not _recent_alerts:
         return []
 
     _cache_prune(_classification_cache)
@@ -460,6 +473,11 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
             "one_liner": classification.get("one_liner", article["headline"][:80]),
             "is_off_radar": primary_ticker not in known_tickers,
         })
+
+    _nlog.info(
+        f"[news_scanner] Classified: {len(alerts)} alerts from {len(articles)} articles "
+        f"(grok={'yes' if grok else 'no'}), {len(_recent_alerts)} retained."
+    )
 
     # Merge with recently surfaced catalysts so they stay visible for
     # NEWS_RETENTION_MIN even after sliding out of the fetch lookback.
