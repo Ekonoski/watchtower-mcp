@@ -535,7 +535,7 @@ function renderNews() {
         ${n.combined_signal ? `<span class="badge ${combined}">${esc(n.combined_signal)}${n.conviction ? " · " + esc(n.conviction) : ""}</span>` : ""}
       </div>
       <h3>${esc(n.headline)}</h3>
-      <div class="meta num">$${fmtNum(n.price)} · <span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${fmtNum(chg, 1)}%</span> · vol ${fmtNum(n.vol_ratio, 1)}x · ${esc(n.publisher || "")}</div>
+      <div class="meta num">${n.price ? "$" + fmtNum(n.price) : "price n/a"} · <span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${fmtNum(chg, 1)}%</span> · ${n.vol_ratio ? "vol " + fmtNum(n.vol_ratio, 1) + "x" : "vol n/a"} · ${esc(n.publisher || "")}</div>
       ${n.thesis ? `<div class="thesis">${esc(n.thesis)}</div>` : ""}
       ${n.key_level ? `<div class="kv"><b>Key level:</b> ${esc(n.key_level)}</div>` : ""}
       ${n.risk ? `<div class="kv"><b>Risk:</b> ${esc(n.risk)}</div>` : ""}
