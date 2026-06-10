@@ -318,6 +318,17 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
         _logger.warning(f"[news_scanner] Snapshot fetch failed: {e}")
         return out
 
+    def _attr(obj, *names, default=None):
+        # Polygon REST JSON is camelCase; the Python client's dataclasses are
+        # snake_case — read both so neither shape silently returns None.
+        if obj is None:
+            return default
+        for n in names:
+            v = getattr(obj, n, None)
+            if v is not None:
+                return v
+        return default
+
     for s in snaps:
         try:
             ticker = getattr(s, "ticker", None)
@@ -327,25 +338,25 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
             # latest minute bar / last trade so news cards show the real
             # pre-market price and % move instead of $0.00 / +0.0%.
             day = getattr(s, "day", None)
-            prev_day = getattr(s, "prevDay", None)
+            prev_day = _attr(s, "prevDay", "prev_day")
             minute = getattr(s, "min", None)
-            last_trade = getattr(s, "lastTrade", None)
+            last_trade = _attr(s, "lastTrade", "last_trade")
 
-            price = (getattr(day, "c", None) or 0) if day else 0
-            if not price and minute is not None:
-                price = getattr(minute, "c", None) or 0
-            if not price and last_trade is not None:
-                price = getattr(last_trade, "p", None) or 0
+            price = _attr(day, "c", "close", default=0) or 0
+            if not price:
+                price = _attr(minute, "c", "close", default=0) or 0
+            if not price:
+                price = _attr(last_trade, "p", "price", default=0) or 0
 
-            volume = (getattr(day, "v", None) or 0) if day else 0
-            if not volume and minute is not None:
-                volume = getattr(minute, "av", None) or 0
+            volume = _attr(day, "v", "volume", default=0) or 0
+            if not volume:
+                volume = _attr(minute, "av", "accumulated_volume", default=0) or 0
 
-            prev_close = getattr(prev_day, "c", None) if prev_day else None
+            prev_close = _attr(prev_day, "c", "close")
             if not price and prev_close:
                 price = prev_close
             change_pct = ((price - prev_close) / prev_close * 100) if (prev_close and prev_close > 0 and price) else 0
-            prev_vol = getattr(prev_day, "v", None) if prev_day else None
+            prev_vol = _attr(prev_day, "v", "volume")
             # 0 = "no volume data yet" — display layer shows it honestly
             # instead of a fake 1.0x.
             vol_ratio = (volume / prev_vol) if (volume and prev_vol and prev_vol > 0) else 0
