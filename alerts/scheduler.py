@@ -46,6 +46,30 @@ def _fresh_for_email(results: list, news_alerts: list) -> tuple:
     return fresh_signals, fresh_news
 
 
+def _another_scan_just_saved(window_sec: int = 120) -> bool:
+    """During a deploy, Railway briefly runs old + new containers and each owns
+    its per-container scheduler lock — both fire the same cron slot and the
+    user gets double snapshots/emails. Scans take ~2-3 min, so the check runs
+    just before save/email: the slower container sees the faster one's
+    snapshot and stands down. (Checking at scan start would race — both
+    containers fire within seconds, before either has saved.)"""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM scan_snapshots "
+                    "WHERE as_of > now() - make_interval(secs => %s)",
+                    (window_sec,),
+                )
+                return (cur.fetchone() or [0])[0] > 0
+        finally:
+            conn.close()
+    except Exception:
+        return False  # table missing / DB down — don't block scanning
+
+
 def run_scheduled_scan():
     """Intraday scan + news scan — called every 15-30 min during trading hours."""
     try:
@@ -87,6 +111,12 @@ def run_scheduled_scan():
             log.info(f"[scheduler] Market pulse fetched: {market_pulse.get('overall_sentiment', 'n/a')}")
         except Exception as e:
             log.warning(f"[scheduler] Market pulse error (non-fatal): {e}")
+
+        # Deploy-overlap dedupe: if a sibling container already saved this
+        # scan slot while we were scanning, stand down (no save, no email).
+        if _another_scan_just_saved():
+            log.info("[scheduler] Sibling container already saved this scan slot — standing down.")
+            return
 
         # Persist the full scan for the live dashboard (always, even with no signals)
         try:

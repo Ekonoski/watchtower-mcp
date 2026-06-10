@@ -429,14 +429,17 @@ def run_screen(
 
             avg_vol = avg_vol_map.get(ticker, 0.0)
 
-            # Volume pace ratio — measured against the data's age, not the
-            # wall clock. Snapshot volume lags by DATA_DELAY_MIN, so dividing
-            # by wall-clock minutes systematically understates pace (and zeroes
-            # it for the first 15 min of the session).
-            data_minutes = max(min(minutes_elapsed - DATA_DELAY_MIN, 390), 5)
+            # Volume pace ratio — accumulated volume vs what's NORMAL by this
+            # time of day, using the data's age (snapshot lags DATA_DELAY_MIN).
+            # Naive linear projection (vol/minutes*390) multiplies the opening
+            # auction + pre-market volume by ~78x five minutes into the session
+            # and flagged 700+ tickers at the 9:35 open. Expected fraction of
+            # daily volume: ~12% by the open (pre-market + auction), then
+            # roughly linear through the close.
+            data_minutes = max(min(minutes_elapsed - DATA_DELAY_MIN, 390), 1)
+            expected_frac = min(1.0, 0.12 + 0.88 * (data_minutes / 390.0))
             if avg_vol > 0 and today_volume > 0:
-                volume_pace = (today_volume / data_minutes) * 390
-                vol_pace_ratio = volume_pace / avg_vol
+                vol_pace_ratio = today_volume / (avg_vol * expected_frac)
             else:
                 vol_pace_ratio = 0.0
 
