@@ -142,8 +142,9 @@ def classify_intraday(
         return "VWAP_BREAKOUT", score, f"Above VWAP with {vol_pace_ratio:.1f}x volume pace"
 
     # 4. FLUSH_REVERSAL — flushed hard, now back above VWAP
+    # (today_low > 0 guard: pre-market has no session low yet)
     if (change_pct < 0 and above_vwap
-            and prev_close > 0 and today_low < prev_close * 0.97
+            and prev_close > 0 and 0 < today_low < prev_close * 0.97
             and vol_pace_ratio >= vol_thresh):
         score = min(100, 45 + (vol_pace_ratio - vol_thresh) * 6 + abs(change_pct))
         return "FLUSH_REVERSAL", score, "Flushed to lows, now reclaiming VWAP"
@@ -288,12 +289,18 @@ def run_screen(
                 ticker = getattr(snap, "ticker", None)
                 if not ticker or len(ticker) > 5:
                     continue
+                # Pre-market the delayed feed has no `day` bar yet — fall back
+                # to the latest minute bar (carries pre-market price/volume)
+                # and prevDay so the universe doesn't collapse to zero.
                 day = getattr(snap, "day", None)
-                if not day:
-                    continue
-                price = getattr(day, "c", 0) or 0
-                vol = getattr(day, "v", 0) or 0
+                minute = getattr(snap, "min", None)
                 prev = getattr(snap, "prevDay", None)
+                price = (getattr(day, "c", 0) or 0) if day else 0
+                if not price and minute is not None:
+                    price = getattr(minute, "c", 0) or 0
+                vol = (getattr(day, "v", 0) or 0) if day else 0
+                if not vol and minute is not None:
+                    vol = getattr(minute, "av", 0) or 0
                 prev_price = getattr(prev, "c", 0) or 0 if prev else 0
                 # Use best available price for filtering
                 effective_price = price or prev_price
@@ -370,20 +377,37 @@ def run_screen(
             continue
 
         try:
-            day = snap.day
-            prev_day = snap.prevDay
+            day = getattr(snap, "day", None)
+            prev_day = getattr(snap, "prevDay", None)
+            minute = getattr(snap, "min", None)
 
-            today_open = getattr(day, "o", None) or 0.0
-            today_high = getattr(day, "h", None) or 0.0
-            today_low = getattr(day, "l", None) or 0.0
-            current_price = getattr(day, "c", None) or 0.0
-            today_volume = getattr(day, "v", None) or 0.0
-            vwap = getattr(day, "vw", None) or 0.0
+            today_open = (getattr(day, "o", None) or 0.0) if day else 0.0
+            today_high = (getattr(day, "h", None) or 0.0) if day else 0.0
+            today_low = (getattr(day, "l", None) or 0.0) if day else 0.0
+            current_price = (getattr(day, "c", None) or 0.0) if day else 0.0
+            today_volume = (getattr(day, "v", None) or 0.0) if day else 0.0
+            vwap = (getattr(day, "vw", None) or 0.0) if day else 0.0
 
-            prev_close = getattr(prev_day, "c", None) or 0.0
+            # Pre-market: no day bar yet — use the latest minute bar's price,
+            # accumulated volume, and vwap so signals can still compute.
+            if minute is not None:
+                if not current_price:
+                    current_price = getattr(minute, "c", None) or 0.0
+                if not today_volume:
+                    today_volume = getattr(minute, "av", None) or 0.0
+                if not vwap:
+                    vwap = getattr(minute, "vw", None) or 0.0
 
-            # Derived metrics
-            gap_pct = ((today_open - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+            prev_close = (getattr(prev_day, "c", None) or 0.0) if prev_day else 0.0
+
+            # Derived metrics. Pre-market there's no official open — the gap
+            # is the live (pre-market) price vs yesterday's close.
+            if today_open > 0 and prev_close > 0:
+                gap_pct = (today_open - prev_close) / prev_close * 100
+            elif current_price > 0 and prev_close > 0 and not is_market_hours:
+                gap_pct = (current_price - prev_close) / prev_close * 100
+            else:
+                gap_pct = 0.0
             change_pct = getattr(snap, "todaysChangePerc", None)
             if change_pct is None:
                 change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
