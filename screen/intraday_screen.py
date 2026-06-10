@@ -175,16 +175,18 @@ def classify_intraday(
         return "INTRADAY_BREAKOUT", score, f"At HOD above VWAP, {vol_pace_ratio:.1f}x volume pace"
 
     # 3. VWAP_BREAKOUT — above VWAP, not at HOD yet
-    if (above_vwap and not at_hod and vol_pace_ratio >= vol_thresh
-            and change_pct >= min_move):
-        score = min(100, 45 + (pace - vol_thresh) * 6)
+    # (calibrated 6/10: at 1.5x/1% this fired ~33/scan; 2x/2% targets ~10)
+    if (above_vwap and not at_hod
+            and vol_pace_ratio >= (1.5 if premarket else 2.0)
+            and change_pct >= (1.0 if premarket else 2.0)):
+        score = min(100, 40 + (pace - vol_thresh) * 6 + change_pct)
         return "VWAP_BREAKOUT", score, f"Above VWAP with {vol_pace_ratio:.1f}x volume pace"
 
     # 4. FLUSH_REVERSAL — flushed hard, now back above VWAP
     # (today_low > 0 guard: pre-market has no session low yet)
     if (change_pct < 0 and above_vwap
             and prev_close > 0 and 0 < today_low < prev_close * 0.97
-            and vol_pace_ratio >= vol_thresh):
+            and vol_pace_ratio >= (1.5 if premarket else 2.0)):
         score = min(100, 45 + (pace - vol_thresh) * 6 + abs(change_pct))
         return "FLUSH_REVERSAL", score, "Flushed to lows, now reclaiming VWAP"
 
@@ -197,10 +199,12 @@ def classify_intraday(
     # ── BEARISH ───────────────────────────────────────────────────────────────
 
     # 6. VWAP_REJECTION — rallied to VWAP, got rejected, fading below with volume
-    if (not above_vwap and change_pct <= -min_move
+    # (calibrated 6/10: at 1.5x/-1% this was the #1 noise source, ~120/scan —
+    # every fading stock qualifies late-day; 2x/-2% targets the real rejections)
+    if (not above_vwap and change_pct <= -(1.0 if premarket else 2.0)
             and prev_close > 0 and today_high >= prev_close * 0.99
-            and vol_pace_ratio >= vol_thresh):
-        score = min(100, 45 + (pace - vol_thresh) * 6 + abs(change_pct))
+            and vol_pace_ratio >= (1.5 if premarket else 2.0)):
+        score = min(100, 40 + (pace - vol_thresh) * 6 + abs(change_pct))
         return "VWAP_REJECTION", score, f"Rejected at VWAP, fading {change_pct:.1f}% on {vol_pace_ratio:.1f}x volume"
 
     # 7. INTRADAY_BREAKDOWN — at LOD below VWAP with volume
@@ -224,8 +228,9 @@ def classify_intraday(
     # ── NEUTRAL ───────────────────────────────────────────────────────────────
 
     # 10. VOLUME_SURGE — something is happening, direction unclear
-    if vol_pace_ratio >= 3.0 and abs(change_pct) >= 0.5:
-        score = min(100, 40 + (pace - 3.0) * 5)
+    # (calibrated 6/10: 3x fired ~50/scan; 4x + a real move keeps it WATCH-worthy)
+    if vol_pace_ratio >= 4.0 and abs(change_pct) >= 1.0:
+        score = min(100, 40 + (pace - 4.0) * 5 + abs(change_pct))
         return "VOLUME_SURGE", score, f"Volume at {vol_pace_ratio:.1f}x pace — unusual activity"
 
     return "NEUTRAL", 0.0, ""
