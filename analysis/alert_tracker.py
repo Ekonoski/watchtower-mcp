@@ -43,8 +43,13 @@ TRACK_DAYS: Dict[str, int] = {
     "master":    90,
 }
 
-# Win threshold: >=5% move in the direction of the trade counts as a win
-WIN_THRESHOLD = 5.0
+# Win thresholds (always in the direction of the trade):
+#   Day-trade signals (intraday, news): >=2% by the NEXT CLOSE (d1) — the
+#   question being answered is "did it move enough, fast enough, to day trade".
+#   Swing screens (reversal/momentum/gems/...): >=5% within the type's window.
+WIN_THRESHOLD = float(os.environ.get("ALERT_WIN_THRESHOLD", "5.0"))
+DAY_WIN_THRESHOLD = float(os.environ.get("ALERT_DAY_WIN_THRESHOLD", "2.0"))
+DAY_TRADE_TYPES = {"intraday", "news"}
 
 # Bearish signals win when the stock FALLS. Their returns are sign-flipped in
 # the performance report so every stat reads "return in trade direction".
@@ -343,15 +348,18 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
             continue
 
         max_td = TRACK_DAYS[at]
-        # Use the longest filled milestone as the primary return column
+        is_day_trade = at in DAY_TRADE_TYPES
+        threshold = DAY_WIN_THRESHOLD if is_day_trade else WIN_THRESHOLD
+        # Use the longest filled milestone as the primary return column;
+        # day-trade types measure the short window at next close (d1).
         primary_col = f"d{max_td}_return" if max_td <= 90 else "d90_return"
-        short_col = "d7_return"
+        short_col = "d1_return" if is_day_trade else "d7_return"
 
         filled_primary = [r for r in subset if r.get(primary_col) is not None]
         filled_short = [r for r in subset if r.get(short_col) is not None]
 
         def avg(vals): return round(sum(vals) / len(vals), 2) if vals else None
-        def win_rate(vals): return round(sum(1 for x in vals if x >= WIN_THRESHOLD) / len(vals) * 100, 1) if vals else None
+        def win_rate(vals): return round(sum(1 for x in vals if x >= threshold) / len(vals) * 100, 1) if vals else None
 
         def _adj(r, col):
             """Return in the direction of the trade: flipped for bearish signals."""
@@ -366,6 +374,8 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
             "n_total": len(subset),
             "n_filled": len(filled_primary),
             "track_days": max_td,
+            "win_threshold_pct": threshold,
+            "is_day_trade": is_day_trade,
             "win_rate_short": win_rate(short_rets),
             "win_rate_full": win_rate(primary_rets),
             "avg_short_return": avg(short_rets),
@@ -373,7 +383,7 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
             "avg_peak_return": avg(peak_rets),
             "best": round(max(primary_rets), 2) if primary_rets else None,
             "worst": round(min(primary_rets), 2) if primary_rets else None,
-            "short_label": f"D{7}",
+            "short_label": "D1" if is_day_trade else "D7",
             "full_label": f"D{max_td}",
         }
 
@@ -408,6 +418,7 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
     return {
         "stats_by_type": stats,
         "win_threshold_pct": WIN_THRESHOLD,
+        "day_win_threshold_pct": DAY_WIN_THRESHOLD,
         "days_back": days_back,
         "total_alerts": len(rows),
         "rows": formatted,
