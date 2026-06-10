@@ -7,3 +7,9 @@ venv/
 .DS_Store
 *.log
 .claude/
+
+# Generated pipeline artifacts (regenerated daily — do not commit updates)
+daily_brief.md
+current_*_sleeve.csv
+current_regime.json
+sleeve_stats.json

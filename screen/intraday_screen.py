@@ -14,9 +14,16 @@ Usage:
     python3 screen/intraday_screen.py --top 20 --min-score 40
 """
 import argparse
+import os
 import sys
 from datetime import datetime
 from typing import List, Optional
+
+# Polygon Starter tier delivers snapshots ~15 min delayed. Volume-pace math
+# must use the data's timestamp, not the wall clock, or pace is understated
+# all day and reads ~0 for the first 15 min of the session (killing nearly
+# every signal in the prime morning window). Set to 0 on a real-time plan.
+DATA_DELAY_MIN = int(os.environ.get("POLYGON_DATA_DELAY_MIN", "15"))
 
 try:
     import pytz
@@ -383,9 +390,13 @@ def run_screen(
 
             avg_vol = avg_vol_map.get(ticker, 0.0)
 
-            # Volume pace ratio
+            # Volume pace ratio — measured against the data's age, not the
+            # wall clock. Snapshot volume lags by DATA_DELAY_MIN, so dividing
+            # by wall-clock minutes systematically understates pace (and zeroes
+            # it for the first 15 min of the session).
+            data_minutes = max(min(minutes_elapsed - DATA_DELAY_MIN, 390), 5)
             if avg_vol > 0 and today_volume > 0:
-                volume_pace = (today_volume / max(minutes_elapsed, 1)) * 390
+                volume_pace = (today_volume / data_minutes) * 390
                 vol_pace_ratio = volume_pace / avg_vol
             else:
                 vol_pace_ratio = 0.0

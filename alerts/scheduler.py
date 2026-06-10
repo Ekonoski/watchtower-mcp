@@ -1,13 +1,49 @@
 """
 Watchtower — Background scheduler for all automated alerts.
 
-Intraday alerts: every 15-30 min, Mon-Fri 7 AM–4 PM ET.
+Intraday scans: every 5 min during market hours (9:30 AM–4:00 PM ET),
+every 15 min pre-market (7:00–9:15 AM ET), Mon-Fri. Every scan is persisted
+for the live dashboard; email is gated so it only fires for fresh
+high-conviction signals (override with EMAIL_EVERY_SCAN=true).
 Hidden gems (daily): once per day at 6:30 AM ET, Mon-Fri.
 """
 import logging
+import os
+import time
 import traceback
 
 log = logging.getLogger(__name__)
+
+# ── Email gating ──────────────────────────────────────────────────────────────
+# The dashboard sees every scan; email only fires when there's something new:
+#   - an intraday signal scoring >= ALERT_EMAIL_MIN_SCORE on a ticker not
+#     emailed in the last ALERT_EMAIL_COOLDOWN_MIN minutes, or
+#   - a news catalyst on a ticker not emailed in that window, or
+#   - nothing sent for an hour (heartbeat so you know it's alive).
+EMAIL_EVERY_SCAN = os.environ.get("EMAIL_EVERY_SCAN", "").lower() in ("1", "true", "yes")
+EMAIL_MIN_SCORE = float(os.environ.get("ALERT_EMAIL_MIN_SCORE", "55"))
+EMAIL_COOLDOWN_SEC = int(os.environ.get("ALERT_EMAIL_COOLDOWN_MIN", "60")) * 60
+EMAIL_HEARTBEAT_SEC = int(os.environ.get("ALERT_EMAIL_HEARTBEAT_MIN", "60")) * 60
+
+_last_email_ts = 0.0
+_emailed_tickers: dict = {}  # ticker -> unix ts last included in an email
+
+
+def _fresh_for_email(results: list, news_alerts: list) -> tuple:
+    """Return (fresh_signal_tickers, fresh_news_tickers) not emailed recently."""
+    now = time.time()
+    for t, ts in list(_emailed_tickers.items()):
+        if now - ts > EMAIL_COOLDOWN_SEC:
+            del _emailed_tickers[t]
+    fresh_signals = [
+        r["ticker"] for r in results
+        if r.get("score", 0) >= EMAIL_MIN_SCORE and r.get("ticker") not in _emailed_tickers
+    ]
+    fresh_news = [
+        n["primary_ticker"] for n in news_alerts
+        if n.get("primary_ticker") and n["primary_ticker"] not in _emailed_tickers
+    ]
+    return fresh_signals, fresh_news
 
 
 def run_scheduled_scan():
@@ -52,18 +88,51 @@ def run_scheduled_scan():
         except Exception as e:
             log.warning(f"[scheduler] Market pulse error (non-fatal): {e}")
 
+        # Persist the full scan for the live dashboard (always, even with no signals)
+        try:
+            from dashboard import store
+            store.save_scan(results, news_alerts, market_pulse)
+        except Exception as e:
+            log.warning(f"[scheduler] Dashboard snapshot save error (non-fatal): {e}")
+
         is_mkt = results[0].get("is_market_hours", True) if results else True
         mins = results[0].get("minutes_elapsed", 0) if results else 0
-        sent = send_intraday_alert(
-            results,
-            minutes_elapsed=mins,
-            is_market_hours=is_mkt,
-            news_alerts=news_alerts,
-            market_pulse=market_pulse,
-        )
+
+        global _last_email_ts
+        fresh_signals, fresh_news = _fresh_for_email(results, news_alerts)
+        heartbeat_due = (time.time() - _last_email_ts) >= EMAIL_HEARTBEAT_SEC
+        should_email = EMAIL_EVERY_SCAN or fresh_signals or fresh_news or heartbeat_due
+
+        sent = False
+        if should_email:
+            sent = send_intraday_alert(
+                results,
+                minutes_elapsed=mins,
+                is_market_hours=is_mkt,
+                news_alerts=news_alerts,
+                market_pulse=market_pulse,
+            )
+            if sent:
+                _last_email_ts = time.time()
+                for t in fresh_signals + fresh_news:
+                    _emailed_tickers[t] = _last_email_ts
+        else:
+            # Email path also logs alerts for performance tracking — keep that
+            # going on skipped scans (alert_log dedupes per ticker/type/day).
+            try:
+                from analysis.alert_tracker import log_alerts
+                if results:
+                    log_alerts(results, "intraday")
+                if news_alerts:
+                    log_alerts(news_alerts, "news")
+            except Exception as e:
+                log.warning(f"[scheduler] Alert logging error (non-fatal): {e}")
+
         log.info(
             f"[scheduler] Scan complete. {len(results)} signals, "
-            f"{len(news_alerts)} news catalysts. Email sent: {sent}"
+            f"{len(news_alerts)} news catalysts. "
+            f"Fresh: {len(fresh_signals)} signals / {len(fresh_news)} news. "
+            f"Email sent: {sent}"
         )
     except Exception as e:
         log.error(f"[scheduler] Intraday scan error: {e}\n{traceback.format_exc()}")
@@ -198,42 +267,38 @@ def start_scheduler():
     et = pytz.timezone("America/New_York")
     scheduler = BackgroundScheduler(timezone=et)
 
-    # Pre-market: every 30 min, 7:00–9:15 AM ET
-    # Fires at: 7:00, 7:30, 8:00, 8:30, 9:00
+    # Pre-market: every 15 min, 7:00–9:15 AM ET
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="7-8", minute="0,30", timezone=et),
+        CronTrigger(day_of_week="mon-fri", hour="7-8", minute="*/15", timezone=et),
         id="intraday_scan_premarket",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="9", minute="0", timezone=et),
-        id="intraday_scan_900",
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="0,15", timezone=et),
+        id="intraday_scan_premarket_9am",
         replace_existing=True,
     )
 
-    # Market open through noon: every 15 min, 9:30 AM–12:00 PM ET
-    # Fires at: 9:30, 9:45, 10:00, 10:15, 10:30, 10:45, 11:00, 11:15, 11:30, 11:45, 12:00
+    # Market hours: every 5 min, 9:30 AM–4:00 PM ET. The dashboard gets every
+    # scan; email is gated (see _fresh_for_email) so this cadence doesn't spam.
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="9-11", minute="15,30,45,0", timezone=et),
-        id="intraday_scan_morning_15min",
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="30,35,40,45,50,55", timezone=et),
+        id="intraday_scan_open",
         replace_existing=True,
     )
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="12", minute="0", timezone=et),
-        id="intraday_scan_noon",
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*/5", timezone=et),
+        id="intraday_scan_market_5min",
         replace_existing=True,
     )
-
-    # Afternoon: every 30 min, 12:30–4:00 PM ET
-    # Fires at: 12:30, 13:00, 13:30, 14:00, 14:30, 15:00, 15:30
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="12-15", minute="30,0", timezone=et),
-        id="intraday_scan_afternoon_30min",
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="0", timezone=et),
+        id="intraday_scan_close",
         replace_existing=True,
     )
 
@@ -276,9 +341,8 @@ def start_scheduler():
     scheduler.start()
     log.info(
         "[scheduler] Scheduler started (America/New_York). "
-        "Hidden gems: 6:30 AM daily → "
-        "Pre-market intraday 30-min (7-9 AM) → "
-        "15-min at open through noon (9:30 AM-12 PM) → "
-        "30-min afternoon (12:30-4 PM ET)."
+        "Daily screens 6:00 AM → Hidden gems 6:30 AM → "
+        "Pre-market 15-min (7:00-9:15 AM) → "
+        "Market hours 5-min (9:30 AM-4:00 PM ET, email gated)."
     )
     return scheduler
