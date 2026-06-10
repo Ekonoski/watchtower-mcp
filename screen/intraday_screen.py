@@ -146,6 +146,13 @@ def classify_intraday(
     # destroying the ranking — a 6x cap keeps scores spread across 40-95.
     pace = min(vol_pace_ratio, 6.0)
 
+    # Magnitude floors: a "breakout" that hasn't moved isn't a breakout.
+    # IBTL (bond ETF, +0.02% on a 10-cent day range) scored 84 because
+    # at-HOD/above-VWAP are trivially true when the whole day is flat.
+    day_range_pct = ((today_high - today_low) / current_price * 100) if (current_price > 0 and today_high > 0 and today_low > 0) else 0.0
+    min_move = 0.5 if premarket else 1.0   # min |change %| for directional signals
+    min_range = 1.0                        # min day range % for HOD/LOD signals
+
     # Pre-market uses lower thresholds — volume is structurally thin before 9:30
     vol_thresh = 1.2 if premarket else 1.5
     gap_thresh = 2.0 if premarket else 3.0
@@ -162,12 +169,14 @@ def classify_intraday(
         return "GAP_AND_GO", score, f"Gapped +{gap_pct:.1f}%, holding with {vol_pace_ratio:.1f}x volume pace"
 
     # 2. INTRADAY_BREAKOUT — at HOD above VWAP with volume
-    if above_vwap and at_hod and vol_pace_ratio >= vol_thresh and change_pct > 0:
+    if (above_vwap and at_hod and vol_pace_ratio >= vol_thresh
+            and change_pct >= min_move and day_range_pct >= min_range):
         score = min(100, 50 + (pace - vol_thresh) * 8 + change_pct * 2)
         return "INTRADAY_BREAKOUT", score, f"At HOD above VWAP, {vol_pace_ratio:.1f}x volume pace"
 
     # 3. VWAP_BREAKOUT — above VWAP, not at HOD yet
-    if above_vwap and not at_hod and vol_pace_ratio >= vol_thresh and change_pct > 0:
+    if (above_vwap and not at_hod and vol_pace_ratio >= vol_thresh
+            and change_pct >= min_move):
         score = min(100, 45 + (pace - vol_thresh) * 6)
         return "VWAP_BREAKOUT", score, f"Above VWAP with {vol_pace_ratio:.1f}x volume pace"
 
@@ -188,14 +197,14 @@ def classify_intraday(
     # ── BEARISH ───────────────────────────────────────────────────────────────
 
     # 6. VWAP_REJECTION — rallied to VWAP, got rejected, fading below with volume
-    if (not above_vwap and change_pct < 0
+    if (not above_vwap and change_pct <= -min_move
             and prev_close > 0 and today_high >= prev_close * 0.99
             and vol_pace_ratio >= vol_thresh):
         score = min(100, 45 + (pace - vol_thresh) * 6 + abs(change_pct))
         return "VWAP_REJECTION", score, f"Rejected at VWAP, fading {change_pct:.1f}% on {vol_pace_ratio:.1f}x volume"
 
     # 7. INTRADAY_BREAKDOWN — at LOD below VWAP with volume
-    if (not above_vwap and at_lod
+    if (not above_vwap and at_lod and day_range_pct >= min_range
             and vol_pace_ratio >= vol_thresh and change_pct < -1.0):
         score = min(100, 50 + (pace - vol_thresh) * 8 + abs(change_pct) * 2)
         return "INTRADAY_BREAKDOWN", score, f"At LOD below VWAP, {vol_pace_ratio:.1f}x volume — breakdown"
@@ -215,7 +224,7 @@ def classify_intraday(
     # ── NEUTRAL ───────────────────────────────────────────────────────────────
 
     # 10. VOLUME_SURGE — something is happening, direction unclear
-    if vol_pace_ratio >= 3.0:
+    if vol_pace_ratio >= 3.0 and abs(change_pct) >= 0.5:
         score = min(100, 40 + (pace - 3.0) * 5)
         return "VOLUME_SURGE", score, f"Volume at {vol_pace_ratio:.1f}x pace — unusual activity"
 
