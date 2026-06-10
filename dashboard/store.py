@@ -58,6 +58,14 @@ def save_scan(
 
     is_market_hours = signals[0].get("is_market_hours") if signals else None
     minutes_elapsed = signals[0].get("minutes_elapsed") if signals else None
+    if is_market_hours is None:
+        # Zero-signal scans carry no market state — compute it from the clock
+        # so the header doesn't claim "Market closed" mid-session.
+        try:
+            from screen.intraday_screen import _market_minutes_elapsed
+            minutes_elapsed, is_market_hours = _market_minutes_elapsed()
+        except Exception:
+            pass
 
     snapshot = {
         "scan_type": scan_type,

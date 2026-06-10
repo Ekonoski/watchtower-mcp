@@ -295,7 +295,17 @@ def start_scheduler():
         return None
 
     et = pytz.timezone("America/New_York")
-    scheduler = BackgroundScheduler(timezone=et)
+    scheduler = BackgroundScheduler(
+        timezone=et,
+        job_defaults={
+            # If a scan overruns its slot (cold Grok cache after a deploy can
+            # push 6-8 min), collapse the missed firings into one instead of
+            # bursting stale scans when the worker frees up.
+            "coalesce": True,
+            "misfire_grace_time": 240,
+            "max_instances": 1,
+        },
+    )
 
     # Pre-market: every 15 min, 7:00–9:15 AM ET
     scheduler.add_job(

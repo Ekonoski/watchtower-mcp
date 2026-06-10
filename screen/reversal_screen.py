@@ -109,8 +109,14 @@ def _conn():
     last_err: Optional[Exception] = None
     for attempt in range(4):
         try:
+            # TCP keepalives: without them a half-dead pooler connection
+            # (server gone, no RST) blocks recv() forever — statement_timeout
+            # can't save us because the cancel never reaches a dead server.
+            # With these, a dead peer is detected in ~60s and raises.
             kwargs = dict(host=host, port=port, user=user, password=password,
-                          dbname=dbname, sslmode="require", connect_timeout=15)
+                          dbname=dbname, sslmode="require", connect_timeout=15,
+                          keepalives=1, keepalives_idle=30,
+                          keepalives_interval=10, keepalives_count=3)
             if hostaddr:
                 kwargs["hostaddr"] = hostaddr
             conn = psycopg2.connect(**kwargs)
