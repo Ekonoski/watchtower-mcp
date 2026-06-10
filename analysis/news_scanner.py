@@ -86,6 +86,12 @@ Return JSON with these exact fields:
 _classification_cache: Dict[str, tuple] = {}  # url -> (ts, classification|None)
 _synthesis_cache: Dict[str, tuple] = {}       # url -> (ts, signal dict)
 
+# Catalysts stay surfaced for NEWS_RETENTION_MIN after first seen — a 7 AM
+# FDA approval is still tradeable context at 10 AM. Without this, alerts
+# vanish from the dashboard as soon as they age past the fetch lookback.
+NEWS_RETENTION_SEC = int(os.environ.get("NEWS_RETENTION_MIN", "180")) * 60
+_recent_alerts: Dict[str, tuple] = {}         # url -> (first_seen_ts, alert)
+
 
 def _cache_prune(cache: Dict[str, tuple], ttl: float = 7200.0) -> None:
     import time as _time
@@ -455,6 +461,24 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
             "is_off_radar": primary_ticker not in known_tickers,
         })
 
+    # Merge with recently surfaced catalysts so they stay visible for
+    # NEWS_RETENTION_MIN even after sliding out of the fetch lookback.
+    # Retained alerts get re-enriched with live prices below like new ones.
+    now_ts = time.time()
+    for key, (ts, _old) in list(_recent_alerts.items()):
+        if now_ts - ts > NEWS_RETENTION_SEC:
+            del _recent_alerts[key]
+    current_keys = set()
+    for a in alerts:
+        key = a.get("article_url") or a.get("headline", "")
+        if key:
+            current_keys.add(key)
+            first_seen = _recent_alerts.get(key, (now_ts, None))[0]
+            _recent_alerts[key] = (first_seen, a)
+    for key, (_ts, old) in _recent_alerts.items():
+        if key not in current_keys:
+            alerts.append(old)
+
     if not alerts:
         return []
 
@@ -516,7 +540,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
         return sig_score + mag_score + off_radar_bonus + vol_bonus
 
     alerts.sort(key=_rank_key, reverse=True)
-    return alerts[:20]
+    return alerts[:30]
 
 
 def _keyword_classify(article: dict) -> Optional[dict]:
