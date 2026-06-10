@@ -307,19 +307,32 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
             ticker = getattr(s, "ticker", None)
             if not ticker:
                 continue
+            # Pre-market the delayed feed has no `day` bar — fall back to the
+            # latest minute bar / last trade so news cards show the real
+            # pre-market price and % move instead of $0.00 / +0.0%.
             day = getattr(s, "day", None)
             prev_day = getattr(s, "prevDay", None)
-            if not day:
-                continue
+            minute = getattr(s, "min", None)
+            last_trade = getattr(s, "lastTrade", None)
 
-            price = getattr(day, "c", None) or 0
-            if not price and prev_day:
-                price = getattr(prev_day, "c", None) or 0
-            volume = getattr(day, "v", None) or 0
+            price = (getattr(day, "c", None) or 0) if day else 0
+            if not price and minute is not None:
+                price = getattr(minute, "c", None) or 0
+            if not price and last_trade is not None:
+                price = getattr(last_trade, "p", None) or 0
+
+            volume = (getattr(day, "v", None) or 0) if day else 0
+            if not volume and minute is not None:
+                volume = getattr(minute, "av", None) or 0
+
             prev_close = getattr(prev_day, "c", None) if prev_day else None
+            if not price and prev_close:
+                price = prev_close
             change_pct = ((price - prev_close) / prev_close * 100) if (prev_close and prev_close > 0 and price) else 0
             prev_vol = getattr(prev_day, "v", None) if prev_day else None
-            vol_ratio = (volume / prev_vol) if (prev_vol and prev_vol > 0) else 1.0
+            # 0 = "no volume data yet" — display layer shows it honestly
+            # instead of a fake 1.0x.
+            vol_ratio = (volume / prev_vol) if (volume and prev_vol and prev_vol > 0) else 0
 
             out[ticker] = {
                 "price": price,
@@ -454,7 +467,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
         snap = snap_map.get(ticker, {})
         alert["price"] = snap.get("price", 0)
         alert["change_pct"] = snap.get("change_pct", 0)
-        alert["vol_ratio"] = snap.get("vol_ratio", 1.0)
+        alert["vol_ratio"] = snap.get("vol_ratio", 0)
 
     # Step 5: Grok synthesis — cross-reference news with technicals
     # Only for medium/high magnitude alerts — cap at 8 to manage API calls
