@@ -186,11 +186,39 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
 # Daily return fill
 # ---------------------------------------------------------------------------
 
+def _fetch_daily_closes(ticker: str, start: date, end: date) -> list:
+    """Daily closes from alert day through today: [(date, close), ...].
+    bars[0] is the alert day, bars[m] is trading day m after the alert."""
+    try:
+        from polygon import RESTClient
+        api_key = os.environ.get("POLYGON_API_KEY", "")
+        if not api_key:
+            return []
+        client = RESTClient(api_key)
+        bars = list(client.list_aggs(
+            ticker, 1, "day",
+            start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d"),
+            limit=200,
+        ))
+        out = []
+        for b in bars:
+            close = getattr(b, "close", None) or getattr(b, "c", None)
+            ts = getattr(b, "timestamp", None)
+            if close:
+                out.append((ts, float(close)))
+        return out
+    except Exception as e:
+        log.warning(f"[alert_tracker] daily bars fetch failed for {ticker}: {str(e)[:100]}")
+        return []
+
+
 def fill_daily_returns() -> int:
     """
-    For every alert with status='tracking', compute how many trading days
-    have elapsed since alert_date, fetch the current close, and fill
-    whichever milestone columns are due.
+    For every alert with status='tracking', fetch daily bars since the alert
+    and fill each due milestone with THAT day's actual close — correct even
+    when a fill runs late (the old version stamped 'price at fill time' on
+    every due milestone, so a missed day corrupted d1 with d2's price).
 
     Marks complete once filled_through_day >= track_days.
     Returns number of alerts updated.
@@ -201,6 +229,7 @@ def fill_daily_returns() -> int:
 
     today = date.today()
     updated = 0
+    bar_fetch_failures = 0
 
     try:
         with conn.cursor() as cur:
@@ -209,7 +238,7 @@ def fill_daily_returns() -> int:
                        filled_through_day, spy_entry_price, track_days
                 FROM alert_log
                 WHERE status = 'tracking'
-                  AND alert_date <= %s
+                  AND alert_date < %s
                 ORDER BY alert_date
             """, (today,))
             rows = cur.fetchall()
@@ -218,22 +247,25 @@ def fill_daily_returns() -> int:
             log.info("[alert_tracker] No active alerts to fill.")
             return 0
 
-        spy_price = _fetch_current_price("SPY")
+        # SPY closes per alert_date, fetched once per distinct date
+        spy_closes_cache: Dict[date, list] = {}
 
         for (alert_id, ticker, alert_type, alert_date, entry_price,
              filled_through, spy_entry, track_days) in rows:
 
-            trading_days_elapsed = _count_trading_days(alert_date, today)
             filled_through = filled_through or 0
-            if trading_days_elapsed <= filled_through:
+            if not entry_price:
                 continue
 
-            current_price = _fetch_current_price(ticker)
-            if not current_price or not entry_price:
+            closes = _fetch_daily_closes(ticker, alert_date, today)
+            if len(closes) < 2:
+                bar_fetch_failures += 1
                 continue
 
             entry = float(entry_price)
-            current_day = trading_days_elapsed
+            current_day = len(closes) - 1  # trading days elapsed, per the actual market calendar
+            if current_day <= filled_through:
+                continue
             max_days = track_days or TRACK_DAYS.get(alert_type, 30)
 
             # Determine which milestones are now due
@@ -244,23 +276,36 @@ def fill_daily_returns() -> int:
             if not due_milestones:
                 continue
 
-            ret_pct = round((current_price - entry) / entry * 100, 4)
             updates: Dict[str, float] = {}
             for milestone in due_milestones:
-                updates[f"d{milestone}_price"] = current_price
-                updates[f"d{milestone}_return"] = ret_pct
+                close_m = closes[milestone][1]
+                updates[f"d{milestone}_price"] = close_m
+                updates[f"d{milestone}_return"] = round((close_m - entry) / entry * 100, 4)
 
-            # SPY benchmark at key milestones
-            if spy_price and spy_entry:
+            # SPY benchmark at the same milestones
+            if spy_entry:
+                if alert_date not in spy_closes_cache:
+                    spy_closes_cache[alert_date] = _fetch_daily_closes("SPY", alert_date, today)
+                spy_closes = spy_closes_cache[alert_date]
                 spy_entry_f = float(spy_entry)
-                spy_ret = round((spy_price - spy_entry_f) / spy_entry_f * 100, 4)
-                if any(m >= 7 for m in due_milestones):
-                    updates["spy_d7_return"] = spy_ret
-                if any(m >= 30 for m in due_milestones):
-                    updates["spy_d30_return"] = spy_ret
 
-            # Peak tracking
-            peak_ret, peak_day = _compute_peak(ticker, alert_date, today, entry)
+                def _spy_ret_at(m):
+                    if spy_entry_f and len(spy_closes) > m:
+                        return round((spy_closes[m][1] - spy_entry_f) / spy_entry_f * 100, 4)
+                    return None
+
+                for m in due_milestones:
+                    if m >= 7 and _spy_ret_at(7) is not None and 7 <= current_day:
+                        updates["spy_d7_return"] = _spy_ret_at(7)
+                    if m >= 30 and _spy_ret_at(30) is not None and 30 <= current_day:
+                        updates["spy_d30_return"] = _spy_ret_at(30)
+
+            # Peak tracking from the same bars: best close after the alert day
+            peak_ret, peak_day = None, None
+            for i, (_, c) in enumerate(closes[1:], start=1):
+                r = (c - entry) / entry * 100
+                if peak_ret is None or r > peak_ret:
+                    peak_ret, peak_day = round(r, 4), i
             is_complete = current_day >= max_days
 
             # Build dynamic UPDATE
@@ -286,7 +331,8 @@ def fill_daily_returns() -> int:
                 except Exception:
                     pass
 
-        log.info(f"[alert_tracker] fill_daily_returns: {updated}/{len(rows)} alerts updated.")
+        log.info(f"[alert_tracker] fill_daily_returns: {updated}/{len(rows)} alerts updated"
+                 f"{f', {bar_fetch_failures} bar-fetch failures' if bar_fetch_failures else ''}.")
     except Exception as e:
         log.error(f"[alert_tracker] fill_daily_returns error: {e}")
     finally:
