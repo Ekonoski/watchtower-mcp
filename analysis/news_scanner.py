@@ -101,6 +101,83 @@ def _cache_prune(cache: Dict[str, tuple], ttl: float = 7200.0) -> None:
             del cache[key]
 
 
+# ── Grok cache persistence ────────────────────────────────────────────────────
+# The in-memory caches die with every deploy, and deploy-days re-bill the
+# whole news backlog (~60 classifications x several deploys). Write-through
+# to a small table and warm from it on the first scan of each process.
+
+_GROK_CACHE_SQL = """
+CREATE TABLE IF NOT EXISTS grok_cache (
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (key, kind)
+);
+"""
+
+_cache_warmed = False
+_pending_persist: List[tuple] = []  # (key, kind, payload-dict)
+
+
+def _warm_caches_from_db() -> None:
+    global _cache_warmed
+    if _cache_warmed:
+        return
+    _cache_warmed = True
+    import logging
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_GROK_CACHE_SQL)
+                cur.execute(
+                    "SELECT key, kind, payload, extract(epoch from ts) "
+                    "FROM grok_cache WHERE ts > now() - interval '2 hours'"
+                )
+                n = 0
+                for key, kind, payload, ts in cur.fetchall():
+                    if kind == "classification":
+                        _classification_cache[key] = (float(ts), payload)
+                    elif kind == "synthesis":
+                        _synthesis_cache[key] = (float(ts), payload)
+                    n += 1
+            conn.commit()
+            logging.getLogger(__name__).info(f"[news_scanner] Warmed {n} Grok cache entries from DB.")
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[news_scanner] Cache warm failed (non-fatal): {e}")
+
+
+def _flush_pending_persist() -> None:
+    global _pending_persist
+    if not _pending_persist:
+        return
+    batch, _pending_persist = _pending_persist, []
+    import json as _json
+    import logging
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_GROK_CACHE_SQL)
+                for key, kind, payload in batch:
+                    cur.execute(
+                        "INSERT INTO grok_cache (key, kind, payload) VALUES (%s, %s, %s::jsonb) "
+                        "ON CONFLICT (key, kind) DO UPDATE SET payload = EXCLUDED.payload, ts = now()",
+                        (key, kind, _json.dumps(payload)),
+                    )
+                cur.execute("DELETE FROM grok_cache WHERE ts < now() - interval '24 hours'")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[news_scanner] Cache persist failed (non-fatal): {e}")
+
+
 def _get_polygon_client():
     try:
         from analysis.polygon_data import get_client
@@ -512,6 +589,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
     if not articles and not _recent_alerts:
         return []
 
+    _warm_caches_from_db()
     _cache_prune(_classification_cache)
     _cache_prune(_synthesis_cache)
 
@@ -548,6 +626,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
             time.sleep(0.1)  # rate limit Grok calls
             if classification is not None and cache_key:
                 _classification_cache[cache_key] = (time.time(), classification)
+                _pending_persist.append((cache_key, "classification", classification))
         else:
             classification = _keyword_classify(article)
             if cache_key:
@@ -605,6 +684,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
             alerts.append(old)
 
     if not alerts:
+        _flush_pending_persist()
         return []
 
     # Step 4: enrich with live snapshot data
@@ -637,6 +717,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
                     signal = synthesize_with_technicals(alert, tech, grok) if tech else None
                     if signal and cache_key:
                         _synthesis_cache[cache_key] = (time.time(), signal)
+                        _pending_persist.append((cache_key, "synthesis", signal))
                     time.sleep(0.15)
                 if signal:
                     alert["combined_signal"] = signal.get("combined_signal", "WATCH")
@@ -665,6 +746,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
         return sig_score + mag_score + off_radar_bonus + vol_bonus
 
     alerts.sort(key=_rank_key, reverse=True)
+    _flush_pending_persist()
     return alerts[:30]
 
 

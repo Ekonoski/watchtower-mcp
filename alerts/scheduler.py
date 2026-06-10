@@ -70,23 +70,85 @@ def _another_scan_just_saved(window_sec: int = 120) -> bool:
         return False  # table missing / DB down — don't block scanning
 
 
+def _build_x_velocity_alerts(market_pulse: dict, results: list, news_alerts: list) -> list:
+    """X velocity: tickers trending on X with NO scanner signal and NO news
+    behind them — often the earliest tell (rumors, viral DD, halts being
+    discussed before the wires print). Returns signal-shaped rows that ride
+    the normal pipeline: dashboard, notifications, email gating, tracking."""
+    pulse_tickers = market_pulse.get("top_tickers") or []
+    if not pulse_tickers:
+        return []
+
+    known = {r.get("ticker") for r in results}
+    known.update(n.get("primary_ticker") for n in news_alerts)
+    # The perennial mega-cap chatter isn't "early" anything
+    MEGA_NOISE = {"SPY", "QQQ", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD"}
+
+    candidates = []
+    for t in pulse_tickers:
+        ticker = (t.get("ticker") or "").upper().strip()
+        if not ticker or len(ticker) > 5 or ticker in known or ticker in MEGA_NOISE:
+            continue
+        candidates.append((ticker, t))
+    if not candidates:
+        return []
+
+    # Live price/volume for the candidates
+    snap_map = {}
+    try:
+        from analysis.news_scanner import _fetch_snapshot_map
+        snap_map = _fetch_snapshot_map([c[0] for c in candidates])
+    except Exception as e:
+        log.warning(f"[scheduler] X velocity snapshot fetch error: {e}")
+
+    rows = []
+    for ticker, t in candidates:
+        snap = snap_map.get(ticker, {})
+        sentiment = (t.get("sentiment") or "neutral").lower()
+        rows.append({
+            "ticker": ticker,
+            "sleeve": "x_velocity",
+            "signal_type": "X_VELOCITY",
+            "score": 65.0,
+            "rationale": f"Trending on X with no signal/news behind it — {t.get('buzz', '')}"[:180],
+            "current_price": snap.get("price", 0),
+            "change_pct": round(snap.get("change_pct", 0), 2),
+            "vol_pace_ratio": round(snap.get("vol_ratio", 0), 2),
+            "today_volume": int(snap.get("volume", 0) or 0),
+            "gap_pct": 0.0,
+            "above_vwap": False,
+            "x_sentiment": sentiment,
+            "company_name": "",
+            "sector": "",
+        })
+    return rows
+
+
 def run_scheduled_scan():
     """Intraday scan + news scan — called every 15-30 min during trading hours."""
     try:
+        from concurrent.futures import ThreadPoolExecutor
+
         from screen.intraday_screen import run_screen
         from alerts.email_alerts import send_intraday_alert
         from analysis.news_scanner import run_news_scan
 
+        # News classification (Grok-bound, 1-4 min) runs concurrently with the
+        # price scan instead of after it — cuts total scan time roughly in half.
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="news-scan")
+        news_future = executor.submit(run_news_scan, 35)
+
         # Run intraday price/volume scan
         results = run_screen(min_score=40.0)  # broad=True by default — full US market
 
-        # Run news scan — always, even if no intraday signals
         news_alerts = []
         try:
-            news_alerts = run_news_scan(lookback_minutes=35)
+            news_alerts = news_future.result(timeout=600)
             log.info(f"[scheduler] News scan: {len(news_alerts)} catalysts found.")
         except Exception as e:
             log.warning(f"[scheduler] News scan error (non-fatal): {e}")
+        finally:
+            executor.shutdown(wait=False)
 
         # Add social buzz for top intraday signal tickers
         social_buzz_map = {}
@@ -111,6 +173,16 @@ def run_scheduled_scan():
             log.info(f"[scheduler] Market pulse fetched: {market_pulse.get('overall_sentiment', 'n/a')}")
         except Exception as e:
             log.warning(f"[scheduler] Market pulse error (non-fatal): {e}")
+
+        # X velocity — pulse tickers with no signal/news behind them
+        try:
+            xvel = _build_x_velocity_alerts(market_pulse, results, news_alerts)
+            if xvel:
+                results.extend(xvel)
+                log.info(f"[scheduler] X velocity: {len(xvel)} early-chatter alerts: "
+                         + ", ".join(r['ticker'] for r in xvel))
+        except Exception as e:
+            log.warning(f"[scheduler] X velocity error (non-fatal): {e}")
 
         # Deploy-overlap dedupe: if a sibling container already saved this
         # scan slot while we were scanning, stand down (no save, no email).
