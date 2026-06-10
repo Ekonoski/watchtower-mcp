@@ -376,17 +376,47 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
 });
 
 /* ── browser pop-up notifications ── */
+let _audioCtx = null;
+function initAudio() {
+  // Must be created from a user gesture (the bell click) or the browser
+  // blocks playback. After that, chimes work even with the tab unfocused.
+  try {
+    _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+  } catch {}
+}
+function playChime(double) {
+  // Audible alert independent of macOS notification-sound settings,
+  // which silence Notification pop-ups by default.
+  if (!_audioCtx) return;
+  try {
+    const t0 = _audioCtx.currentTime;
+    [[880, 0], [1320, 0.18], ...(double ? [[880, 0.5], [1320, 0.68]] : [])].forEach(([f, dt]) => {
+      const o = _audioCtx.createOscillator(), g = _audioCtx.createGain();
+      o.frequency.value = f; o.type = "sine";
+      g.gain.setValueAtTime(0.0001, t0 + dt);
+      g.gain.exponentialRampToValueAtTime(0.22, t0 + dt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.35);
+      o.connect(g); g.connect(_audioCtx.destination);
+      o.start(t0 + dt); o.stop(t0 + dt + 0.4);
+    });
+  } catch {}
+}
+
 function renderNotifyBtn() {
   $("btn-notify").textContent = state.notify ? "🔔 Alerts: on" : "🔔 Alerts: off";
   $("btn-notify").style.borderColor = state.notify ? "var(--green)" : "var(--border)";
 }
 $("btn-notify").onclick = async () => {
+  initAudio();
   if (!state.notify) {
     if (!("Notification" in window)) { toast("This browser doesn't support notifications."); return; }
     const perm = await Notification.requestPermission();
     if (perm !== "granted") { toast("Notifications blocked — allow them in your browser settings."); return; }
     state.notify = true;
-    new Notification("Watchtower alerts on", { body: "You'll get a pop-up when new signals or news catalysts appear." });
+    playChime(true);
+    toast("Alerts on — that chime is what new signals sound like.");
+    new Notification("Watchtower alerts on", { body: "Pop-up + chime when new signals or news catalysts appear. If you saw this banner, pop-ups work; if you only heard the chime, allow Chrome notifications in macOS System Settings." });
   } else {
     state.notify = false;
   }
@@ -397,14 +427,17 @@ function pushNotifications(snap) {
   if (!state.notify || Notification.permission !== "granted") return;
   const newSigs = (snap.signals || []).filter(s => state.newTickers.has(s.ticker) && (s.score ?? 0) >= 55);
   if (newSigs.length) {
+    playChime(true);
     const top = newSigs.slice(0, 4).map(s => `${s.ticker} ${s.signal_type} (${Math.round(s.score)}) ${s.change_pct >= 0 ? "+" : ""}${(s.change_pct ?? 0).toFixed(1)}%`).join("\n");
     new Notification(`⚡ ${newSigs.length} new signal${newSigs.length > 1 ? "s" : ""}`, { body: top, tag: "wt-signals" });
   }
+  let newsChimed = false;
   for (const n of (snap.news || [])) {
     const key = n.article_url || n.headline;
     if (!key || state.notifiedNews.has(key)) continue;
     state.notifiedNews.add(key);
     if (n.magnitude === "high" || ["STRONG_BUY", "STRONG_SELL", "BUY", "SELL"].includes(n.combined_signal)) {
+      if (!newsChimed) { playChime(false); newsChimed = true; }
       new Notification(`📰 $${n.primary_ticker} — ${(n.category || "").replace(/_/g, " ")}`,
         { body: n.one_liner || n.headline, tag: "wt-news-" + n.primary_ticker });
     }
