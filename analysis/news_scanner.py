@@ -117,9 +117,80 @@ def _get_grok_client():
         return None
 
 
+_FMP_BASE = "https://financialmodelingprep.com/stable"
+
+
+def _fetch_fmp_news(cutoff_utc: datetime) -> List[dict]:
+    """
+    Fetch latest stock news + press releases from FMP (market-wide feeds).
+    Polygon's news feed is sparse (~6 articles/35 min pre-open); FMP Ultimate
+    carries the firehose — earnings, 8-Ks, analyst notes, PRs.
+    Returns articles normalized to the same shape as the Polygon fetch.
+    """
+    import logging
+    log_ = logging.getLogger(__name__)
+
+    api_key = os.environ.get("FMP_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    try:
+        import pytz
+        et = pytz.timezone("America/New_York")
+    except ImportError:
+        et = None
+
+    import requests
+
+    articles: List[dict] = []
+    for endpoint in ("/news/stock-latest", "/news/press-releases-latest"):
+        try:
+            resp = requests.get(
+                f"{_FMP_BASE}{endpoint}",
+                params={"page": 0, "limit": 250, "apikey": api_key},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            items = resp.json() or []
+        except Exception as e:
+            log_.warning(f"[news_scanner] FMP {endpoint} fetch error: {e}")
+            continue
+
+        for item in items:
+            try:
+                symbol = (item.get("symbol") or "").upper().strip()
+                if not symbol or len(symbol) > 5 or not symbol.replace(".", "").isalnum():
+                    continue
+                title = (item.get("title") or "").strip()
+                if not title:
+                    continue
+                # FMP publishedDate is US/Eastern naive ("2026-06-10 09:05:00")
+                pub_raw = item.get("publishedDate") or ""
+                try:
+                    pub_naive = datetime.strptime(pub_raw, "%Y-%m-%d %H:%M:%S")
+                    pub_utc = (et.localize(pub_naive).astimezone(timezone.utc)
+                               if et else pub_naive.replace(tzinfo=timezone.utc))
+                except ValueError:
+                    continue
+                if pub_utc < cutoff_utc:
+                    continue
+                articles.append({
+                    "tickers": [symbol],
+                    "headline": title,
+                    "summary": (item.get("text") or "")[:400],
+                    "published_utc": pub_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "article_url": item.get("url") or "",
+                    "publisher": item.get("publisher") or item.get("site") or "FMP",
+                })
+            except Exception:
+                continue
+
+    return articles
+
+
 def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
     """
-    Fetch news articles from Polygon published in the last N minutes.
+    Fetch news articles published in the last N minutes from Polygon + FMP.
     Returns list of raw article dicts with tickers, headline, description, published_utc.
     """
     client = _get_polygon_client()
@@ -161,10 +232,29 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
         import logging
         logging.getLogger(__name__).warning(f"[news_scanner] Polygon news fetch error: {e}")
 
+    polygon_kept = len(articles)
+
+    # Second source: FMP stock news + press releases. Dedupe on normalized
+    # headline (the same PR is syndicated across both feeds).
+    fmp_articles = _fetch_fmp_news(cutoff)
+    seen_headlines = {a["headline"].lower()[:80] for a in articles}
+    seen_urls = {a["article_url"] for a in articles if a.get("article_url")}
+    fmp_added = 0
+    for a in fmp_articles:
+        hl_key = a["headline"].lower()[:80]
+        if hl_key in seen_headlines or (a["article_url"] and a["article_url"] in seen_urls):
+            continue
+        seen_headlines.add(hl_key)
+        if a["article_url"]:
+            seen_urls.add(a["article_url"])
+        articles.append(a)
+        fmp_added += 1
+
     import logging
     logging.getLogger(__name__).info(
-        f"[news_scanner] Fetch since {cutoff_str}: {raw_count} raw articles, "
-        f"{no_ticker} without tickers, {len(articles)} kept."
+        f"[news_scanner] Fetch since {cutoff_str}: polygon {raw_count} raw "
+        f"({no_ticker} no-ticker, {polygon_kept} kept) + fmp {len(fmp_articles)} "
+        f"({fmp_added} new) = {len(articles)} articles."
     )
     return articles
 
@@ -429,6 +519,11 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
     seen_tickers: set = set()
     grok = _get_grok_client()
 
+    # Bound Grok spend/scan time when the feeds are busy: classify at most
+    # N uncached articles per scan with Grok, keyword-classify the overflow.
+    max_classify = int(os.environ.get("NEWS_MAX_CLASSIFY", "60"))
+    grok_classified = 0
+
     alerts = []
     for article in articles:
         tickers = article.get("tickers", [])
@@ -447,8 +542,9 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
         cached = _classification_cache.get(cache_key)
         if cached is not None:
             classification = cached[1]
-        elif grok:
+        elif grok and grok_classified < max_classify:
             classification = classify_article(article, grok)
+            grok_classified += 1
             time.sleep(0.1)  # rate limit Grok calls
             if classification is not None and cache_key:
                 _classification_cache[cache_key] = (time.time(), classification)
