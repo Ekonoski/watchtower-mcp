@@ -224,6 +224,7 @@
       <table id="sig-table">
         <thead><tr>
           <th class="left" data-k="ticker">Ticker</th>
+          <th class="left">Side</th>
           <th class="left" data-k="signal_type">Signal</th>
           <th data-k="score">Score</th>
           <th data-k="current_price">Price</th>
@@ -504,6 +505,7 @@ function renderSignals() {
       ? ` <span class="chip ${esc(buzz.sentiment)}" title="${esc(buzz.summary || "")}">X:${esc(buzz.sentiment)}</span>` : "";
     return `<tr data-ticker="${esc(r.ticker)}">
       <td class="left"><span class="tkr">${esc(r.ticker)}</span>${state.newTickers.has(r.ticker) ? '<span class="newflag">NEW</span>' : ""}${buzzStr}</td>
+      <td class="left">${d === "bull" ? '<span class="sig bull">▲ LONG</span>' : d === "bear" ? '<span class="sig bear">▼ SHORT</span>' : '<span class="sig neut">● WATCH</span>'}</td>
       <td class="left"><span class="sig ${cls}">${esc(r.signal_type || "")}</span></td>
       <td class="num">${fmtNum(r.score, 0)}<span class="score-bar"><i style="width:${Math.min(100, r.score || 0)}%"></i></span></td>
       <td class="num">$${fmtNum(r.current_price)}</td>
