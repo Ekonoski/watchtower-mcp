@@ -116,12 +116,20 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
                     or r.get("last_price")
                     or 0
                 )
+                # Each sleeve names its score differently — check them all,
+                # or the column logs blank for that screen's signals.
                 score = (
                     r.get("score")
+                    or r.get("reversal_score")
+                    or r.get("momentum_score")
+                    or r.get("breakdown_score")
                     or r.get("signal_score")
                     or r.get("composite_score")
                     or 0
                 )
+                # News alerts carry magnitude instead of a numeric score
+                if not score and r.get("magnitude"):
+                    score = {"high": 80, "medium": 60, "low": 40}.get(r["magnitude"], 0)
                 signal_type = (
                     r.get("signal_type")
                     or r.get("signal")
