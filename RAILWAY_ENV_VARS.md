@@ -15,7 +15,7 @@ After changing any variables, trigger a redeploy on the watchtower-mcp service.
    - Purpose: Live bars, volume surge, RS vs SPY, SPY regime (200MA), options snapshots for bearish/put sleeve.
    - Required for: watchtower_get_momentum, watchtower_get_bearish_ideas, watchtower_get_regime, watchtower_research (rich theses), watchtower_get_gmmss_context live fallbacks, watchtower_run_screen (momentum|breakdown).
    - Without this the connector falls back to stale DB data or limited yfinance and loses the 'live technicals' power you have locally.
-   - Value: Copy from your local watchtower/.env (the one you shared: Y16isQGNDUhqyDpUvi40ygxUjUSPYHGC)
+   - Value: Copy from your local watchtower/.env (never paste the actual key into this file)
 
 2. XAI_API_KEY
    - Purpose: Powers Grok synthesis / theses inside watchtower_research and the Grok section of watchtower_get_daily_report.
@@ -28,11 +28,11 @@ After changing any variables, trigger a redeploy on the watchtower-mcp service.
    SUPABASE_DB_PASSWORD
    SUPABASE_DB_NAME
    - These are the pooler/direct ones (aws-...pooler.supabase.com etc.), not just the publishable/secret from the API keys page.
-   - Value: Copy exact from your local watchtower/.env (you previously provided sb_secret... and Thestockmarketistheway2026! password + host details)
+   - Value: Copy exact from your local watchtower/.env (never paste the actual password into this file)
 
 4. FMP_API_KEY
    - Some enrichment / universe expansion paths.
-   - Value: Copy from your local watchtower/.env (J7irmW938dCNw1g15S2utVxBhb7TiuAL)
+   - Value: Copy from your local watchtower/.env (never paste the actual key into this file)
 
 5. RESEND_API_KEY + RESEND_FROM + ALERT_EMAIL_TO (optional but recommended if any report/email paths are exercised from the connector)
 

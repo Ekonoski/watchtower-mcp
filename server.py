@@ -172,74 +172,6 @@ def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: 
 
 
 @mcp.tool()
-def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
-    """Score any single stock across all Watchtower screens and return a full multi-sleeve report.
-
-    Works for any ticker with price history — not limited to the quality universe.
-    Runs reversal, momentum, breakdown, master, and volume_burst screens on the ticker
-    and returns all scores side by side so you can see exactly how it stacks up.
-    """
-    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_volume_burst = _get_screens()
-    t = ticker.upper()
-
-    lines = [f"**WATCHTOWER FULL ANALYSIS — {t}**"]
-
-    from screen.intraday_screen import run_screen as run_intraday
-    screen_fns = [
-        ("reversal",     lambda: run_reversal(min_drawdown=0.0, single_ticker=t, show_all=True)),
-        ("momentum",     lambda: run_momentum(max_pullback=100.0, single_ticker=t)),
-        ("breakdown",    lambda: run_breakdown(min_breakdown=0.0, single_ticker=t)),
-        ("master",       lambda: run_master(single_ticker=t)),
-        ("volume_burst", lambda: run_volume_burst(min_surge=0.5, single_ticker=t)),
-        ("intraday",     lambda: run_intraday(min_score=0.0, single_ticker=t)),
-    ]
-
-    best_results = []
-    for screen_name, fn in screen_fns:
-        try:
-            res = fn()
-            if res:
-                r = res[0]
-                score = (r.get("reversal_score") or r.get("momentum_score")
-                         or r.get("breakdown_score") or r.get("score") or 0)
-                signal = r.get("signal") or r.get("signal_type") or ""
-                rsi = r.get("rsi")
-                price = r.get("current_price")
-                pct_off = r.get("pct_off_high") or r.get("pct_from_high")
-                vol_surge = r.get("vol_surge")
-
-                detail = f"  Score: {score:.0f}" if isinstance(score, float) else f"  Score: {score}"
-                if signal:
-                    detail += f" | Signal: {signal}"
-                if rsi is not None:
-                    detail += f" | RSI: {rsi:.0f}"
-                if pct_off is not None:
-                    detail += f" | %OffHigh: {pct_off:.1f}%"
-                if vol_surge is not None:
-                    detail += f" | VolSurge: {vol_surge:.2f}x"
-                if price is not None:
-                    detail += f" | Price: ${price:.2f}"
-                lines.append(f"\n**{screen_name.upper()}**\n{detail}")
-                best_results.append((screen_name, r))
-            else:
-                lines.append(f"\n**{screen_name.upper()}**\n  No signal / insufficient data")
-        except Exception as e:
-            lines.append(f"\n**{screen_name.upper()}**\n  Error: {e}")
-
-    if with_synthesis and best_results:
-        try:
-            from analysis.grok_synthesizer import synthesize_screen_results
-            all_rows = [r for _, r in best_results]
-            narrative = synthesize_screen_results(f"full analysis of {t}", all_rows, top_n=len(all_rows))
-            if narrative:
-                lines.append(f"\n**AI SYNTHESIS**\n{narrative}")
-        except Exception:
-            pass
-
-    return "\n".join(lines)
-
-
-@mcp.tool()
 def watchtower_get_momentum(top_n: int = 5) -> str:
     """Get current top momentum / up-and-comers from Watchtower's momentum sleeve."""
     _, run_momentum, *_ = _get_screens()  # noqa: F841
@@ -278,7 +210,7 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
     These are early-stage 10x candidates, not established momentum names.
     """
-    *_, run_upcomer = _get_screens()
+    from screen.upcomer_screen import run_screen as run_upcomer
     results = run_upcomer(min_score=30.0, top_n=top_n, with_synthesis=False)
     if not results:
         return "No hidden gems found above threshold right now."
@@ -323,7 +255,8 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
     Use this when you want a full 360° view of any stock.
     """
     ticker = ticker.upper().strip()
-    run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer = _get_screens()
+    (run_reversal, run_momentum, run_breakdown, run_master,
+     run_insider, run_upcomer, run_volume_burst) = _get_screens()
 
     sleeve_results = []
 
@@ -712,14 +645,35 @@ async def health(request: Request):
     return JSONResponse({
         "status": "ok",
         "service": "watchtower-mcp",
-        "version": "1.1.0-oauth",
+        "version": "1.2.0-dashboard",
+        "dashboard": "/dashboard",
         "tools": [
             "watchtower_run_screen",
+            "watchtower_intraday_scan",
+            "watchtower_analyze_ticker",
             "watchtower_get_momentum",
             "watchtower_get_bearish_ideas",
+            "watchtower_get_hidden_gems",
+            "watchtower_get_social_buzz",
             "watchtower_get_gmmss_context",
+            "watchtower_force_scan",
+            "watchtower_alert_performance",
         ],
     })
+
+
+# ── Live dashboard (web UI + JSON API) ───────────────────────────────────────
+# Served from the same app: GET /dashboard plus /api/* endpoints.
+# Auth via DASHBOARD_PASSWORD (falls back to MCP_AUTH_TOKEN).
+
+try:
+    from dashboard.api import register_routes as _register_dashboard
+    _register_dashboard(mcp)
+except Exception as _dash_err:
+    import logging as _dash_logging
+    _dash_logging.getLogger(__name__).warning(
+        f"[server] Dashboard failed to register (UI disabled): {_dash_err}"
+    )
 
 
 # ── Scheduler startup ────────────────────────────────────────────────────────

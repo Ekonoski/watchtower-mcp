@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchtower — Live Scanner</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #11151f;
+    --panel2: #161b28;
+    --border: #232a3b;
+    --text: #d7dce6;
+    --muted: #7c8597;
+    --green: #2bd576;
+    --green-dim: rgba(43,213,118,.12);
+    --red: #ff5c5c;
+    --red-dim: rgba(255,92,92,.12);
+    --yellow: #ffc24b;
+    --yellow-dim: rgba(255,194,75,.12);
+    --blue: #5aa2ff;
+    --blue-dim: rgba(90,162,255,.12);
+    --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ── header ─────────────────────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+    background: var(--panel); position: sticky; top: 0; z-index: 50;
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: 2px; font-weight: 700; }
+  header h1 span { color: var(--green); }
+  .mkt-status { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.open { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.closed { background: var(--red); }
+  .spacer { flex: 1; }
+  .hdr-right { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--blue); }
+  button.primary { background: #1c4fd8; border-color: #1c4fd8; color: #fff; font-weight: 600; }
+  button.primary:hover { background: #2a5ce6; }
+  button:disabled { opacity: .5; cursor: wait; }
+
+  /* ── market pulse banner ────────────────────────────── */
+  #pulse {
+    display: none; gap: 14px; align-items: center; flex-wrap: wrap;
+    padding: 9px 20px; border-bottom: 1px solid var(--border); background: var(--panel2);
+    font-size: 12.5px;
+  }
+  #pulse .lbl { color: var(--muted); letter-spacing: 1px; font-size: 11px; }
+  .chip {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel); font-size: 12px;
+  }
+  .chip.bullish { color: var(--green); border-color: var(--green); background: var(--green-dim); }
+  .chip.bearish { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+  .chip.neutral, .chip.mixed { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-dim); }
+
+  /* ── tabs ───────────────────────────────────────────── */
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; }
+  nav button { border: none; background: none; color: var(--muted); padding: 8px 14px; font-size: 13.5px; border-bottom: 2px solid transparent; border-radius: 0; }
+  nav button.active { color: var(--text); border-bottom-color: var(--green); font-weight: 600; }
+  main { padding: 14px 20px 60px; }
+  .tabpane { display: none; }
+  .tabpane.active { display: block; }
+
+  /* ── controls ───────────────────────────────────────── */
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .controls input[type=text], .controls select, #wl-form input {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 7px 10px; font-size: 13px;
+  }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; padding: 7px 13px; }
+  .seg button.on { background: var(--blue-dim); color: var(--blue); font-weight: 600; }
+  .count-note { color: var(--muted); font-size: 12.5px; }
+
+  /* ── table ──────────────────────────────────────────── */
+  .tblwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child, th.left, td.left { text-align: left; }
+  thead th {
+    background: var(--panel2); color: var(--muted); font-size: 11.5px; letter-spacing: .8px;
+    text-transform: uppercase; cursor: pointer; user-select: none; position: sticky; top: 0;
+  }
+  thead th:hover { color: var(--text); }
+  tbody tr { border-top: 1px solid var(--border); cursor: pointer; }
+  tbody tr:hover { background: var(--panel2); }
+  .tkr { font-family: var(--mono); font-weight: 700; font-size: 13.5px; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  .sig { padding: 2px 8px; border-radius: 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .4px; }
+  .sig.bull { color: var(--green); background: var(--green-dim); }
+  .sig.bear { color: var(--red); background: var(--red-dim); }
+  .sig.neut { color: var(--yellow); background: var(--yellow-dim); }
+  .score-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: var(--border); margin-left: 8px; vertical-align: middle; overflow: hidden; }
+  .score-bar i { display: block; height: 100%; background: var(--blue); }
+  .newflag { color: var(--bg); background: var(--green); border-radius: 3px; font-size: 10px; font-weight: 800; padding: 1px 5px; margin-left: 6px; vertical-align: middle; animation: flash 1.2s ease 3; }
+  @keyframes flash { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .rationale { color: var(--muted); max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+  .empty { padding: 36px; text-align: center; color: var(--muted); }
+
+  /* ── news cards ─────────────────────────────────────── */
+  .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
+  .news-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .news-card .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .news-card h3 { font-size: 14px; margin: 4px 0 6px; line-height: 1.4; }
+  .news-card .meta { color: var(--muted); font-size: 12px; }
+  .news-card .thesis { margin-top: 8px; font-size: 13px; border-left: 3px solid var(--blue); padding-left: 10px; color: var(--text); }
+  .news-card .kv { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+  .badge.cat { color: var(--blue); background: var(--blue-dim); }
+  .badge.bullish { color: var(--green); background: var(--green-dim); }
+  .badge.bearish { color: var(--red); background: var(--red-dim); }
+  .badge.neutral { color: var(--yellow); background: var(--yellow-dim); }
+  .badge.offradar { color: #d98cff; background: rgba(217,140,255,.12); }
+  .badge.buy, .badge.strong_buy { color: var(--green); background: var(--green-dim); }
+  .badge.sell, .badge.strong_sell, .badge.avoid { color: var(--red); background: var(--red-dim); }
+  .badge.watch { color: var(--yellow); background: var(--yellow-dim); }
+
+  /* ── performance ────────────────────────────────────── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+  .stat-card h4 { margin: 0 0 8px; font-size: 13px; color: var(--blue); }
+  .stat-card .row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 2px 0; color: var(--muted); }
+  .stat-card .row b { color: var(--text); font-family: var(--mono); }
+
+  /* ── drawer ─────────────────────────────────────────── */
+  #drawer {
+    position: fixed; top: 0; right: -480px; width: 460px; max-width: 95vw; height: 100vh;
+    background: var(--panel); border-left: 1px solid var(--border); z-index: 100;
+    transition: right .22s ease; padding: 20px; overflow-y: auto;
+  }
+  #drawer.open { right: 0; box-shadow: -12px 0 40px rgba(0,0,0,.5); }
+  #drawer h2 { margin: 0 0 4px; font-family: var(--mono); }
+  #drawer .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin: 14px 0; }
+  #drawer .grid2 div { font-size: 13px; }
+  #drawer .grid2 .k { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; }
+  #drawer .close { position: absolute; top: 14px; right: 14px; }
+  .social-box { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 13px; }
+
+  /* ── login overlay ──────────────────────────────────── */
+  #login-overlay {
+    position: fixed; inset: 0; background: rgba(5,7,12,.92); z-index: 200;
+    display: none; align-items: center; justify-content: center;
+  }
+  #login-overlay.show { display: flex; }
+  #login-box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 30px 34px; width: 340px; }
+  #login-box h2 { margin: 0 0 4px; letter-spacing: 2px; }
+  #login-box p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  #login-box input { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+  #login-err { color: var(--red); font-size: 12.5px; min-height: 18px; }
+
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 18px; font-size: 13px; z-index: 300; display: none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WATCH<span>TOWER</span></h1>
+  <div class="mkt-status"><div id="mkt-dot" class="dot"></div><span id="mkt-label">—</span></div>
+  <div class="spacer"></div>
+  <div class="hdr-right">
+    <span id="last-scan">last scan: —</span>
+    <span id="countdown" title="auto-refresh">↻ 30s</span>
+    <button id="btn-notify" title="Browser pop-up alerts for new signals and news">🔔 Alerts: off</button>
+    <button id="btn-refresh" title="Reload latest data">Refresh</button>
+    <button id="btn-scan" class="primary" title="Run a full market scan now">Scan Now</button>
+  </div>
+</header>
+
+<div id="pulse">
+  <span class="lbl">X PULSE</span>
+  <span id="pulse-sent" class="chip">—</span>
+  <span id="pulse-mood" class="chip">—</span>
+  <span id="pulse-themes"></span>
+  <span id="pulse-tickers"></span>
+</div>
+
+<nav>
+  <button data-tab="scanner" class="active">Scanner</button>
+  <button data-tab="news">News Catalysts</button>
+  <button data-tab="performance">Performance</button>
+  <button data-tab="watchlist">Watchlist</button>
+</nav>
+
+<main>
+  <!-- ── SCANNER ── -->
+  <section id="tab-scanner" class="tabpane active">
+    <div class="controls">
+      <div class="seg" id="dir-filter">
+        <button data-dir="all" class="on">All</button>
+        <button data-dir="bull">Bullish</button>
+        <button data-dir="bear">Bearish</button>
+        <button data-dir="neut">Neutral</button>
+      </div>
+      <select id="min-score">
+        <option value="0">Score ≥ 0</option>
+        <option value="40" selected>Score ≥ 40</option>
+        <option value="50">Score ≥ 50</option>
+        <option value="60">Score ≥ 60</option>
+        <option value="75">Score ≥ 75</option>
+      </select>
+      <input type="text" id="search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="sig-count"></span>
+    </div>
+    <div class="tblwrap">
+      <table id="sig-table">
+        <thead><tr>
+          <th class="left" data-k="ticker">Ticker</th>
+          <th class="left" data-k="signal_type">Signal</th>
+          <th data-k="score">Score</th>
+          <th data-k="current_price">Price</th>
+          <th data-k="change_pct">Chg %</th>
+          <th data-k="gap_pct">Gap %</th>
+          <th data-k="vol_pace_ratio">Vol Pace</th>
+          <th data-k="above_vwap">VWAP</th>
+          <th data-k="today_volume">Volume</th>
+          <th class="left" data-k="sector">Sector</th>
+          <th class="left">Rationale</th>
+        </tr></thead>
+        <tbody id="sig-body"></tbody>
+      </table>
+      <div id="sig-empty" class="empty" style="display:none">No signals in the latest scan. Hit <b>Scan Now</b> or wait for the next scheduled sweep.</div>
+    </div>
+  </section>
+
+  <!-- ── NEWS ── -->
+  <section id="tab-news" class="tabpane">
+    <div class="news-grid" id="news-grid"></div>
+    <div id="news-empty" class="empty" style="display:none">No news catalysts in the latest scan window.</div>
+  </section>
+
+  <!-- ── PERFORMANCE ── -->
+  <section id="tab-performance" class="tabpane">
+    <div class="controls">
+      <select id="perf-days">
+        <option value="30">Last 30 days</option>
+        <option value="90" selected>Last 90 days</option>
+        <option value="180">Last 180 days</option>
+        <option value="365">Last year</option>
+      </select>
+      <span class="count-note" id="perf-note"></span>
+    </div>
+    <div class="stat-grid" id="perf-stats"></div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr>
+          <th class="left">Date</th><th class="left">Type</th><th class="left">Ticker</th>
+          <th>Score</th><th>D7 %</th><th>D30 %</th><th>Peak %</th><th>Peak Day</th><th class="left">Status</th>
+        </tr></thead>
+        <tbody id="perf-body"></tbody>
+      </table>
+      <div id="perf-empty" class="empty" style="display:none">No tracked signals yet.</div>
+    </div>
+  </section>
+
+  <!-- ── WATCHLIST ── -->
+  <section id="tab-watchlist" class="tabpane">
+    <div class="controls" id="wl-form">
+      <input type="text" id="wl-ticker" placeholder="Ticker" size="8" maxlength="6">
+      <input type="text" id="wl-notes" placeholder="Notes (optional)" size="34">
+      <button id="wl-add" class="primary">Add</button>
+      <span class="count-note">Watchlist tickers are always included in scheduled scans.</span>
+    </div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th class="left">Ticker</th><th class="left">Notes</th><th class="left">Added</th><th></th></tr></thead>
+        <tbody id="wl-body"></tbody>
+      </table>
+      <div id="wl-empty" class="empty" style="display:none">Watchlist is empty.</div>
+    </div>
+  </section>
+</main>
+
+<!-- ── TICKER DRAWER ── -->
+<aside id="drawer">
+  <button class="close" onclick="closeDrawer()">✕</button>
+  <h2 id="d-ticker">—</h2>
+  <div id="d-sub" class="count-note"></div>
+  <div id="d-body"></div>
+</aside>
+
+<!-- ── LOGIN ── -->
+<div id="login-overlay">
+  <div id="login-box">
+    <h2>WATCH<span style="color:var(--green)">TOWER</span></h2>
+    <p>Enter your dashboard password.</p>
+    <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password">
+    <div id="login-err"></div>
+    <button class="primary" id="login-btn" style="width:100%">Sign in</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+const BULL = new Set(["GAP_AND_GO","INTRADAY_BREAKOUT","VWAP_BREAKOUT","FLUSH_REVERSAL","GAP_REVERSAL"]);
+const BEAR = new Set(["VWAP_REJECTION","INTRADAY_BREAKDOWN","GAP_DOWN_CONFIRM","DISTRIBUTION"]);
+
+let state = {
+  snapshot: null,
+  prevTickers: new Set(),
+  newTickers: new Set(),
+  dir: "all",
+  minScore: 40,
+  search: "",
+  sortKey: "score",
+  sortDesc: true,
+  countdown: 30,
+  notify: localStorage.getItem("wt_notify") === "1",
+  notifiedNews: new Set(),
+};
+
+const $ = (id) => document.getElementById(id);
+
+function dirOf(sig) { return BULL.has(sig) ? "bull" : BEAR.has(sig) ? "bear" : "neut"; }
+function fmtNum(v, d=2) { return (v === null || v === undefined || isNaN(v)) ? "—" : Number(v).toFixed(d); }
+function fmtVol(v) {
+  if (!v) return "—";
+  if (v >= 1e9) return (v/1e9).toFixed(1)+"B";
+  if (v >= 1e6) return (v/1e6).toFixed(1)+"M";
+  if (v >= 1e3) return (v/1e3).toFixed(0)+"K";
+  return String(v);
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 3200);
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
+  if (r.status === 401) { $("login-overlay").classList.add("show"); throw new Error("unauthorized"); }
+  return r.json();
+}
+
+/* ── login ── */
+$("login-btn").onclick = async () => {
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("login-pw").value }) });
+    if (r.ok) { $("login-overlay").classList.remove("show"); loadLatest(); loadWatchlist(); }
+    else $("login-err").textContent = "Wrong password.";
+  } catch { $("login-err").textContent = "Connection error."; }
+};
+$("login-pw").addEventListener("keydown", e => { if (e.key === "Enter") $("login-btn").click(); });
+
+/* ── tabs ── */
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tabpane").forEach(x => x.classList.remove("active"));
+  b.classList.add("active");
+  $("tab-" + b.dataset.tab).classList.add("active");
+  if (b.dataset.tab === "performance" && !state.perfLoaded) loadPerformance();
+  if (b.dataset.tab === "watchlist") loadWatchlist();
+});
+
+/* ── browser pop-up notifications ── */
+function renderNotifyBtn() {
+  $("btn-notify").textContent = state.notify ? "🔔 Alerts: on" : "🔔 Alerts: off";
+  $("btn-notify").style.borderColor = state.notify ? "var(--green)" : "var(--border)";
+}
+$("btn-notify").onclick = async () => {
+  if (!state.notify) {
+    if (!("Notification" in window)) { toast("This browser doesn't support notifications."); return; }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("Notifications blocked — allow them in your browser settings."); return; }
+    state.notify = true;
+    new Notification("Watchtower alerts on", { body: "You'll get a pop-up when new signals or news catalysts appear." });
+  } else {
+    state.notify = false;
+  }
+  localStorage.setItem("wt_notify", state.notify ? "1" : "0");
+  renderNotifyBtn();
+};
+function pushNotifications(snap) {
+  if (!state.notify || Notification.permission !== "granted") return;
+  const newSigs = (snap.signals || []).filter(s => state.newTickers.has(s.ticker) && (s.score ?? 0) >= 55);
+  if (newSigs.length) {
+    const top = newSigs.slice(0, 4).map(s => `${s.ticker} ${s.signal_type} (${Math.round(s.score)}) ${s.change_pct >= 0 ? "+" : ""}${(s.change_pct ?? 0).toFixed(1)}%`).join("\n");
+    new Notification(`⚡ ${newSigs.length} new signal${newSigs.length > 1 ? "s" : ""}`, { body: top, tag: "wt-signals" });
+  }
+  for (const n of (snap.news || [])) {
+    const key = n.article_url || n.headline;
+    if (!key || state.notifiedNews.has(key)) continue;
+    state.notifiedNews.add(key);
+    if (n.magnitude === "high" || ["STRONG_BUY", "STRONG_SELL", "BUY", "SELL"].includes(n.combined_signal)) {
+      new Notification(`📰 $${n.primary_ticker} — ${(n.category || "").replace(/_/g, " ")}`,
+        { body: n.one_liner || n.headline, tag: "wt-news-" + n.primary_ticker });
+    }
+  }
+  if (state.notifiedNews.size > 500) state.notifiedNews = new Set([...state.notifiedNews].slice(-200));
+}
+
+/* ── header actions ── */
+$("btn-refresh").onclick = () => loadLatest();
+$("btn-scan").onclick = async () => {
+  $("btn-scan").disabled = true;
+  try {
+    const r = await api("/api/scan/run", { method: "POST", body: "{}" });
+    toast(r.ok ? "Scan started — results appear when it finishes (1-3 min)." : (r.error || "Could not start scan"));
+  } catch (e) { if (e.message !== "unauthorized") toast("Scan trigger failed."); }
+  setTimeout(() => $("btn-scan").disabled = false, 4000);
+};
+
+/* ── scanner filters ── */
+document.querySelectorAll("#dir-filter button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#dir-filter button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.dir = b.dataset.dir; renderSignals();
+});
+$("min-score").onchange = e => { state.minScore = Number(e.target.value); renderSignals(); };
+$("search").oninput = e => { state.search = e.target.value.trim().toUpperCase(); renderSignals(); };
+document.querySelectorAll("#sig-table thead th[data-k]").forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  if (state.sortKey === k) state.sortDesc = !state.sortDesc;
+  else { state.sortKey = k; state.sortDesc = true; }
+  renderSignals();
+});
+
+/* ── load + render latest scan ── */
+async function loadLatest() {
+  let snap;
+  try { snap = await api("/api/scan/latest"); }
+  catch (e) { return; }
+  const prev = state.snapshot;
+  if (prev && snap.as_of && prev.as_of !== snap.as_of) {
+    const prevSet = new Set((prev.signals || []).map(s => s.ticker));
+    state.newTickers = new Set((snap.signals || []).map(s => s.ticker).filter(t => !prevSet.has(t)));
+  }
+  state.snapshot = snap;
+  renderHeader(); renderPulse(); renderSignals(); renderNews();
+  if (prev && snap.as_of && prev.as_of !== snap.as_of) pushNotifications(snap);
+}
+
+function renderHeader() {
+  const s = state.snapshot || {};
+  const open = !!s.is_market_hours;
+  $("mkt-dot").className = "dot " + (s.as_of ? (open ? "open" : "closed") : "");
+  $("mkt-label").textContent = s.as_of
+    ? (open ? `Market open · ${s.minutes_elapsed ?? "?"} min in` : "Market closed")
+    : "No data yet";
+  if (s.as_of) {
+    const d = new Date(s.as_of);
+    $("last-scan").textContent = "last scan: " + d.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET";
+  }
+  if (s.scan_running) $("last-scan").textContent += " · scanning…";
+}
+
+function renderPulse() {
+  const p = (state.snapshot || {}).market_pulse || {};
+  if (!p.overall_sentiment && !(p.top_tickers || []).length) { $("pulse").style.display = "none"; return; }
+  $("pulse").style.display = "flex";
+  const sent = p.overall_sentiment || "—";
+  $("pulse-sent").textContent = sent.toUpperCase();
+  $("pulse-sent").className = "chip " + sent;
+  $("pulse-mood").textContent = (p.market_mood || "").toUpperCase() || "—";
+  $("pulse-mood").className = "chip " + (p.market_mood === "risk-on" ? "bullish" : p.market_mood === "risk-off" ? "bearish" : "mixed");
+  $("pulse-themes").innerHTML = (p.top_themes || []).slice(0, 4).map(t => `<span class="chip">${esc(t)}</span>`).join(" ");
+  $("pulse-tickers").innerHTML = (p.top_tickers || []).slice(0, 6).map(t =>
+    `<span class="chip ${esc(t.sentiment || "")}" title="${esc(t.buzz || "")}">$${esc(t.ticker)}</span>`).join(" ");
+}
+
+function renderSignals() {
+  const all = ((state.snapshot || {}).signals) || [];
+  let rows = all.filter(r =>
+    (state.dir === "all" || dirOf(r.signal_type) === state.dir) &&
+    (r.score ?? 0) >= state.minScore &&
+    (!state.search || (r.ticker || "").includes(state.search)));
+
+  const k = state.sortKey;
+  rows.sort((a, b) => {
+    let va = a[k], vb = b[k];
+    if (typeof va === "string") { va = va || ""; vb = vb || ""; return state.sortDesc ? vb.localeCompare(va) : va.localeCompare(vb); }
+    return state.sortDesc ? (vb ?? -1e18) - (va ?? -1e18) : (va ?? 1e18) - (vb ?? 1e18);
+  });
+
+  $("sig-count").textContent = `${rows.length} of ${all.length} signals`;
+  $("sig-empty").style.display = rows.length ? "none" : "block";
+  $("sig-body").innerHTML = rows.map(r => {
+    const d = dirOf(r.signal_type);
+    const cls = d === "bull" ? "bull" : d === "bear" ? "bear" : "neut";
+    const chg = r.change_pct ?? 0, gap = r.gap_pct ?? 0;
+    const buzz = r.social_buzz;
+    const buzzStr = buzz && buzz.sentiment && buzz.source === "grok"
+      ? ` <span class="chip ${esc(buzz.sentiment)}" title="${esc(buzz.summary || "")}">X:${esc(buzz.sentiment)}</span>` : "";
+    return `<tr data-ticker="${esc(r.ticker)}">
+      <td class="left"><span class="tkr">${esc(r.ticker)}</span>${state.newTickers.has(r.ticker) ? '<span class="newflag">NEW</span>' : ""}${buzzStr}</td>
+      <td class="left"><span class="sig ${cls}">${esc(r.signal_type || "")}</span></td>
+      <td class="num">${fmtNum(r.score, 0)}<span class="score-bar"><i style="width:${Math.min(100, r.score || 0)}%"></i></span></td>
+      <td class="num">$${fmtNum(r.current_price)}</td>
+      <td class="num ${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${fmtNum(chg, 1)}%</td>
+      <td class="num ${gap >= 0 ? "pos" : "neg"}">${gap >= 0 ? "+" : ""}${fmtNum(gap, 1)}%</td>
+      <td class="num">${fmtNum(r.vol_pace_ratio, 1)}x</td>
+      <td class="num ${r.above_vwap ? "pos" : "neg"}">${r.above_vwap ? "↑" : "↓"}</td>
+      <td class="num">${fmtVol(r.today_volume)}</td>
+      <td class="left">${esc(r.sector || "")}</td>
+      <td class="left rationale" title="${esc(r.rationale || "")}">${esc(r.rationale || "")}</td>
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("#sig-body tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
+}
+
+function renderNews() {
+  const news = ((state.snapshot || {}).news) || [];
+  $("news-empty").style.display = news.length ? "none" : "block";
+  $("news-grid").innerHTML = news.map(n => {
+    const chg = n.change_pct ?? 0;
+    const combined = (n.combined_signal || "").toLowerCase();
+    return `<div class="news-card">
+      <div class="top">
+        <span class="tkr">$${esc(n.primary_ticker)}</span>
+        <span class="badge cat">${esc((n.category || "").replace(/_/g, " "))}</span>
+        <span class="badge ${esc(n.sentiment || "neutral")}">${esc(n.sentiment || "")}</span>
+        ${n.magnitude === "high" ? '<span class="badge bearish" style="color:var(--yellow);background:var(--yellow-dim)">HIGH IMPACT</span>' : ""}
+        ${n.is_off_radar ? '<span class="badge offradar">off-radar</span>' : ""}
+        ${n.combined_signal ? `<span class="badge ${combined}">${esc(n.combined_signal)}${n.conviction ? " · " + esc(n.conviction) : ""}</span>` : ""}
+      </div>
+      <h3>${esc(n.headline)}</h3>
+      <div class="meta num">$${fmtNum(n.price)} · <span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${fmtNum(chg, 1)}%</span> · vol ${fmtNum(n.vol_ratio, 1)}x · ${esc(n.publisher || "")}</div>
+      ${n.thesis ? `<div class="thesis">${esc(n.thesis)}</div>` : ""}
+      ${n.key_level ? `<div class="kv"><b>Key level:</b> ${esc(n.key_level)}</div>` : ""}
+      ${n.risk ? `<div class="kv"><b>Risk:</b> ${esc(n.risk)}</div>` : ""}
+      <div class="kv" style="margin-top:8px">
+        <a href="javascript:openDrawer('${esc(n.primary_ticker)}')">Analyze ${esc(n.primary_ticker)} →</a>
+        ${n.article_url ? ` · <a href="${esc(n.article_url)}" target="_blank" rel="noopener">Read article ↗</a>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ── ticker drawer ── */
+async function openDrawer(ticker) {
+  const dr = $("drawer");
+  dr.classList.add("open");
+  $("d-ticker").textContent = "$" + ticker;
+  $("d-sub").textContent = "loading live data…";
+  $("d-body").innerHTML = "";
+  let d;
+  try { d = await api("/api/ticker/" + encodeURIComponent(ticker)); }
+  catch { $("d-sub").textContent = "failed to load"; return; }
+  $("d-sub").innerHTML = `<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TradingView ↗</a> · <a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank" rel="noopener">Yahoo ↗</a>`;
+  const i = d.intraday;
+  let html = "";
+  if (i) {
+    const cls = dirOf(i.signal_type) === "bull" ? "bull" : dirOf(i.signal_type) === "bear" ? "bear" : "neut";
+    html += `<div style="margin-top:12px"><span class="sig ${cls}">${esc(i.signal_type || "NO SIGNAL")}</span> <b class="num">score ${fmtNum(i.score, 0)}</b></div>
+    <div class="grid2">
+      <div><div class="k">Price</div><b class="num">$${fmtNum(i.current_price)}</b></div>
+      <div><div class="k">Change</div><b class="num ${i.change_pct >= 0 ? "pos" : "neg"}">${i.change_pct >= 0 ? "+" : ""}${fmtNum(i.change_pct, 2)}%</b></div>
+      <div><div class="k">Gap</div><b class="num">${fmtNum(i.gap_pct, 2)}%</b></div>
+      <div><div class="k">Vol pace</div><b class="num">${fmtNum(i.vol_pace_ratio, 2)}x</b></div>
+      <div><div class="k">VWAP</div><b class="num">$${fmtNum(i.vwap)} ${i.above_vwap ? "↑above" : "↓below"}</b></div>
+      <div><div class="k">Volume</div><b class="num">${fmtVol(i.today_volume)}</b></div>
+      <div><div class="k">Prev close</div><b class="num">$${fmtNum(i.prev_close)}</b></div>
+      <div><div class="k">Open</div><b class="num">$${fmtNum(i.today_open)}</b></div>
+    </div>
+    ${i.rationale ? `<div class="thesis">${esc(i.rationale)}</div>` : ""}`;
+  } else {
+    html += `<div class="empty">No live intraday data${d.intraday_error ? ": " + esc(d.intraday_error) : ""}</div>`;
+  }
+  const s = d.social;
+  if (s && s.source !== "unavailable") {
+    html += `<div class="social-box">
+      <b>X / Social</b> — <span class="chip ${esc(s.sentiment)}">${esc(s.sentiment)} ${s.sentiment_score !== undefined ? "(" + fmtNum(s.sentiment_score, 2) + ")" : ""}</span>
+      <span class="chip">${esc(s.buzz_level || "")} buzz</span>
+      <div style="margin-top:8px">${esc(s.summary || "")}</div>
+      ${s.notable ? `<div style="margin-top:6px;color:var(--muted)"><b>Narrative:</b> ${esc(s.notable)}</div>` : ""}
+    </div>`;
+  }
+  html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
+  $("d-body").innerHTML = html;
+}
+function closeDrawer() { $("drawer").classList.remove("open"); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+
+/* ── performance ── */
+$("perf-days").onchange = () => loadPerformance();
+async function loadPerformance() {
+  state.perfLoaded = true;
+  $("perf-note").textContent = "loading…";
+  let rep;
+  try { rep = await api("/api/performance?days=" + $("perf-days").value); }
+  catch { $("perf-note").textContent = "failed to load"; return; }
+  if (rep.error) { $("perf-note").textContent = rep.error; return; }
+  $("perf-note").textContent = `${rep.total_alerts ?? 0} signals tracked · win = ≥${rep.win_threshold_pct ?? 5}%`;
+  const stats = rep.stats_by_type || {};
+  $("perf-stats").innerHTML = Object.entries(stats).map(([type, s]) => `
+    <div class="stat-card">
+      <h4>${esc(type)} <span style="color:var(--muted);font-weight:400">n=${s.n_total}</span></h4>
+      ${s.win_rate_short !== null && s.win_rate_short !== undefined ? `<div class="row"><span>Win rate ${esc(s.short_label || "D7")}</span><b>${s.win_rate_short}%</b></div>` : ""}
+      ${s.win_rate_full !== null && s.win_rate_full !== undefined ? `<div class="row"><span>Win rate ${esc(s.full_label || "D30")}</span><b>${s.win_rate_full}%</b></div>` : ""}
+      ${s.avg_short_return !== null && s.avg_short_return !== undefined ? `<div class="row"><span>Avg ${esc(s.short_label || "D7")} return</span><b class="${s.avg_short_return >= 0 ? "pos" : "neg"}">${s.avg_short_return >= 0 ? "+" : ""}${fmtNum(s.avg_short_return)}%</b></div>` : ""}
+      ${s.avg_peak_return !== null && s.avg_peak_return !== undefined ? `<div class="row"><span>Avg peak return</span><b class="pos">+${fmtNum(s.avg_peak_return)}%</b></div>` : ""}
+      ${s.best !== null && s.best !== undefined ? `<div class="row"><span>Best / Worst</span><b><span class="pos">${fmtNum(s.best, 1)}%</span> / <span class="neg">${fmtNum(s.worst, 1)}%</span></b></div>` : ""}
+    </div>`).join("");
+  const rows = rep.rows || [];
+  $("perf-empty").style.display = rows.length ? "none" : "block";
+  $("perf-body").innerHTML = rows.slice(0, 100).map(r => `<tr>
+    <td class="left num">${esc(r.date)}</td><td class="left">${esc(r.type)}</td>
+    <td class="left tkr">${esc(r.ticker)}</td><td class="num">${esc(String(r.score ?? ""))}</td>
+    <td class="num">${esc(String(r["d7%"] ?? ""))}</td><td class="num">${esc(String(r["d30%"] ?? ""))}</td>
+    <td class="num">${esc(String(r["peak%"] ?? ""))}</td><td class="num">${esc(String(r.peak_day ?? ""))}</td>
+    <td class="left">${esc(r.status || "")}</td></tr>`).join("");
+}
+
+/* ── watchlist ── */
+$("wl-add").onclick = () => addToWatchlist($("wl-ticker").value, $("wl-notes").value);
+async function addToWatchlist(ticker, notes) {
+  ticker = (ticker || "").toUpperCase().trim();
+  if (!ticker) return;
+  try {
+    const r = await api("/api/watchlist", { method: "POST", body: JSON.stringify({ ticker, notes: notes || "" }) });
+    if (r.ok) { toast(`${ticker} added to watchlist`); $("wl-ticker").value = ""; $("wl-notes").value = ""; loadWatchlist(); }
+    else toast(r.error || "failed");
+  } catch (e) { if (e.message !== "unauthorized") toast("Failed to add."); }
+}
+async function loadWatchlist() {
+  let r;
+  try { r = await api("/api/watchlist"); } catch { return; }
+  const rows = r.watchlist || [];
+  $("wl-empty").style.display = rows.length ? "none" : "block";
+  $("wl-body").innerHTML = rows.map(w => `<tr>
+    <td class="left tkr" style="cursor:pointer" onclick="openDrawer('${esc(w.ticker)}')">${esc(w.ticker)}</td>
+    <td class="left">${esc(w.notes)}</td>
+    <td class="left num">${w.added_at ? new Date(w.added_at).toLocaleDateString() : ""}</td>
+    <td><button onclick="removeFromWatchlist('${esc(w.ticker)}')">Remove</button></td></tr>`).join("");
+}
+async function removeFromWatchlist(ticker) {
+  try { await api("/api/watchlist/" + encodeURIComponent(ticker), { method: "DELETE" }); loadWatchlist(); }
+  catch {}
+}
+
+/* ── auto-refresh loop ── */
+setInterval(() => {
+  state.countdown -= 1;
+  if (state.countdown <= 0) { state.countdown = 30; loadLatest(); }
+  $("countdown").textContent = "↻ " + state.countdown + "s";
+}, 1000);
+
+renderNotifyBtn();
+loadLatest();
+loadWatchlist();
+</script>
+</body>
+</html>

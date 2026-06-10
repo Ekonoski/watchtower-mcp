@@ -79,6 +79,22 @@ Return JSON with these exact fields:
 }}"""
 
 
+# Grok result caches keyed by article URL (2h TTL). With a 5-min scan cadence
+# the same headline appears in many consecutive scans — reuse the classification
+# and synthesis instead of re-billing Grok, while keeping the alert visible for
+# the full lookback window.
+_classification_cache: Dict[str, tuple] = {}  # url -> (ts, classification|None)
+_synthesis_cache: Dict[str, tuple] = {}       # url -> (ts, signal dict)
+
+
+def _cache_prune(cache: Dict[str, tuple], ttl: float = 7200.0) -> None:
+    import time as _time
+    now = _time.time()
+    for key, (ts, _) in list(cache.items()):
+        if now - ts > ttl:
+            del cache[key]
+
+
 def _get_polygon_client():
     try:
         from analysis.polygon_data import get_client
@@ -112,10 +128,14 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
         news = client.list_ticker_news(
             published_utc_gte=cutoff_str,
             order="desc",
-            limit=50,
+            limit=200,
             sort="published_utc",
         )
+        count = 0
         for article in news:
+            count += 1
+            if count > 200:  # list_ticker_news paginates past `limit` lazily
+                break
             tickers = getattr(article, "tickers", []) or []
             if not tickers:
                 continue
@@ -359,6 +379,9 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
     if not articles:
         return []
 
+    _cache_prune(_classification_cache)
+    _cache_prune(_synthesis_cache)
+
     # Deduplicate — same ticker can appear in multiple articles
     seen_tickers: set = set()
     grok = _get_grok_client()
@@ -375,12 +398,21 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
         if primary_ticker in seen_tickers:
             continue
 
-        # Classify with Grok if available, else use basic keyword filter
-        if grok:
+        # Classify with Grok if available, else use basic keyword filter.
+        # Cached results are reused across scans (same article, same answer).
+        cache_key = article.get("article_url") or article.get("headline", "")
+        cached = _classification_cache.get(cache_key)
+        if cached is not None:
+            classification = cached[1]
+        elif grok:
             classification = classify_article(article, grok)
             time.sleep(0.1)  # rate limit Grok calls
+            if classification is not None and cache_key:
+                _classification_cache[cache_key] = (time.time(), classification)
         else:
             classification = _keyword_classify(article)
+            if cache_key:
+                _classification_cache[cache_key] = (time.time(), classification)
 
         if not classification:
             continue
@@ -400,6 +432,7 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
             "tickers": tickers,
             "primary_ticker": primary_ticker,
             "headline": article["headline"],
+            "article_url": article.get("article_url", ""),
             "publisher": article.get("publisher", ""),
             "published_utc": article.get("published_utc", ""),
             "sentiment": sentiment,
@@ -433,17 +466,23 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
 
         for alert in synthesis_candidates:
             try:
-                tech = _fetch_technicals_for_alert(alert["primary_ticker"])
-                if tech:
-                    signal = synthesize_with_technicals(alert, tech, grok)
-                    if signal:
-                        alert["combined_signal"] = signal.get("combined_signal", "WATCH")
-                        alert["conviction"] = signal.get("conviction", "low")
-                        alert["thesis"] = signal.get("thesis", "")
-                        alert["key_level"] = signal.get("key_level", "")
-                        alert["risk"] = signal.get("risk", "")
-                        alert["has_synthesis"] = True
-                time.sleep(0.15)
+                cache_key = alert.get("article_url") or alert.get("headline", "")
+                cached = _synthesis_cache.get(cache_key)
+                if cached is not None:
+                    signal = cached[1]
+                else:
+                    tech = _fetch_technicals_for_alert(alert["primary_ticker"])
+                    signal = synthesize_with_technicals(alert, tech, grok) if tech else None
+                    if signal and cache_key:
+                        _synthesis_cache[cache_key] = (time.time(), signal)
+                    time.sleep(0.15)
+                if signal:
+                    alert["combined_signal"] = signal.get("combined_signal", "WATCH")
+                    alert["conviction"] = signal.get("conviction", "low")
+                    alert["thesis"] = signal.get("thesis", "")
+                    alert["key_level"] = signal.get("key_level", "")
+                    alert["risk"] = signal.get("risk", "")
+                    alert["has_synthesis"] = True
             except Exception:
                 pass
 
