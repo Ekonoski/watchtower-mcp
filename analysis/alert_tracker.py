@@ -43,8 +43,21 @@ TRACK_DAYS: Dict[str, int] = {
     "master":    90,
 }
 
-# Win threshold: >=5% gain counts as a win
+# Win threshold: >=5% move in the direction of the trade counts as a win
 WIN_THRESHOLD = 5.0
+
+# Bearish signals win when the stock FALLS. Their returns are sign-flipped in
+# the performance report so every stat reads "return in trade direction".
+BEARISH_SIGNAL_TYPES = {
+    "VWAP_REJECTION", "INTRADAY_BREAKDOWN", "GAP_DOWN_CONFIRM", "DISTRIBUTION",
+    "SELL", "STRONG_SELL",
+}
+
+
+def _is_bearish(alert_type: str, signal_type) -> bool:
+    if alert_type == "breakdown":
+        return True
+    return (signal_type or "").upper() in BEARISH_SIGNAL_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +100,8 @@ def log_alerts(results: List[dict], alert_type: str) -> int:
 
         with conn.cursor() as cur:
             for r in results:
-                ticker = r.get("ticker", "")
+                # News alerts carry the symbol as primary_ticker, not ticker
+                ticker = r.get("ticker") or r.get("primary_ticker") or ""
                 if not ticker:
                     continue
 
@@ -339,8 +353,13 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
         def avg(vals): return round(sum(vals) / len(vals), 2) if vals else None
         def win_rate(vals): return round(sum(1 for x in vals if x >= WIN_THRESHOLD) / len(vals) * 100, 1) if vals else None
 
-        primary_rets = [float(r[primary_col]) for r in filled_primary]
-        short_rets = [float(r[short_col]) for r in filled_short]
+        def _adj(r, col):
+            """Return in the direction of the trade: flipped for bearish signals."""
+            v = float(r[col])
+            return -v if _is_bearish(r["alert_type"], r.get("signal_type")) else v
+
+        primary_rets = [_adj(r, primary_col) for r in filled_primary]
+        short_rets = [_adj(r, short_col) for r in filled_short]
         peak_rets = [float(r["d_peak_return"]) for r in subset if r.get("d_peak_return") is not None]
 
         stats[at] = {
@@ -366,6 +385,7 @@ def get_performance_report(days_back: int = 90, alert_type: str = None) -> dict:
         formatted.append({
             "ticker":     r["ticker"],
             "type":       at,
+            "dir":        "short" if _is_bearish(at, r.get("signal_type")) else "long",
             "date":       str(r["alert_date"]),
             "signal":     r["signal_type"] or "",
             "entry":      f"${float(r['entry_price']):.2f}" if r["entry_price"] else "",
