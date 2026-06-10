@@ -93,7 +93,14 @@ def get_market_pulse() -> dict:
     Ask Grok what traders on X are talking about right now.
     Returns a dict with overall_sentiment, top_tickers, top_themes, summary.
     Returns empty dict on failure.
+
+    Cached for PULSE_TTL_SEC — at a 5-min scan cadence, re-querying X every
+    scan multiplies Grok live-search spend for no informational gain.
     """
+    import time as _time
+    cached = _pulse_cache.get("pulse")
+    if cached and _time.time() - cached[0] < PULSE_TTL_SEC:
+        return cached[1]
     try:
         grok = _get_grok()
         if not grok:
@@ -104,6 +111,8 @@ def get_market_pulse() -> dict:
             json_mode=True,
         )
         parsed = result.get("parsed") or {}
+        if parsed:
+            _pulse_cache["pulse"] = (_time.time(), parsed)
         return parsed
     except Exception:
         return {}
@@ -115,6 +124,15 @@ def _get_grok():
         return GrokClient()
     except Exception:
         return None
+
+
+# Grok live-X-search results don't change meaningfully inside a scan interval.
+# Cache pulse and per-ticker sentiment so the 5-min cadence doesn't multiply
+# API spend. TTLs tunable via env.
+PULSE_TTL_SEC = int(os.environ.get("GROK_PULSE_TTL_MIN", "10")) * 60
+BUZZ_TTL_SEC = int(os.environ.get("GROK_BUZZ_TTL_MIN", "15")) * 60
+_pulse_cache: dict = {}        # "pulse" -> (ts, result)
+_buzz_cache: dict = {}         # ticker -> (ts, result)
 
 
 def query_ticker_sentiment(ticker: str) -> dict:
@@ -129,6 +147,12 @@ def query_ticker_sentiment(ticker: str) -> dict:
       notable: notable catalyst/narrative or None
       source: grok | unavailable
     """
+    import time as _time
+    ticker = ticker.upper().strip()
+    cached = _buzz_cache.get(ticker)
+    if cached and _time.time() - cached[0] < BUZZ_TTL_SEC:
+        return cached[1]
+
     grok = _get_grok()
     if not grok:
         return {"sentiment": "neutral", "sentiment_score": 0.0,
@@ -144,7 +168,7 @@ def query_ticker_sentiment(ticker: str) -> dict:
             max_tokens=300,
         )
         parsed = resp.get("parsed") or {}
-        return {
+        out = {
             "sentiment": parsed.get("sentiment", "neutral"),
             "sentiment_score": float(parsed.get("sentiment_score", 0.0)),
             "buzz_level": parsed.get("buzz_level", "low"),
@@ -152,6 +176,14 @@ def query_ticker_sentiment(ticker: str) -> dict:
             "notable": parsed.get("notable"),
             "source": "grok",
         }
+        # Trim the cache before it grows unbounded across a long session
+        if len(_buzz_cache) > 300:
+            cutoff = _time.time() - BUZZ_TTL_SEC
+            for k, (ts, _) in list(_buzz_cache.items()):
+                if ts < cutoff:
+                    del _buzz_cache[k]
+        _buzz_cache[ticker] = (_time.time(), out)
+        return out
     except Exception as e:
         return {"sentiment": "neutral", "sentiment_score": 0.0,
                 "buzz_level": "low", "summary": f"Error: {str(e)[:60]}",
