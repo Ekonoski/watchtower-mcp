@@ -262,7 +262,7 @@
     <div class="tblwrap">
       <table>
         <thead><tr>
-          <th class="left">Date</th><th class="left">Type</th><th class="left">Ticker</th>
+          <th class="left">Date</th><th class="left">Type</th><th class="left">Dir</th><th class="left">Ticker</th>
           <th>Score</th><th>D7 %</th><th>D30 %</th><th>Peak %</th><th>Peak Day</th><th class="left">Status</th>
         </tr></thead>
         <tbody id="perf-body"></tbody>
@@ -616,6 +616,7 @@ async function loadPerformance() {
   $("perf-empty").style.display = rows.length ? "none" : "block";
   $("perf-body").innerHTML = rows.slice(0, 100).map(r => `<tr>
     <td class="left num">${esc(r.date)}</td><td class="left">${esc(r.type)}</td>
+    <td class="left"><span class="${r.dir === "short" ? "neg" : "pos"}">${esc(r.dir || "long")}</span></td>
     <td class="left tkr">${esc(r.ticker)}</td><td class="num">${esc(String(r.score ?? ""))}</td>
     <td class="num">${esc(String(r["d7%"] ?? ""))}</td><td class="num">${esc(String(r["d30%"] ?? ""))}</td>
     <td class="num">${esc(String(r["peak%"] ?? ""))}</td><td class="num">${esc(String(r.peak_day ?? ""))}</td>
