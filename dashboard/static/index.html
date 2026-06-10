@@ -108,6 +108,7 @@
   .score-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: var(--border); margin-left: 8px; vertical-align: middle; overflow: hidden; }
   .score-bar i { display: block; height: 100%; background: var(--blue); }
   .newflag { color: var(--bg); background: var(--green); border-radius: 3px; font-size: 10px; font-weight: 800; padding: 1px 5px; margin-left: 6px; vertical-align: middle; animation: flash 1.2s ease 3; }
+  tr.is-new td:first-child { box-shadow: inset 3px 0 0 var(--green); }
   @keyframes flash { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
   .rationale { color: var(--muted); max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
   .empty { padding: 36px; text-align: center; color: var(--muted); }
@@ -538,6 +539,13 @@ function renderSignals() {
     return state.sortDesc ? (vb ?? -1e18) - (va ?? -1e18) : (va ?? 1e18) - (vb ?? 1e18);
   });
 
+  // New arrivals from the latest scan always pin to the top — the chosen
+  // column sort still applies within the new group and within the rest.
+  if (state.newTickers.size) {
+    const fresh = rows.filter(r => state.newTickers.has(r.ticker));
+    if (fresh.length) rows = fresh.concat(rows.filter(r => !state.newTickers.has(r.ticker)));
+  }
+
   $("sig-count").textContent = `${rows.length} of ${all.length} signals`;
   $("sig-empty").style.display = rows.length ? "none" : "block";
   $("sig-body").innerHTML = rows.map(r => {
@@ -547,7 +555,7 @@ function renderSignals() {
     const buzz = r.social_buzz;
     const buzzStr = buzz && buzz.sentiment && buzz.source === "grok"
       ? ` <span class="chip ${esc(buzz.sentiment)}" title="${esc(buzz.summary || "")}">X:${esc(buzz.sentiment)}</span>` : "";
-    return `<tr data-ticker="${esc(r.ticker)}">
+    return `<tr data-ticker="${esc(r.ticker)}"${state.newTickers.has(r.ticker) ? ' class="is-new"' : ""}>
       <td class="left"><span class="tkr">${esc(r.ticker)}</span>${state.newTickers.has(r.ticker) ? '<span class="newflag">NEW</span>' : ""}${buzzStr}</td>
       <td class="left">${d === "bull" ? '<span class="sig bull">▲ LONG</span>' : d === "bear" ? '<span class="sig bear">▼ SHORT</span>' : '<span class="sig neut">● WATCH</span>'}</td>
       <td class="left"><span class="sig ${cls}">${esc(r.signal_type || "")}</span></td>
