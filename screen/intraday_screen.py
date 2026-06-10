@@ -41,6 +41,20 @@ from screen.reversal_screen import _conn, load_quality_tickers, load_prices
 from analysis.polygon_data import get_client
 
 
+def _attr(obj, *names, default=None):
+    """Get the first present attribute. The Polygon REST JSON uses camelCase
+    (prevDay, min.av, lastTrade.p) but the Python client's dataclasses use
+    snake_case (prev_day, min.accumulated_volume, last_trade.price) — code
+    written against one silently reads None on the other."""
+    if obj is None:
+        return default
+    for n in names:
+        v = getattr(obj, n, None)
+        if v is not None:
+            return v
+    return default
+
+
 # ── Watchlist helpers ─────────────────────────────────────────────────────────
 
 def _load_watchlist(conn) -> list:
@@ -294,21 +308,21 @@ def run_screen(
                 # and prevDay so the universe doesn't collapse to zero.
                 day = getattr(snap, "day", None)
                 minute = getattr(snap, "min", None)
-                prev = getattr(snap, "prevDay", None)
-                price = (getattr(day, "c", 0) or 0) if day else 0
-                if not price and minute is not None:
-                    price = getattr(minute, "c", 0) or 0
-                vol = (getattr(day, "v", 0) or 0) if day else 0
-                if not vol and minute is not None:
-                    vol = getattr(minute, "av", 0) or 0
-                prev_price = getattr(prev, "c", 0) or 0 if prev else 0
+                prev = _attr(snap, "prevDay", "prev_day")
+                price = _attr(day, "c", "close", default=0) or 0
+                if not price:
+                    price = _attr(minute, "c", "close", default=0) or 0
+                vol = _attr(day, "v", "volume", default=0) or 0
+                if not vol:
+                    vol = _attr(minute, "av", "accumulated_volume", default=0) or 0
+                prev_price = _attr(prev, "c", "close", default=0) or 0
                 # Use best available price for filtering
                 effective_price = price or prev_price
                 if effective_price < MIN_PRICE:
                     continue
                 # Pre-market: today's volume is near-zero, use prev day to check liquidity
                 if price * vol < MIN_DOLLAR_VOL:
-                    prev_vol = getattr(prev, "v", 0) or 0 if prev else 0
+                    prev_vol = _attr(prev, "v", "volume", default=0) or 0
                     if prev_price * prev_vol < MIN_DOLLAR_VOL:
                         continue
                 snapshots[ticker] = snap
@@ -333,7 +347,8 @@ def run_screen(
         for ticker, snap in snapshots.items():
             if ticker not in avg_vol_map:
                 try:
-                    prev_vol = getattr(snap.prevDay, "v", 0) or 0
+                    prev = _attr(snap, "prevDay", "prev_day")
+                    prev_vol = _attr(prev, "v", "volume", default=0) or 0
                     if prev_vol > 0:
                         avg_vol_map[ticker] = float(prev_vol)
                 except Exception:
@@ -378,27 +393,27 @@ def run_screen(
 
         try:
             day = getattr(snap, "day", None)
-            prev_day = getattr(snap, "prevDay", None)
+            prev_day = _attr(snap, "prevDay", "prev_day")
             minute = getattr(snap, "min", None)
 
-            today_open = (getattr(day, "o", None) or 0.0) if day else 0.0
-            today_high = (getattr(day, "h", None) or 0.0) if day else 0.0
-            today_low = (getattr(day, "l", None) or 0.0) if day else 0.0
-            current_price = (getattr(day, "c", None) or 0.0) if day else 0.0
-            today_volume = (getattr(day, "v", None) or 0.0) if day else 0.0
-            vwap = (getattr(day, "vw", None) or 0.0) if day else 0.0
+            today_open = _attr(day, "o", "open", default=0.0) or 0.0
+            today_high = _attr(day, "h", "high", default=0.0) or 0.0
+            today_low = _attr(day, "l", "low", default=0.0) or 0.0
+            current_price = _attr(day, "c", "close", default=0.0) or 0.0
+            today_volume = _attr(day, "v", "volume", default=0.0) or 0.0
+            vwap = _attr(day, "vw", "vwap", default=0.0) or 0.0
 
             # Pre-market: no day bar yet — use the latest minute bar's price,
             # accumulated volume, and vwap so signals can still compute.
             if minute is not None:
                 if not current_price:
-                    current_price = getattr(minute, "c", None) or 0.0
+                    current_price = _attr(minute, "c", "close", default=0.0) or 0.0
                 if not today_volume:
-                    today_volume = getattr(minute, "av", None) or 0.0
+                    today_volume = _attr(minute, "av", "accumulated_volume", default=0.0) or 0.0
                 if not vwap:
-                    vwap = getattr(minute, "vw", None) or 0.0
+                    vwap = _attr(minute, "vw", "vwap", default=0.0) or 0.0
 
-            prev_close = (getattr(prev_day, "c", None) or 0.0) if prev_day else 0.0
+            prev_close = _attr(prev_day, "c", "close", default=0.0) or 0.0
 
             # Derived metrics. Pre-market there's no official open — the gap
             # is the live (pre-market) price vs yesterday's close.
@@ -408,7 +423,7 @@ def run_screen(
                 gap_pct = (current_price - prev_close) / prev_close * 100
             else:
                 gap_pct = 0.0
-            change_pct = getattr(snap, "todaysChangePerc", None)
+            change_pct = _attr(snap, "todaysChangePerc", "todays_change_percent")
             if change_pct is None:
                 change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
 
