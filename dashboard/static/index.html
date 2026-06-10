@@ -601,11 +601,11 @@ async function loadPerformance() {
   try { rep = await api("/api/performance?days=" + $("perf-days").value); }
   catch { $("perf-note").textContent = "failed to load"; return; }
   if (rep.error) { $("perf-note").textContent = rep.error; return; }
-  $("perf-note").textContent = `${rep.total_alerts ?? 0} signals tracked · win = ≥${rep.win_threshold_pct ?? 5}%`;
+  $("perf-note").textContent = `${rep.total_alerts ?? 0} signals tracked · day-trade win = ≥${rep.day_win_threshold_pct ?? 2}% by next close · swing win = ≥${rep.win_threshold_pct ?? 5}%`;
   const stats = rep.stats_by_type || {};
   $("perf-stats").innerHTML = Object.entries(stats).map(([type, s]) => `
     <div class="stat-card">
-      <h4>${esc(type)} <span style="color:var(--muted);font-weight:400">n=${s.n_total}</span></h4>
+      <h4>${esc(type)} <span style="color:var(--muted);font-weight:400">n=${s.n_total} · win ≥${s.win_threshold_pct ?? 5}%${s.is_day_trade ? " by D1" : ""}</span></h4>
       ${s.win_rate_short !== null && s.win_rate_short !== undefined ? `<div class="row"><span>Win rate ${esc(s.short_label || "D7")}</span><b>${s.win_rate_short}%</b></div>` : ""}
       ${s.win_rate_full !== null && s.win_rate_full !== undefined ? `<div class="row"><span>Win rate ${esc(s.full_label || "D30")}</span><b>${s.win_rate_full}%</b></div>` : ""}
       ${s.avg_short_return !== null && s.avg_short_return !== undefined ? `<div class="row"><span>Avg ${esc(s.short_label || "D7")} return</span><b class="${s.avg_short_return >= 0 ? "pos" : "neg"}">${s.avg_short_return >= 0 ? "+" : ""}${fmtNum(s.avg_short_return)}%</b></div>` : ""}

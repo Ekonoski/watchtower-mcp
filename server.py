@@ -513,7 +513,10 @@ def watchtower_alert_performance(
         if total == 0:
             return "No signals logged yet. Tracking starts automatically at the next scheduled scan."
 
-        lines.append(f"Signals tracked: **{total}** | Win threshold: ≥{report['win_threshold_pct']}%")
+        lines.append(
+            f"Signals tracked: **{total}** | Day-trade win: ≥{report.get('day_win_threshold_pct', 2)}% by next close "
+            f"(intraday/news) | Swing win: ≥{report['win_threshold_pct']}%"
+        )
         lines.append("")
 
         type_labels = {
