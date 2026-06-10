@@ -177,6 +177,7 @@
   <div class="mkt-status"><div id="mkt-dot" class="dot"></div><span id="mkt-label">—</span></div>
   <div class="spacer"></div>
   <div class="hdr-right">
+    <span id="alert-ticker" title="New 55+ signals in the latest scan"></span>
     <span id="last-scan">last scan: —</span>
     <span id="countdown" title="auto-refresh">↻ 30s</span>
     <button id="btn-notify" title="Browser pop-up alerts for new signals and news">🔔 Alerts: off</button>
@@ -482,7 +483,17 @@ async function loadLatest() {
   }
   state.snapshot = snap;
   renderHeader(); renderPulse(); renderSignals(); renderNews();
-  if (prev && snap.as_of && prev.as_of !== snap.as_of) pushNotifications(snap);
+  if (prev && snap.as_of && prev.as_of !== snap.as_of) {
+    // On-page alert trail — visible proof of what fired even if the OS
+    // swallows the banner notifications.
+    const newSigs = (snap.signals || []).filter(s => state.newTickers.has(s.ticker) && (s.score ?? 0) >= 55);
+    if (newSigs.length) {
+      const t = new Date(snap.as_of).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+      const names = newSigs.slice(0, 3).map(s => s.ticker).join(" ");
+      $("alert-ticker").innerHTML = `<span class="sig bull">⚡ ${newSigs.length} new @ ${t}</span> <span class="num">${esc(names)}${newSigs.length > 3 ? "…" : ""}</span>`;
+    }
+    pushNotifications(snap);
+  }
 }
 
 function renderHeader() {
