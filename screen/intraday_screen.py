@@ -66,6 +66,31 @@ def _attr(obj, *names, default=None):
     return default
 
 
+
+def _load_avg_vols(conn, tickers: list) -> dict:
+    """20-day average volume per ticker from daily_prices.
+
+    load_prices returns Dict[ticker -> DataFrame] — earlier code treated it
+    as one DataFrame and crashed on .empty ('dict' object has no attribute
+    'empty'), so DB average volumes never actually loaded anywhere."""
+    if conn is None or not tickers:
+        return {}
+    try:
+        prices_map = load_prices(conn, tickers, days=40)
+    except Exception:
+        return {}
+    out = {}
+    for t, df in (prices_map or {}).items():
+        try:
+            if df is not None and not df.empty and "volume" in df.columns:
+                v = float(df["volume"].tail(20).mean())
+                if v > 0:
+                    out[t] = v
+        except Exception:
+            continue
+    return out
+
+
 # ── Watchlist helpers ─────────────────────────────────────────────────────────
 
 def _load_watchlist(conn) -> list:
@@ -291,15 +316,7 @@ def run_screen(
     if single_ticker:
         # ── Single ticker mode ────────────────────────────────────────────────
         universe = [single_ticker.upper()]
-        prices_df = pd.DataFrame()
-        if conn is not None:
-            try:
-                prices_df = load_prices(conn, universe, days=30)
-            except Exception:
-                pass
-        if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
-            grp = prices_df.groupby("ticker")["volume"].apply(lambda s: s.tail(20).mean())
-            avg_vol_map = grp.to_dict()
+        avg_vol_map = _load_avg_vols(conn, universe)
 
         for i in range(0, len(universe), BATCH_SIZE):
             batch = universe[i : i + BATCH_SIZE]
@@ -366,15 +383,7 @@ def run_screen(
         _log.info(f"[intraday_screen] Broad universe: {len(universe)} tickers passing ${MIN_DOLLAR_VOL:,} liquidity filter.")
 
         # Load 20d avg volumes from Supabase for known tickers
-        prices_df = pd.DataFrame()
-        if conn is not None and universe:
-            try:
-                prices_df = load_prices(conn, universe, days=30)
-            except Exception:
-                pass
-        if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
-            grp = prices_df.groupby("ticker")["volume"].apply(lambda s: s.tail(20).mean())
-            avg_vol_map = grp.to_dict()
+        avg_vol_map = _load_avg_vols(conn, universe)
 
         # Fall back to prevDay.v for tickers not in DB
         for ticker, snap in snapshots.items():
@@ -393,15 +402,7 @@ def run_screen(
         combined = list(dict.fromkeys(quality_tickers + watchlist_tickers))  # deduped, order-preserving
         universe = combined
 
-        prices_df = pd.DataFrame()
-        if conn is not None and universe:
-            try:
-                prices_df = load_prices(conn, universe, days=30)
-            except Exception:
-                pass
-        if not prices_df.empty and "ticker" in prices_df.columns and "volume" in prices_df.columns:
-            grp = prices_df.groupby("ticker")["volume"].apply(lambda s: s.tail(20).mean())
-            avg_vol_map = grp.to_dict()
+        avg_vol_map = _load_avg_vols(conn, universe)
 
         for i in range(0, len(universe), BATCH_SIZE):
             batch = universe[i : i + BATCH_SIZE]
