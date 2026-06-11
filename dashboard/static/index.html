@@ -286,10 +286,10 @@
     </div>
     <div class="tblwrap">
       <table>
-        <thead><tr><th class="left">Ticker</th><th class="left">Notes</th><th class="left">Added</th><th></th></tr></thead>
+        <thead><tr><th class="left">Ticker</th><th>Price</th><th>Chg %</th><th>Vol vs prev day</th><th class="left">Notes</th><th class="left">Added</th><th></th></tr></thead>
         <tbody id="wl-body"></tbody>
       </table>
-      <div id="wl-empty" class="empty" style="display:none">Watchlist is empty.</div>
+      <div id="wl-empty" class="empty" style="display:none">Watchlist is empty. Click any ticker in the scanner and hit "+ Add to watchlist" to track a position here.</div>
     </div>
   </section>
 </main>
@@ -699,6 +699,9 @@ async function loadWatchlist() {
   $("wl-empty").style.display = rows.length ? "none" : "block";
   $("wl-body").innerHTML = rows.map(w => `<tr>
     <td class="left tkr" style="cursor:pointer" onclick="openDrawer('${esc(w.ticker)}')">${esc(w.ticker)}</td>
+    <td class="num">${w.price ? "$" + fmtNum(w.price) : "—"}</td>
+    <td class="num ${(w.change_pct ?? 0) >= 0 ? "pos" : "neg"}">${w.price ? ((w.change_pct >= 0 ? "+" : "") + fmtNum(w.change_pct, 1) + "%") : "—"}</td>
+    <td class="num">${w.vol_ratio ? fmtNum(w.vol_ratio, 1) + "x" : "—"}</td>
     <td class="left">${esc(w.notes)}</td>
     <td class="left num">${w.added_at ? new Date(w.added_at).toLocaleDateString() : ""}</td>
     <td><button onclick="removeFromWatchlist('${esc(w.ticker)}')">Remove</button></td></tr>`).join("");
@@ -711,7 +714,12 @@ async function removeFromWatchlist(ticker) {
 /* ── auto-refresh loop ── */
 setInterval(() => {
   state.countdown -= 1;
-  if (state.countdown <= 0) { state.countdown = 30; loadLatest(); }
+  if (state.countdown <= 0) {
+    state.countdown = 30;
+    loadLatest();
+    // Keep watchlist quotes live while you're monitoring positions
+    if ($("tab-watchlist").classList.contains("active")) loadWatchlist();
+  }
   $("countdown").textContent = "↻ " + state.countdown + "s";
 }, 1000);
 
