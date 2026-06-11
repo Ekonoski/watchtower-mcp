@@ -214,13 +214,28 @@ def register_routes(mcp) -> None:
                         "SELECT ticker, notes, added_at FROM watchlist "
                         "WHERE active = true ORDER BY added_at DESC"
                     )
-                    return [
+                    rows = [
                         {"ticker": r[0], "notes": r[1] or "",
                          "added_at": r[2].isoformat() if r[2] else None}
                         for r in cur.fetchall()
                     ]
             finally:
                 conn.close()
+            # Live quotes so the watchlist works as a position monitor —
+            # the scanner drops a ticker the moment its setup goes quiet,
+            # but a name you've entered needs to stay watchable.
+            if rows:
+                try:
+                    from analysis.news_scanner import _fetch_snapshot_map
+                    snap_map = _fetch_snapshot_map([r["ticker"] for r in rows])
+                    for r in rows:
+                        s = snap_map.get(r["ticker"], {})
+                        r["price"] = s.get("price", 0)
+                        r["change_pct"] = round(s.get("change_pct", 0), 2)
+                        r["vol_ratio"] = round(s.get("vol_ratio", 0), 2)
+                except Exception:
+                    pass
+            return rows
 
         try:
             rows = await asyncio.to_thread(_list)
