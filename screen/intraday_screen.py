@@ -304,8 +304,11 @@ def run_screen(
         for i in range(0, len(universe), BATCH_SIZE):
             batch = universe[i : i + BATCH_SIZE]
             try:
-                snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(batch)})
-                for snap in (snaps or []):
+                # tickers must be a direct kwarg — a params dict is ignored and
+                # the call lazily fetches the FULL market (same bug fixed in the
+                # news scanner). list() materializes so HTTP errors surface here.
+                snaps = list(client.get_snapshot_all("stocks", tickers=",".join(batch)))
+                for snap in snaps:
                     if hasattr(snap, "ticker") and snap.ticker:
                         snapshots[snap.ticker] = snap
             except Exception:
@@ -403,8 +406,11 @@ def run_screen(
         for i in range(0, len(universe), BATCH_SIZE):
             batch = universe[i : i + BATCH_SIZE]
             try:
-                snaps = client.get_snapshot_all("stocks", params={"tickers": ",".join(batch)})
-                for snap in (snaps or []):
+                # tickers must be a direct kwarg — a params dict is ignored and
+                # the call lazily fetches the FULL market (same bug fixed in the
+                # news scanner). list() materializes so HTTP errors surface here.
+                snaps = list(client.get_snapshot_all("stocks", tickers=",".join(batch)))
+                for snap in snaps:
                     if hasattr(snap, "ticker") and snap.ticker:
                         snapshots[snap.ticker] = snap
             except Exception:
@@ -504,7 +510,12 @@ def run_screen(
                 premarket=not is_market_hours,
             )
 
-            if signal_type == "NEUTRAL" or score < min_score:
+            # Single-ticker lookups (the dashboard drawer) always return the
+            # row — a stock between signals should show its live stats, not
+            # "no data". The broad scan still drops NEUTRAL/low scores.
+            if not single_ticker and (signal_type == "NEUTRAL" or score < min_score):
+                continue
+            if single_ticker and score < min_score:
                 continue
 
             # Pull quality fundamentals if available
