@@ -105,6 +105,7 @@
   .sig.bull { color: var(--green); background: var(--green-dim); }
   .sig.bear { color: var(--red); background: var(--red-dim); }
   .sig.neut { color: var(--yellow); background: var(--yellow-dim); }
+  .sig.xvel { color: #d98cff; background: rgba(217,140,255,.12); }
   .score-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: var(--border); margin-left: 8px; vertical-align: middle; overflow: hidden; }
   .score-bar i { display: block; height: 100%; background: var(--blue); }
   .newflag { color: var(--bg); background: var(--green); border-radius: 3px; font-size: 10px; font-weight: 800; padding: 1px 5px; margin-left: 6px; vertical-align: middle; animation: flash 1.2s ease 3; }
@@ -211,6 +212,7 @@
         <button data-dir="bull">Bullish</button>
         <button data-dir="bear">Bearish</button>
         <button data-dir="neut">Neutral</button>
+        <button data-dir="xvel" title="Trending on X with no signal or news behind it">𝕏 Velocity</button>
       </div>
       <select id="min-score">
         <option value="0">Score ≥ 0</option>
@@ -528,7 +530,8 @@ function renderPulse() {
 function renderSignals() {
   const all = ((state.snapshot || {}).signals) || [];
   let rows = all.filter(r =>
-    (state.dir === "all" || dirOf(r.signal_type) === state.dir) &&
+    (state.dir === "all"
+      || (state.dir === "xvel" ? r.signal_type === "X_VELOCITY" : dirOf(r.signal_type) === state.dir)) &&
     (r.score ?? 0) >= state.minScore &&
     (!state.search || (r.ticker || "").includes(state.search)));
 
@@ -550,14 +553,15 @@ function renderSignals() {
   $("sig-empty").style.display = rows.length ? "none" : "block";
   $("sig-body").innerHTML = rows.map(r => {
     const d = dirOf(r.signal_type);
-    const cls = d === "bull" ? "bull" : d === "bear" ? "bear" : "neut";
+    const isXvel = r.signal_type === "X_VELOCITY";
+    const cls = isXvel ? "xvel" : d === "bull" ? "bull" : d === "bear" ? "bear" : "neut";
     const chg = r.change_pct ?? 0, gap = r.gap_pct ?? 0;
     const buzz = r.social_buzz;
     const buzzStr = buzz && buzz.sentiment && buzz.source === "grok"
       ? ` <span class="chip ${esc(buzz.sentiment)}" title="${esc(buzz.summary || "")}">X:${esc(buzz.sentiment)}</span>` : "";
     return `<tr data-ticker="${esc(r.ticker)}"${state.newTickers.has(r.ticker) ? ' class="is-new"' : ""}>
       <td class="left"><span class="tkr">${esc(r.ticker)}</span>${state.newTickers.has(r.ticker) ? '<span class="newflag">NEW</span>' : ""}${buzzStr}</td>
-      <td class="left">${d === "bull" ? '<span class="sig bull">▲ LONG</span>' : d === "bear" ? '<span class="sig bear">▼ SHORT</span>' : '<span class="sig neut">● WATCH</span>'}</td>
+      <td class="left">${isXvel ? '<span class="sig xvel">𝕏 CHATTER</span>' : d === "bull" ? '<span class="sig bull">▲ LONG</span>' : d === "bear" ? '<span class="sig bear">▼ SHORT</span>' : '<span class="sig neut">● WATCH</span>'}</td>
       <td class="left"><span class="sig ${cls}">${esc(r.signal_type || "")}</span></td>
       <td class="num">${fmtNum(r.score, 0)}<span class="score-bar"><i style="width:${Math.min(100, r.score || 0)}%"></i></span></td>
       <td class="num">$${fmtNum(r.current_price)}</td>
