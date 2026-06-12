@@ -29,6 +29,12 @@ if _SENTRY_DSN:
     try:
         import sentry_sdk
         sentry_sdk.init(dsn=_SENTRY_DSN, traces_sample_rate=0, send_default_pii=False)
+        # One-shot ingestion check: set SENTRY_VERIFY=1 in Railway, redeploy, and
+        # confirm this ping lands in Sentry, then clear the var. Dormant when unset.
+        if os.environ.get("SENTRY_VERIFY", "").strip():
+            sentry_sdk.capture_message(
+                "[watchtower] Sentry verification ping — ingestion OK", level="info"
+            )
     except Exception as _sentry_err:
         print(f"[server] Sentry init failed (monitoring disabled): {_sentry_err}")
 
