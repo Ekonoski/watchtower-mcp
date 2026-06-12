@@ -28,23 +28,7 @@ _SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
 if _SENTRY_DSN:
     try:
         import sentry_sdk
-        # SENTRY_DEBUG=1 makes the SDK log every send attempt + HTTP result to
-        # stdout — a temporary diagnostic for confirming transport reaches Sentry.
-        sentry_sdk.init(
-            dsn=_SENTRY_DSN,
-            traces_sample_rate=0,
-            send_default_pii=False,
-            debug=bool(os.environ.get("SENTRY_DEBUG", "").strip()),
-        )
-        # One-shot ingestion check: set SENTRY_VERIFY=1 in Railway, redeploy, and
-        # confirm this ping lands in Sentry, then clear the var. Dormant when unset.
-        # flush() forces a synchronous send at boot so the result shows in logs.
-        if os.environ.get("SENTRY_VERIFY", "").strip():
-            sentry_sdk.capture_message(
-                "[watchtower] Sentry verification ping — ingestion OK", level="info"
-            )
-            sentry_sdk.flush(timeout=10)
-            print("[server] Sentry verification ping captured + flushed.")
+        sentry_sdk.init(dsn=_SENTRY_DSN, traces_sample_rate=0, send_default_pii=False)
     except Exception as _sentry_err:
         print(f"[server] Sentry init failed (monitoring disabled): {_sentry_err}")
 
