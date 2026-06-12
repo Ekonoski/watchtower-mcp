@@ -27,8 +27,12 @@ Be direct and factual. Return ONLY valid JSON, no other text."""
 
 _SENTIMENT_USER = """What is the current social media / X sentiment for ${ticker}?
 
+First identify the company behind the symbol ${ticker}. Chatter for recent IPOs or
+well-known companies often uses the company NAME (e.g. "SpaceX") far more than the
+cashtag (e.g. "$SPCX"), so search X for BOTH the symbol ${ticker} AND the company name.
+
 Look at:
-- Recent X posts, threads, and discussions about ${ticker}
+- Recent X posts, threads, and discussions about ${ticker} or the company by name
 - Retail trader sentiment (WSB, StockTwits-style chatter)
 - Any notable mentions, trending discussions, or viral posts
 - Ratio of bullish vs bearish sentiment in the last 24-48 hours
@@ -50,6 +54,8 @@ Return ONLY valid JSON, no other text."""
 _BATCH_SENTIMENT_USER = """Assess current X / social media sentiment for these stocks: {tickers}
 
 For each ticker, return sentiment based on what traders are actually saying on X right now.
+Recent IPOs and well-known names are often discussed by company name rather than cashtag —
+search by both the symbol and the company name so newly-listed tickers aren't missed.
 
 Return a JSON object where each key is a ticker symbol:
 {{
