@@ -20,6 +20,18 @@ PORT = int(os.environ.get("PORT", 8080))
 # FastMCP's transport_security validates the Host header against this value.
 PUBLIC_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "localhost")
 
+# Error monitoring — inactive unless SENTRY_DSN is set in Railway variables.
+# This codebase's failure mode is the silent kind (swallowed exceptions,
+# hung threads found hours later); Sentry captures every unhandled error
+# with a stack trace and emails on new issues.
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=_SENTRY_DSN, traces_sample_rate=0, send_default_pii=False)
+    except Exception as _sentry_err:
+        print(f"[server] Sentry init failed (monitoring disabled): {_sentry_err}")
+
 mcp = FastMCP(
     "watchtower",
     streamable_http_path="/mcp",
