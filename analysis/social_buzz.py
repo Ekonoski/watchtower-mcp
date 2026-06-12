@@ -10,8 +10,8 @@ Two jobs:
      Writes results back to Supabase social_buzz table with sentiment + rank_surge.
      Scheduled daily (runs after market close).
 
-Grok has live X access — this is the one signal layer that's genuinely
-real-time even on our delayed data setup.
+Real-time X/web access comes from xAI Agent Tools (server-side web_search +
+x_search), not the model's training data — see _grok_live() below.
 """
 
 import os
@@ -94,6 +94,44 @@ Return JSON with these exact fields:
 }}"""
 
 
+def _get_grok():
+    try:
+        from analysis.grok_client import GrokClient
+        return GrokClient()
+    except Exception:
+        return None
+
+
+# ── Agent Tools (live web/X search) with a circuit breaker ───────────────────
+# query_ticker_sentiment / market pulse need real-time data, which Grok only
+# has via the Agent Tools API (server-side web_search + x_search). If those
+# calls fail on this xAI tier (e.g. wrong search model), trip a breaker and
+# fall back to a plain chat — so a misconfig can't error on every single scan.
+# Disable entirely with XAI_AGENT_TOOLS=0.
+_AGENT_TOOLS_ON = os.environ.get("XAI_AGENT_TOOLS", "1").strip().lower() not in ("0", "false", "off", "no", "")
+_AGENT_TOOLS_MAX_FAILS = 2
+_agent_tools_fails = 0
+
+
+def _agent_tools_available() -> bool:
+    return _AGENT_TOOLS_ON and _agent_tools_fails < _AGENT_TOOLS_MAX_FAILS
+
+
+def _grok_live(grok, system: str, user: str, search_max_tokens: int, **plain_kwargs) -> dict:
+    """
+    Get a live answer: try Agent Tools (web_search + x_search) first; on any
+    failure trip the breaker and fall back to a plain chat. Returns the chat
+    result dict ({"text", "parsed", ...}).
+    """
+    global _agent_tools_fails
+    if grok is not None and _agent_tools_available():
+        try:
+            return grok.search_chat(system=system, user=user, max_output_tokens=search_max_tokens)
+        except Exception:
+            _agent_tools_fails += 1  # breaker: stop hammering a broken live path
+    return grok.chat(system=system, user=user, **plain_kwargs)
+
+
 def get_market_pulse() -> dict:
     """
     Ask Grok what traders on X are talking about right now.
@@ -111,9 +149,11 @@ def get_market_pulse() -> dict:
         grok = _get_grok()
         if not grok:
             return {}
-        result = grok.chat(
-            system=_MARKET_PULSE_SYSTEM,
-            user=_MARKET_PULSE_USER,
+        result = _grok_live(
+            grok,
+            _MARKET_PULSE_SYSTEM,
+            _MARKET_PULSE_USER,
+            900,
             json_mode=True,
         )
         parsed = result.get("parsed") or {}
@@ -122,14 +162,6 @@ def get_market_pulse() -> dict:
         return parsed
     except Exception:
         return {}
-
-
-def _get_grok():
-    try:
-        from analysis.grok_client import GrokClient
-        return GrokClient()
-    except Exception:
-        return None
 
 
 # Grok live-X-search results don't change meaningfully inside a scan interval.
@@ -166,9 +198,11 @@ def query_ticker_sentiment(ticker: str) -> dict:
                 "notable": None, "source": "unavailable"}
 
     try:
-        resp = grok.chat(
-            system=_SENTIMENT_SYSTEM,
-            user=_SENTIMENT_USER.replace("${ticker}", ticker.upper()),
+        resp = _grok_live(
+            grok,
+            _SENTIMENT_SYSTEM,
+            _SENTIMENT_USER.replace("${ticker}", ticker.upper()),
+            700,
             json_mode=True,
             temperature=0.2,
             max_tokens=300,
@@ -180,7 +214,7 @@ def query_ticker_sentiment(ticker: str) -> dict:
             "buzz_level": parsed.get("buzz_level", "low"),
             "summary": parsed.get("summary", ""),
             "notable": parsed.get("notable"),
-            "source": "grok",
+            "source": resp.get("source", "grok"),
         }
         # Trim the cache before it grows unbounded across a long session
         if len(_buzz_cache) > 300:
@@ -269,9 +303,11 @@ def _score_batch(tickers: List[str], grok) -> Dict[str, dict]:
 
     tickers_str = ", ".join(f"${t}" for t in tickers)
     try:
-        resp = grok.chat(
-            system=_BATCH_SENTIMENT_SYSTEM,
-            user=_BATCH_SENTIMENT_USER.format(tickers=tickers_str),
+        resp = _grok_live(
+            grok,
+            _BATCH_SENTIMENT_SYSTEM,
+            _BATCH_SENTIMENT_USER.format(tickers=tickers_str),
+            1500,
             json_mode=True,
             temperature=0.2,
             max_tokens=1500,
