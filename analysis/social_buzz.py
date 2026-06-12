@@ -115,6 +115,7 @@ def get_market_pulse() -> dict:
             system=_MARKET_PULSE_SYSTEM,
             user=_MARKET_PULSE_USER,
             json_mode=True,
+            live_search=True,
         )
         parsed = result.get("parsed") or {}
         if parsed:
@@ -172,6 +173,7 @@ def query_ticker_sentiment(ticker: str) -> dict:
             json_mode=True,
             temperature=0.2,
             max_tokens=300,
+            live_search=True,
         )
         parsed = resp.get("parsed") or {}
         out = {
@@ -275,6 +277,7 @@ def _score_batch(tickers: List[str], grok) -> Dict[str, dict]:
             json_mode=True,
             temperature=0.2,
             max_tokens=1500,
+            live_search=True,
         )
         parsed = resp.get("parsed") or {}
         results = {}
