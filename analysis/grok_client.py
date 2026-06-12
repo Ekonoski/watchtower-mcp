@@ -11,9 +11,11 @@ Usage:
     data = resp["parsed"]  # if json_mode
 
 Env:
-    XAI_API_KEY   (required)
-    XAI_MODEL     (optional, default "grok-3-latest")
-    XAI_BASE_URL  (optional, default https://api.x.ai/v1)
+    XAI_API_KEY      (required)
+    XAI_MODEL        (optional, default "grok-3-latest")
+    XAI_SEARCH_MODEL (optional, default "grok-4.3") — model used for live
+                     web/X search via the Agent Tools / Responses API.
+    XAI_BASE_URL     (optional, default https://api.x.ai/v1)
 """
 
 import json
@@ -36,6 +38,8 @@ class GrokClient:
             )
 
         self.model = model or os.environ.get("XAI_MODEL", "grok-3-latest")
+        # Agent Tools (server-side web_search / x_search) require a grok-4-class model.
+        self.search_model = os.environ.get("XAI_SEARCH_MODEL", "grok-4.3")
         self.base_url = base_url or os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1")
         self.timeout = timeout
 
@@ -100,6 +104,52 @@ class GrokClient:
                 result["parse_error"] = "Failed to parse JSON from model output"
 
         return result
+
+    def search_chat(
+        self,
+        system: str,
+        user: str,
+        max_output_tokens: int = 800,
+    ) -> Dict[str, Any]:
+        """
+        Real-time answer using xAI Agent Tools — server-side web_search + x_search
+        via the Responses API. Grok runs the searches on xAI infrastructure and
+        returns a final answer, so this is genuinely live (unlike a plain chat,
+        which only knows its training cutoff). Requires a grok-4-class model
+        (self.search_model).
+
+        Returns {"text": ..., "parsed": dict or None, ...}. Raises on API error so
+        callers can fall back to a plain chat().
+
+        NOTE: xAI deprecated the old Live Search `search_parameters` field (410) in
+        favour of these Agent Tools. Tool type strings: "web_search", "x_search".
+        """
+        resp = self._client.responses.create(
+            model=self.search_model,
+            input=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            tools=[{"type": "web_search"}, {"type": "x_search"}],
+            max_output_tokens=max_output_tokens,
+        )
+
+        text = getattr(resp, "output_text", None) or ""
+        out: Dict[str, Any] = {"text": text, "model": self.search_model, "source": "agent_tools"}
+
+        parsed = None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            # Tool-using responses can wrap JSON in prose/code fences — extract the
+            # outermost {...} and retry before giving up.
+            try:
+                snippet = text[text.index("{"): text.rindex("}") + 1]
+                parsed = json.loads(snippet)
+            except Exception:
+                parsed = None
+        out["parsed"] = parsed
+        return out
 
     def synthesize(
         self,
