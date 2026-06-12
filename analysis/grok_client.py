@@ -57,18 +57,11 @@ class GrokClient:
         json_mode: bool = False,
         temperature: float = 0.4,
         max_tokens: int = 2000,
-        live_search: bool = False,
     ) -> Dict[str, Any]:
         """
         Simple chat completion.
 
         If json_mode=True, asks for JSON and returns {"text": ..., "parsed": dict or None}.
-
-        If live_search=True, enables xAI Live Search so Grok answers from real-time
-        X/web instead of its training cutoff. Required for any genuinely "live"
-        feature (X sentiment, market pulse) — without it Grok has no knowledge of
-        same-day events. Live Search bills per source, so leave it off by default
-        and enable it only on the calls that actually need real-time data.
         """
         messages = []
         if system:
@@ -84,18 +77,6 @@ class GrokClient:
 
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-
-        if live_search:
-            # xAI Live Search: read real-time X + web. Passed via extra_body since
-            # it's not a standard OpenAI param. mode="on" forces a live search.
-            kwargs["extra_body"] = {
-                "search_parameters": {
-                    "mode": "on",
-                    "sources": [{"type": "x"}, {"type": "web"}],
-                    "max_search_results": 20,
-                    "return_citations": False,
-                }
-            }
 
         try:
             resp = self._client.chat.completions.create(**kwargs)
