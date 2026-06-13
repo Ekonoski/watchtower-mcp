@@ -14,7 +14,7 @@ import traceback
 
 log = logging.getLogger(__name__)
 
-# ── Email gating ──────────────────────────────────────────────────────────────
+# ── Email gating ───────────────────────────────────────────────────────────────
 # The dashboard sees every scan; email only fires when there's something new:
 #   - an intraday signal scoring >= ALERT_EMAIL_MIN_SCORE on a ticker not
 #     emailed in the last ALERT_EMAIL_COOLDOWN_MIN minutes, or
@@ -124,8 +124,20 @@ def _build_x_velocity_alerts(market_pulse: dict, results: list, news_alerts: lis
     return rows
 
 
-def run_scheduled_scan():
-    """Intraday scan + news scan — called every 15-30 min during trading hours."""
+def run_scheduled_scan(force: bool = False):
+    """Intraday scan + news scan — called every 15-30 min during trading hours.
+
+    Skips automatically on non-trading days (weekends/holidays) so we don't burn
+    paid data-API calls when the market is closed. Manual triggers pass force=True.
+    """
+    if not force:
+        try:
+            from screen.market_calendar import is_trading_day
+            if not is_trading_day():
+                log.info("[scheduler] Scan skipped — market closed (weekend/holiday).")
+                return
+        except Exception:
+            pass
     try:
         from concurrent.futures import ThreadPoolExecutor
 
@@ -246,6 +258,13 @@ def run_daily_fill_returns():
     Fetches current prices for all tracked alerts and updates d-day return columns.
     """
     try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            log.info("[scheduler] Return fill skipped — market closed (no new bar).")
+            return
+    except Exception:
+        pass
+    try:
         from analysis.alert_tracker import fill_daily_returns
         log.info("[scheduler] Starting daily alert return fill...")
         updated = fill_daily_returns()
@@ -261,6 +280,13 @@ def run_daily_social_scan():
     writes sentiment + rank_surge back to Supabase.
     """
     try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            log.info("[scheduler] Social buzz scan skipped — market closed.")
+            return
+    except Exception:
+        pass
+    try:
         from analysis.social_buzz import run_social_buzz_scan
         log.info("[scheduler] Starting daily social buzz scan...")
         results = run_social_buzz_scan()
@@ -275,6 +301,13 @@ def run_daily_screens_scan():
     Logs results to alert_log automatically (no email — data only).
     Covers: reversal, momentum, breakdown, insider burst.
     """
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            log.info("[scheduler] Daily screens scan skipped — market closed.")
+            return
+    except Exception:
+        pass
     try:
         from analysis.alert_tracker import log_alerts
 
@@ -328,6 +361,13 @@ def run_daily_gems_scan():
     Scans the full US market (~10k stocks) via Polygon for up-and-comer setups.
     Slower than intraday scan — only appropriate for daily cadence.
     """
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            log.info("[scheduler] Hidden gems scan skipped — market closed.")
+            return
+    except Exception:
+        pass
     try:
         from screen.upcomer_screen import run_screen
         from alerts.email_alerts import send_hidden_gems_alert
