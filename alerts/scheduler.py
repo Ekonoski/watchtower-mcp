@@ -81,13 +81,15 @@ def _build_x_velocity_alerts(market_pulse: dict, results: list, news_alerts: lis
 
     known = {r.get("ticker") for r in results}
     known.update(n.get("primary_ticker") for n in news_alerts)
-    # The perennial mega-cap chatter isn't "early" anything
-    MEGA_NOISE = {"SPY", "QQQ", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD"}
+    # Perennial mega-cap chatter and index / non-equity symbols aren't "early"
+    # anything (SPX/VIX/etc. also aren't tradeable and print $0).
+    NOISE = {"SPY", "QQQ", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD",
+             "SPX", "VIX", "NDX", "RUT", "DJI", "DIA", "IWM", "ES", "NQ"}
 
     candidates = []
     for t in pulse_tickers:
-        ticker = (t.get("ticker") or "").upper().strip()
-        if not ticker or len(ticker) > 5 or ticker in known or ticker in MEGA_NOISE:
+        ticker = (t.get("ticker") or "").upper().strip().lstrip("$")
+        if not ticker or len(ticker) > 5 or ticker in known or ticker in NOISE:
             continue
         candidates.append((ticker, t))
     if not candidates:
@@ -101,23 +103,43 @@ def _build_x_velocity_alerts(market_pulse: dict, results: list, news_alerts: lis
     except Exception as e:
         log.warning(f"[scheduler] X velocity snapshot fetch error: {e}")
 
+    # Validate each pulse ticker against the SAME per-ticker buzz query the
+    # dashboard drawer uses. The market pulse is a loose "most-mentioned" list —
+    # big slow names (HD, DHR) land on it via broad portfolio chatter but rate
+    # "low buzz" on a focused read. Requiring medium/high buzz here keeps the
+    # X_VELOCITY tag consistent with what the drawer shows, so a name flagged as
+    # "trending" genuinely is. (Same cache backs both calls.)
+    from analysis.social_buzz import query_ticker_sentiment
     rows = []
     for ticker, t in candidates:
         snap = snap_map.get(ticker, {})
-        sentiment = (t.get("sentiment") or "neutral").lower()
+        price = snap.get("price", 0) or 0
+        volume = int(snap.get("volume", 0) or 0)
+        if price <= 0 or volume <= 0:
+            continue  # non-tradeable / index symbol / dead name
+        try:
+            buzz = query_ticker_sentiment(ticker)
+        except Exception:
+            buzz = {}
+        level = (buzz.get("buzz_level") or "low").lower()
+        if level not in ("medium", "high"):
+            continue  # not actually buzzing on a focused read — skip
+        sentiment = (buzz.get("sentiment") or t.get("sentiment") or "neutral").lower()
+        summary = buzz.get("summary") or t.get("buzz", "")
         rows.append({
             "ticker": ticker,
             "sleeve": "x_velocity",
             "signal_type": "X_VELOCITY",
-            "score": 65.0,
-            "rationale": f"Trending on X with no signal/news behind it — {t.get('buzz', '')}"[:180],
-            "current_price": snap.get("price", 0),
+            "score": 70.0 if level == "high" else 60.0,
+            "rationale": f"Trending on X ({level} buzz, {sentiment}) with no signal/news — {summary}"[:200],
+            "current_price": price,
             "change_pct": round(snap.get("change_pct", 0), 2),
             "vol_pace_ratio": round(snap.get("vol_ratio", 0), 2),
-            "today_volume": int(snap.get("volume", 0) or 0),
+            "today_volume": volume,
             "gap_pct": 0.0,
             "above_vwap": False,
             "x_sentiment": sentiment,
+            "social_buzz": buzz,
             "company_name": "",
             "sector": "",
         })
