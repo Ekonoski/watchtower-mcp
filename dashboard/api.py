@@ -102,6 +102,16 @@ def register_routes(mcp) -> None:
                 "note": "No scan persisted yet — trigger one with the Scan Now button.",
             })
         snapshot = dict(snapshot)
+        # The snapshot's market state is frozen at scan time; the header is about
+        # "now", so recompute it live (calendar-aware) — otherwise on a weekend it
+        # keeps showing Friday's "Market open".
+        try:
+            from screen.market_calendar import market_minutes
+            minutes_elapsed, is_market_hours = market_minutes()
+            snapshot["minutes_elapsed"] = minutes_elapsed
+            snapshot["is_market_hours"] = is_market_hours
+        except Exception:
+            pass
         snapshot["scan_running"] = _scan_running.is_set()
         return JSONResponse(snapshot)
 
@@ -116,7 +126,7 @@ def register_routes(mcp) -> None:
             _scan_running.set()
             try:
                 from alerts.scheduler import run_scheduled_scan
-                run_scheduled_scan()
+                run_scheduled_scan(force=True)  # manual trigger bypasses the market-closed gate
             except Exception as e:
                 log.error(f"[dashboard.api] Manual scan failed: {e}")
             finally:
