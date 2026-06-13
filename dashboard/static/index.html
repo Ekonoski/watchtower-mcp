@@ -197,7 +197,8 @@
 </div>
 
 <nav>
-  <button data-tab="scanner" class="active">Scanner</button>
+  <button data-tab="scanner" class="active">Day Trades</button>
+  <button data-tab="swings">Swings</button>
   <button data-tab="news">News Catalysts</button>
   <button data-tab="performance">Performance</button>
   <button data-tab="watchlist">Watchlist</button>
@@ -243,6 +244,37 @@
         <tbody id="sig-body"></tbody>
       </table>
       <div id="sig-empty" class="empty" style="display:none">No signals in the latest scan. Hit <b>Scan Now</b> or wait for the next scheduled sweep.</div>
+    </div>
+  </section>
+
+  <!-- ── SWINGS ── -->
+  <section id="tab-swings" class="tabpane">
+    <div class="controls">
+      <div class="seg" id="swing-filter">
+        <button data-sleeve="all" class="on">All</button>
+        <button data-sleeve="gem">Gems</button>
+        <button data-sleeve="reversal">Reversal</button>
+        <button data-sleeve="momentum">Momentum</button>
+        <button data-sleeve="breakdown">Breakdown</button>
+        <button data-sleeve="insider">Insider</button>
+      </div>
+      <input type="text" id="swing-search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="swing-count"></span>
+    </div>
+    <div class="tblwrap">
+      <table id="swing-table">
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th class="left">Sleeve</th>
+          <th>Score</th>
+          <th>Price</th>
+          <th class="left">Company</th>
+          <th class="left">Sector</th>
+          <th class="left">Signal / Notes</th>
+        </tr></thead>
+        <tbody id="swing-body"></tbody>
+      </table>
+      <div id="swing-empty" class="empty" style="display:none">No swing signals yet. The daily screens (reversal, momentum, breakdown, insider, hidden gems) run pre-market at 6 AM ET, Mon–Fri.</div>
     </div>
   </section>
 
@@ -333,6 +365,9 @@ let state = {
   countdown: 30,
   notify: localStorage.getItem("wt_notify") === "1",
   notifiedNews: new Set(),
+  swing: null,
+  swingSleeve: "all",
+  swingSearch: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -377,6 +412,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   $("tab-" + b.dataset.tab).classList.add("active");
   if (b.dataset.tab === "performance" && !state.perfLoaded) loadPerformance();
   if (b.dataset.tab === "watchlist") loadWatchlist();
+  if (b.dataset.tab === "swings") loadSwings();
 });
 
 /* ── browser pop-up notifications ── */
@@ -603,6 +639,49 @@ function renderNews() {
       </div>
     </div>`;
   }).join("");
+}
+
+/* ── swings ── */
+const SWING_LABEL = { gem: "GEM", reversal: "REVERSAL", momentum: "MOMENTUM", breakdown: "BREAKDOWN", insider: "INSIDER" };
+const SWING_CLS = { gem: "bull", reversal: "bull", momentum: "bull", breakdown: "bear", insider: "neut" };
+
+document.querySelectorAll("#swing-filter button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#swing-filter button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  state.swingSleeve = b.dataset.sleeve;
+  renderSwings();
+});
+$("swing-search").addEventListener("input", e => { state.swingSearch = (e.target.value || "").toUpperCase().trim(); renderSwings(); });
+
+async function loadSwings() {
+  let data;
+  try { data = await api("/api/swing/latest"); } catch { return; }
+  state.swing = data;
+  renderSwings();
+}
+
+function renderSwings() {
+  const all = ((state.swing || {}).rows) || [];
+  const rows = all.filter(r =>
+    (state.swingSleeve === "all" || r.sleeve === state.swingSleeve) &&
+    (!state.swingSearch || (r.ticker || "").includes(state.swingSearch)));
+  const asOf = (state.swing || {}).as_of;
+  $("swing-count").textContent = `${rows.length} of ${all.length} signals` + (asOf ? ` · screened ${asOf}` : "");
+  $("swing-empty").style.display = rows.length ? "none" : "block";
+  $("swing-body").innerHTML = rows.map(r => {
+    const cls = SWING_CLS[r.sleeve] || "neut";
+    const label = SWING_LABEL[r.sleeve] || (r.sleeve || "").toUpperCase();
+    return `<tr data-ticker="${esc(r.ticker)}">
+      <td class="left"><span class="tkr">${esc(r.ticker)}</span></td>
+      <td class="left"><span class="sig ${cls}">${esc(label)}</span></td>
+      <td class="num">${fmtNum(r.score, 0)}<span class="score-bar"><i style="width:${Math.min(100, r.score || 0)}%"></i></span></td>
+      <td class="num">${r.current_price ? "$" + fmtNum(r.current_price) : "—"}</td>
+      <td class="left">${esc((r.company_name || "").slice(0, 28))}</td>
+      <td class="left">${esc(r.sector || "")}</td>
+      <td class="left rationale" title="${esc(r.rationale || "")}">${esc(r.rationale || "")}</td>
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("#swing-body tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
 }
 
 /* ── ticker drawer ── */
