@@ -8,6 +8,7 @@ Routes (all JSON unless noted):
   POST /api/scan/run             → trigger a full scan now (async, returns immediately)
   GET  /api/ticker/{ticker}      → live single-ticker intraday check + social buzz
   GET  /api/performance          → alert performance report (?days=90&type=intraday)
+  GET  /api/swing/latest         → latest swing-screen signals (reversal/momentum/breakdown/insider/gems)
   GET  /api/watchlist            → active watchlist rows
   POST /api/watchlist            → {ticker, notes} → add/re-activate
   DELETE /api/watchlist/{ticker} → deactivate
@@ -55,6 +56,77 @@ def _is_authed(request: Request) -> bool:
 
 def _unauthorized() -> JSONResponse:
     return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+def _swing_rows() -> dict:
+    """Assemble the latest swing-screen signals for the Swings tab.
+
+    Four sleeves (reversal/momentum/breakdown/insider) come from alert_log's
+    most recent screen date; hidden gems come from up_and_comers_cache. Purely a
+    read over what the 6 AM daily jobs already persist — no live screen run.
+    """
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    rows, as_of = [], None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ticker, alert_type, score, entry_price, alert_date, signal_details
+                FROM alert_log
+                WHERE alert_type IN ('reversal','momentum','breakdown','insider')
+                  AND alert_date = (
+                      SELECT max(alert_date) FROM alert_log
+                      WHERE alert_type IN ('reversal','momentum','breakdown','insider')
+                  )
+                ORDER BY score DESC NULLS LAST
+                """
+            )
+            for tk, sleeve, score, entry, adate, det in cur.fetchall():
+                det = det or {}
+                d = str(adate) if adate else None
+                if d and (as_of is None or d > as_of):
+                    as_of = d
+                price = det.get("current_price")
+                if price is None and entry is not None:
+                    price = float(entry)
+                rows.append({
+                    "ticker": tk, "sleeve": sleeve,
+                    "score": float(score) if score is not None else det.get("score"),
+                    "company_name": det.get("company_name") or "",
+                    "current_price": price,
+                    "sector": det.get("sector") or "",
+                    "rationale": det.get("rationale") or det.get("signal") or "",
+                    "as_of": d,
+                })
+            cur.execute(
+                """
+                SELECT ticker, company_name, sector, current_price, up_and_comer_score, signal, scored_date
+                FROM up_and_comers_cache
+                WHERE scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
+                ORDER BY up_and_comer_score DESC NULLS LAST
+                LIMIT 40
+                """
+            )
+            for tk, cn, sec, price, score, sig, sdate in cur.fetchall():
+                d = str(sdate) if sdate else None
+                if d and (as_of is None or d > as_of):
+                    as_of = d
+                rows.append({
+                    "ticker": tk, "sleeve": "gem",
+                    "score": float(score) if score is not None else None,
+                    "company_name": cn or "",
+                    "current_price": float(price) if price is not None else None,
+                    "sector": sec or "",
+                    "rationale": sig or "",
+                    "as_of": d,
+                })
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return {"as_of": as_of, "rows": rows, "count": len(rows)}
 
 
 def register_routes(mcp) -> None:
@@ -177,6 +249,16 @@ def register_routes(mcp) -> None:
 
         report = await asyncio.to_thread(_fetch)
         return JSONResponse(report)
+
+    @mcp.custom_route("/api/swing/latest", methods=["GET"])
+    async def swing_latest(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            data = await asyncio.to_thread(_swing_rows)
+        except Exception as e:
+            return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
+        return JSONResponse(data)
 
     @mcp.custom_route("/api/watchlist", methods=["GET", "POST"])
     async def watchlist(request: Request):
