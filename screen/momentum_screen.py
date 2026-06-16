@@ -65,12 +65,25 @@ except Exception:
     compute_live_technicals_from_polygon = lambda t, d=60: {}
 
 # Scoring weights (sum to 1.0)
-W_TREND_STACK = 0.20
-W_MACD_STRENGTH = 0.20
-W_RSI_ZONE = 0.15
-W_PRICE_STRENGTH = 0.15
+W_TREND_STACK = 0.15
+W_MACD_STRENGTH = 0.15
+W_RSI_ZONE = 0.10
+W_PRICE_STRENGTH = 0.10
 W_VOLUME = 0.10
-W_WEEKLY = 0.20
+W_WEEKLY = 0.15
+W_TREND_STRUCTURE = 0.25
+
+# Trend-structure gate (range bounce vs. real uptrend).
+# A range that bounces off its lows lights up every SHORT-term momentum
+# component (EMA stack, MACD, RSI 55-70) within ~20 days, yet has a FLAT
+# long-term MA — that's mean reversion, not "strong getting stronger".
+# We only confirm momentum when price sits above a RISING long MA, or is
+# making genuine new 52-week highs.
+MA_LONG = 200                  # long-term trend MA (trading days)
+MA_SLOPE_LOOKBACK = 20         # bars used to measure the long MA's slope
+MA_RISING_MIN_PCT_20D = 0.75   # min % rise of long MA over lookback to count as "rising"
+NEW_HIGH_PROX_PCT = 3.0        # within X% of the true 52w high = "making new highs"
+UNCONFIRMED_SCORE_CAP = 50.0   # cap composite when trend is unconfirmed (can't be BUY)
 
 
 def score_trend_stack(ema_short_v: float, ema_long_v: float, ema_50_v: float,
@@ -215,6 +228,62 @@ def score_weekly_momentum(wdf: pd.DataFrame) -> dict:
     }
 
 
+def score_trend_structure(close: pd.Series) -> dict:
+    """Distinguish a genuine uptrend from a range bounce.
+
+    Returns score 0-1 plus flags. `confirmed` is the gate: price must be
+    above a RISING long MA, or making genuine new 52-week highs. A flat
+    long MA (a multi-month range) fails even when every short-term signal
+    is lit — that's the DECK case: +23% in 20 days off the range low, EMAs
+    freshly stacked, but the 200-day MA dead flat.
+    """
+    n = len(close)
+    if n < MA_LONG + MA_SLOPE_LOOKBACK:
+        # Not enough history to judge the long trend. Don't award momentum
+        # credit on faith; don't hard-fail newer names either.
+        return {"score": 0.4, "confirmed": False, "above_long_ma": None,
+                "ma_long_slope_pct": None, "pct_off_52w": None,
+                "reason": "insufficient history for 200d trend"}
+
+    sma_long = close.rolling(MA_LONG).mean()
+    sma_now = sma_long.iloc[-1]
+    sma_prev = sma_long.iloc[-1 - MA_SLOPE_LOOKBACK]
+    last = close.iloc[-1]
+    hi_52w = close.iloc[-252:].max() if n >= 252 else close.max()
+
+    above = bool(last > sma_now)
+    slope_pct = float((sma_now / sma_prev - 1.0) * 100) if sma_prev and sma_prev > 0 else 0.0
+    rising = bool(slope_pct >= MA_RISING_MIN_PCT_20D)
+    pct_off_high = float((1 - last / hi_52w) * 100) if hi_52w > 0 else 100.0
+    near_new_high = bool(pct_off_high <= NEW_HIGH_PROX_PCT)
+
+    confirmed = bool(above and (rising or near_new_high))
+
+    # Graded score for ranking among confirmed names
+    score = 0.0
+    if above:
+        score += 0.4
+    if rising:
+        score += 0.4
+    elif slope_pct > 0:
+        score += 0.15
+    if near_new_high:
+        score += 0.2
+    score = min(1.0, score)
+
+    if not above:
+        reason = "below 200d MA"
+    elif not rising and not near_new_high:
+        reason = (f"200d MA flat ({slope_pct:+.1f}%/{MA_SLOPE_LOOKBACK}d), "
+                  f"{pct_off_high:.0f}% off 52w high — range, not trend")
+    else:
+        reason = "uptrend confirmed"
+
+    return {"score": score, "confirmed": confirmed, "above_long_ma": above,
+            "ma_long_slope_pct": round(slope_pct, 2),
+            "pct_off_52w": round(pct_off_high, 1), "reason": reason}
+
+
 # ============================================================
 # Main analysis
 # ============================================================
@@ -233,7 +302,8 @@ def analyze_ticker(df: pd.DataFrame) -> Optional[dict]:
     rsi_prev5 = rsi.iloc[-6] if len(rsi) >= 6 else rsi.iloc[0]
     rsi_slope = (rsi_current - rsi_prev5) / 5.0
 
-    hi_52w = close.max()
+    # True trailing-52-week high (not max of whatever window was loaded).
+    hi_52w = close.iloc[-252:].max() if len(close) >= 252 else close.max()
     current_close = close.iloc[-1]
     pct_off_high = (1 - current_close / hi_52w) * 100 if hi_52w > 0 else 0
     close_20d_ago = close.iloc[-21] if len(close) >= 21 else close.iloc[0]
@@ -259,14 +329,23 @@ def analyze_ticker(df: pd.DataFrame) -> Optional[dict]:
     wdf = resample_weekly(df)
     weekly = score_weekly_momentum(wdf)
 
+    trend = score_trend_structure(close)
+
     composite = (
         W_TREND_STACK * s_trend +
         W_MACD_STRENGTH * s_macd +
         W_RSI_ZONE * s_rsi +
         W_PRICE_STRENGTH * s_price +
         W_VOLUME * s_vol +
-        W_WEEKLY * weekly["w_score"]
+        W_WEEKLY * weekly["w_score"] +
+        W_TREND_STRUCTURE * trend["score"]
     ) * 100
+
+    # Gate: a range bounce is not momentum, however lit the short-term signals
+    # are. Without a rising long MA (or genuine new highs) the name is capped
+    # below BUY and flagged — it belongs on the reversal sleeve, not here.
+    if not trend["confirmed"]:
+        composite = min(composite, UNCONFIRMED_SCORE_CAP)
 
     if composite >= 75:
         signal = "STRONG BUY"
@@ -301,6 +380,12 @@ def analyze_ticker(df: pd.DataFrame) -> Optional[dict]:
         "w_ema_stack": weekly["w_ema_stack"],
         "w_macd_hist": weekly["w_macd_hist"],
         "w_rsi": weekly["w_rsi"],
+        "s_trend_structure": trend["score"],
+        "above_long_ma": trend["above_long_ma"],
+        "ma_long_slope_pct": trend["ma_long_slope_pct"],
+        "trend_confirmed": trend["confirmed"],
+        "trend_reason": trend["reason"],
+        "rationale": trend["reason"],
         "momentum_score": composite,
         "signal": signal,
     }
@@ -317,9 +402,13 @@ def run_screen(max_pullback: float = 10.0, single_ticker: str = None,
             tickers = [single_ticker.upper()]
         else:
             tickers = list(quality.keys())
-        # Always load SPY for regime + RS (GMMSS multi-sleeve consistency)
+        # Always load SPY for regime + RS (GMMSS multi-sleeve consistency).
+        # days=500 so we get the full available history (~300 trading bars) —
+        # the 200-day MA slope needs ≥220 bars; the default 300-calendar-day
+        # window (~205 bars) is too short and would leave every name's trend
+        # "unconfirmed".
         load_tickers = list(set(tickers + ["SPY"]))
-        prices = load_prices(conn, load_tickers)
+        prices = load_prices(conn, load_tickers, days=500)
     finally:
         conn.close()
 
@@ -399,6 +488,10 @@ def run_screen(max_pullback: float = 10.0, single_ticker: str = None,
             mscore = min(100.0, mscore * 1.03)
         if sec_boost > 0:
             mscore = min(100.0, mscore + sec_boost)
+        # Re-apply the trend gate after boosts — RS/regime/sector tilts must
+        # not float a range bounce back up into BUY territory.
+        if not analysis.get("trend_confirmed", True):
+            mscore = min(mscore, UNCONFIRMED_SCORE_CAP)
         analysis["momentum_score"] = mscore
 
         row = {"ticker": t, "sleeve": "momentum", **fundamentals, **analysis}
