@@ -697,7 +697,7 @@ async function openDrawer(ticker) {
   let d;
   try { d = await api("/api/ticker/" + encodeURIComponent(ticker)); }
   catch { $("d-sub").textContent = "failed to load"; return; }
-  $("d-sub").innerHTML = `<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TradingView ↗</a> · <a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank" rel="noopener">Yahoo ↗</a>`;
+  $("d-sub").innerHTML = `<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TradingView ↗</a> · <a href="https://charts.trendspider.com/?ticker=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TrendSpider ↗</a> · <a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank" rel="noopener">Yahoo ↗</a>`;
   const i = d.intraday;
   let html = "";
   if (i) {
