@@ -177,6 +177,9 @@
 <header>
   <h1>WATCH<span>TOWER</span></h1>
   <div class="mkt-status"><div id="mkt-dot" class="dot"></div><span id="mkt-label">—</span></div>
+  <input type="text" id="lookup" placeholder="🔍 Look up any ticker — SPY, TSLA, AAPL…" maxlength="6" autocomplete="off"
+    title="Type a symbol and press Enter for live price, signal, support/resistance levels + sentiment"
+    style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 11px;font-size:13px;width:280px">
   <div class="spacer"></div>
   <div class="hdr-right">
     <span id="alert-ticker" title="New 55+ signals in the latest scan"></span>
@@ -755,6 +758,13 @@ function renderLevels(lv, err) {
     </div>
   </div>`;
 }
+// Global ticker lookup — open the full drawer (price, signal, S/R levels,
+// sentiment) for ANY symbol, not just ones on the scanner.
+$("lookup").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  const t = e.target.value.trim().toUpperCase().replace(/[^A-Z.]/g, "");
+  if (t) { openDrawer(t); e.target.value = ""; e.target.blur(); }
+});
 function closeDrawer() { $("drawer").classList.remove("open"); }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
