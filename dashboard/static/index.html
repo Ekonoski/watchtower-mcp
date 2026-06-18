@@ -697,7 +697,7 @@ async function openDrawer(ticker) {
   let d;
   try { d = await api("/api/ticker/" + encodeURIComponent(ticker)); }
   catch { $("d-sub").textContent = "failed to load"; return; }
-  $("d-sub").innerHTML = `<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TradingView ↗</a> · <a href="https://charts.trendspider.com/?ticker=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TrendSpider ↗</a> · <a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank" rel="noopener">Yahoo ↗</a>`;
+  $("d-sub").innerHTML = `<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TradingView ↗</a> · <a href="#" onclick="openTrendSpider('${esc(ticker)}');return false" title="Copies the ticker and opens TrendSpider — paste into its symbol search">TrendSpider ↗</a> · <a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank" rel="noopener">Yahoo ↗</a>`;
   const i = d.intraday;
   let html = "";
   if (i) {
@@ -779,6 +779,14 @@ $("lookup").addEventListener("keydown", e => {
   const t = e.target.value.trim().toUpperCase().replace(/[^A-Z.]/g, "");
   if (t) { openDrawer(t); e.target.value = ""; e.target.blur(); }
 });
+// TrendSpider has no public symbol deep-link (only /shared/<id> for saved
+// charts), so a plain URL can't pre-load a ticker. Next best: copy the
+// symbol and open TrendSpider — user pastes (⌘V) into its symbol search.
+function openTrendSpider(ticker) {
+  try { navigator.clipboard.writeText(ticker); } catch (e) {}
+  window.open("https://charts.trendspider.com/", "_blank", "noopener");
+  toast(`${ticker} copied — paste (⌘V / Ctrl+V) into TrendSpider's symbol search`);
+}
 function closeDrawer() { $("drawer").classList.remove("open"); }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
