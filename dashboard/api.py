@@ -216,14 +216,21 @@ def register_routes(mcp) -> None:
             return JSONResponse({"error": "invalid ticker"}, status_code=400)
 
         def _fetch():
-            out = {"ticker": ticker, "intraday": None, "social": None}
+            out = {"ticker": ticker, "intraday": None, "social": None, "levels": None}
+            price = None
             try:
                 from screen.intraday_screen import run_screen as run_intraday
                 rows = run_intraday(min_score=0.0, single_ticker=ticker)
                 if rows and not rows[0].get("error"):
                     out["intraday"] = rows[0]
+                    price = rows[0].get("current_price")
             except Exception as e:
                 out["intraday_error"] = str(e)[:120]
+            try:
+                from analysis.levels import compute_levels
+                out["levels"] = compute_levels(ticker, current_price=price)
+            except Exception as e:
+                out["levels_error"] = str(e)[:120]
             try:
                 from analysis.social_buzz import query_ticker_sentiment
                 out["social"] = query_ticker_sentiment(ticker)

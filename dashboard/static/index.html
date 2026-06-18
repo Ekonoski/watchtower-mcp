@@ -714,6 +714,7 @@ async function openDrawer(ticker) {
   } else {
     html += `<div class="empty">No live intraday data${d.intraday_error ? ": " + esc(d.intraday_error) : ""}</div>`;
   }
+  html += renderLevels(d.levels, d.levels_error);
   const s = d.social;
   if (s && s.source !== "unavailable") {
     html += `<div class="social-box">
@@ -725,6 +726,34 @@ async function openDrawer(ticker) {
   }
   html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
   $("d-body").innerHTML = html;
+}
+function _stars(n) { n = Math.max(0, Math.min(5, n || 0)); return "★".repeat(n) + "☆".repeat(5 - n); }
+function _lvlRow(l, kind) {
+  const col = kind === "resistance" ? "var(--red)" : "var(--green)";
+  const conf = l.confluence ? ' <span class="chip" title="Confirmed on daily AND 4H">D+4H</span>' : "";
+  return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12.5px">
+    <span class="num" style="width:74px;color:${col}">$${fmtNum(l.price)}</span>
+    <span style="color:var(--yellow);letter-spacing:1px">${_stars(l.stars)}</span>
+    <span class="num" style="color:var(--muted);width:54px;text-align:right">${l.dist_pct >= 0 ? "+" : ""}${fmtNum(l.dist_pct, 1)}%</span>
+    <span style="color:var(--muted)">${l.touches} touch${l.touches === 1 ? "" : "es"}${conf}</span>
+  </div>`;
+}
+function renderLevels(lv, err) {
+  if (!lv || lv.error) return `<div class="social-box"><b>Key Levels</b> <span style="color:var(--muted)">— ${esc((lv && lv.error) || err || "unavailable")}</span></div>`;
+  const res = (lv.resistance || []).slice().reverse();   // farthest → nearest, ladder style
+  const sup = (lv.support || []);                          // nearest → farthest
+  if (!res.length && !sup.length) return `<div class="social-box"><b>Key Levels</b> <span style="color:var(--muted)">— none detected</span></div>`;
+  return `<div class="social-box">
+    <b>Key Levels</b> <span style="color:var(--muted)">— support/resistance, daily + 4H, ~8mo (★ = touches)</span>
+    <div style="margin-top:8px">
+      ${res.map(l => _lvlRow(l, "resistance")).join("")}
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:4px 0">
+        <span class="num" style="width:74px;color:var(--text)">$${fmtNum(lv.current_price)}</span>
+        <span style="color:var(--blue);font-size:11.5px;letter-spacing:.5px">◄ PRICE NOW</span>
+      </div>
+      ${sup.map(l => _lvlRow(l, "support")).join("")}
+    </div>
+  </div>`;
 }
 function closeDrawer() { $("drawer").classList.remove("open"); }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
