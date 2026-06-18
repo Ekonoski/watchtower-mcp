@@ -731,31 +731,45 @@ async function openDrawer(ticker) {
   $("d-body").innerHTML = html;
 }
 function _stars(n) { n = Math.max(0, Math.min(5, n || 0)); return "★".repeat(n) + "☆".repeat(5 - n); }
+const TF_ORDER = ["1D", "4H", "1H", "15m", "5m"];
+let _lvlData = null;          // cached level payload for the open ticker
+let _lvlFilter = "all";       // active timeframe filter
 function _lvlRow(l, kind) {
   const col = kind === "resistance" ? "var(--red)" : "var(--green)";
-  const conf = l.confluence ? ' <span class="chip" title="Confirmed on daily AND 4H">D+4H</span>' : "";
+  const tags = (l.timeframes || []).join("·");
   return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12.5px">
     <span class="num" style="width:74px;color:${col}">$${fmtNum(l.price)}</span>
     <span style="color:var(--yellow);letter-spacing:1px">${_stars(l.stars)}</span>
     <span class="num" style="color:var(--muted);width:54px;text-align:right">${l.dist_pct >= 0 ? "+" : ""}${fmtNum(l.dist_pct, 1)}%</span>
-    <span style="color:var(--muted)">${l.touches} touch${l.touches === 1 ? "" : "es"}${conf}</span>
+    <span class="chip" title="${l.touches} touches across ${tags}">${esc(tags)}</span>
   </div>`;
 }
-function renderLevels(lv, err) {
-  if (!lv || lv.error) return `<div class="social-box"><b>Key Levels</b> <span style="color:var(--muted)">— ${esc((lv && lv.error) || err || "unavailable")}</span></div>`;
-  const res = (lv.resistance || []).slice().reverse();   // farthest → nearest, ladder style
-  const sup = (lv.support || []);                          // nearest → farthest
-  if (!res.length && !sup.length) return `<div class="social-box"><b>Key Levels</b> <span style="color:var(--muted)">— none detected</span></div>`;
-  return `<div class="social-box">
-    <b>Key Levels</b> <span style="color:var(--muted)">— support/resistance, daily + 4H, ~8mo (★ = touches)</span>
-    <div style="margin-top:8px">
-      ${res.map(l => _lvlRow(l, "resistance")).join("")}
-      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:4px 0">
-        <span class="num" style="width:74px;color:var(--text)">$${fmtNum(lv.current_price)}</span>
-        <span style="color:var(--blue);font-size:11.5px;letter-spacing:.5px">◄ PRICE NOW</span>
-      </div>
-      ${sup.map(l => _lvlRow(l, "support")).join("")}
+function _matchTf(l) { return _lvlFilter === "all" || (l.timeframes || []).includes(_lvlFilter); }
+function renderLevelLadder() {
+  const lv = _lvlData;
+  if (!lv || lv.error) return `<span style="color:var(--muted)">${esc((lv && lv.error) || "unavailable")}</span>`;
+  const res = (lv.resistance || []).filter(_matchTf).slice().reverse();
+  const sup = (lv.support || []).filter(_matchTf);
+  if (!res.length && !sup.length) return `<span style="color:var(--muted)">— no levels on ${esc(_lvlFilter)}</span>`;
+  return `${res.map(l => _lvlRow(l, "resistance")).join("")}
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:4px 0">
+      <span class="num" style="width:74px;color:var(--text)">$${fmtNum(lv.current_price)}</span>
+      <span style="color:var(--blue);font-size:11.5px;letter-spacing:.5px">◄ PRICE NOW</span>
     </div>
+    ${sup.map(l => _lvlRow(l, "support")).join("")}`;
+}
+function setLvlFilter(tf) { _lvlFilter = tf; const b = $("lvl-ladder"); if (b) b.innerHTML = renderLevelLadder();
+  document.querySelectorAll("#lvl-chips button").forEach(x => x.classList.toggle("on", x.dataset.tf === tf)); }
+function renderLevels(lv, err) {
+  _lvlData = lv; _lvlFilter = "all";
+  if (!lv || lv.error) return `<div class="social-box"><b>Key Levels</b> <span style="color:var(--muted)">— ${esc((lv && lv.error) || err || "unavailable")}</span></div>`;
+  const avail = lv.timeframes || TF_ORDER;
+  const chips = ["all"].concat(TF_ORDER.filter(t => avail.includes(t)))
+    .map(t => `<button data-tf="${t}" class="${t === "all" ? "on" : ""}" onclick="setLvlFilter('${t}')" style="padding:3px 9px;font-size:11.5px;border-radius:5px">${t === "all" ? "All" : t}</button>`).join("");
+  return `<div class="social-box">
+    <b>Key Levels</b> <span style="color:var(--muted)">— support/resistance · ★ = strength · tags = timeframes</span>
+    <div class="seg" id="lvl-chips" style="margin:8px 0;display:inline-flex">${chips}</div>
+    <div id="lvl-ladder" style="margin-top:4px">${renderLevelLadder()}</div>
   </div>`;
 }
 // Global ticker lookup — open the full drawer (price, signal, S/R levels,
