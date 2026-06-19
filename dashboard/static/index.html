@@ -210,6 +210,9 @@
   .gem-tag.sig-early { color: var(--green); border-color: #2bd57655; }
   .gem-tag.sig-coiled { color: #8b9cff; border-color: #6366f155; }
   .gem-tag.sig-accum { color: var(--yellow); border-color: #ffc24b55; }
+  .gem-tag.vol-hot { color: #08110b; background: var(--green); border-color: var(--green); font-weight: 700; }
+  .gem-tag.vol-up { color: var(--green); border-color: #2bd57655; }
+  .gem-tag.vol-dn { color: var(--red); border-color: #ff5c5c44; }
 </style>
 </head>
 <body>
@@ -827,6 +830,12 @@ function renderGems() {
   }).join("");
   $("gem-list").querySelectorAll(".gem-card").forEach(c => c.onclick = () => openDrawer(c.dataset.ticker));
 }
+function volTag(label, v) {
+  if (v == null) return "";
+  const arrow = v >= 1.15 ? "▲" : (v < 0.9 ? "▼" : "→");
+  const cls = v >= 1.5 ? "vol-hot" : v >= 1.15 ? "vol-up" : v < 0.9 ? "vol-dn" : "";
+  return `<span class="gem-tag ${cls}" title="${label} volume vs its recent baseline — &gt;1 = rising interest / accumulation">${label} ${v.toFixed(1)}x ${arrow}</span>`;
+}
 function gemCard(g) {
   const sigCls = GEM_SIG_CLS[g.signal] || "sig-accum";
   const mcap = g.market_cap ? (g.market_cap >= 1e9 ? "$" + (g.market_cap/1e9).toFixed(1) + "B" : "$" + Math.round(g.market_cap/1e6) + "M") : "";
@@ -842,6 +851,8 @@ function gemCard(g) {
       <div class="gem-score">${fmtNum(g.score, 0)}<span class="gs-lbl">SCORE</span></div>
       <div class="gem-tags">
         <span class="gem-tag ${sigCls}">${esc(g.signal || "")}</span>
+        ${volTag("Vol D", g.vol_trend_d)}
+        ${volTag("Vol W", g.vol_trend_w)}
         ${ret6 ? `<span class="gem-tag">${ret6}</span>` : ""}
         ${buzz ? `<span class="gem-tag">${buzz}</span>` : ""}
       </div>
