@@ -69,9 +69,10 @@ def _get_screens():
 # ============================================================
 _GEM_COLS = (
     "ticker, company_name, sector, industry, current_price, up_and_comer_score, "
-    "signal, theme, bottleneck, thesis, hot_sector, sector_heat, ret_6m_pct, "
+    "signal, sleeve, theme, bottleneck, thesis, hot_sector, sector_heat, ret_6m_pct, "
     "vol_trend_d, vol_trend_w, buzz_7d, buzz_accel, buzz_x_level, buzz_x_rising, "
-    "buzz_x_note, market_cap, scored_date"
+    "buzz_x_note, fund_score, rev_yoy_pct, piotroski, altman_z, gross_margin_pct, "
+    "market_cap, scored_date"
 )
 
 
@@ -160,16 +161,24 @@ def _gem_exclusion_reason(ticker: str) -> str:
 def _fmt_gem(r: dict) -> str:
     mcap = r.get("market_cap") or 0
     mcap_s = (f"${mcap/1e9:.1f}B" if mcap >= 1e9 else f"${mcap/1e6:.0f}M") if mcap else "—"
-    vd, vw = r.get("vol_trend_d"), r.get("vol_trend_w")
-    vol_s = f"vol {float(vd):.1f}x/d · {float(vw):.1f}x/wk" if vd is not None and vw is not None else ""
+    vw = r.get("vol_trend_w")
+    vol_s = f"vol {float(vw):.1f}x/wk" if vw is not None else ""
     xl = r.get("buzz_x_level")
     x_s = f" | 𝕏 {xl}{' ▲' if r.get('buzz_x_rising') else ''}" if xl and xl != "none" else ""
     score = float(r.get("up_and_comer_score") or 0)
-    ret6 = r.get("ret_6m_pct")
-    ret6_s = f"{float(ret6):+.0f}%/6mo" if ret6 is not None else ""
+    sleeve = (r.get("sleeve") or r.get("signal") or "").upper()
+    # fundamentals snippet
+    fb = []
+    if r.get("rev_yoy_pct") is not None:
+        fb.append(f"rev {float(r['rev_yoy_pct']):+.0f}% YoY")
+    if r.get("gross_margin_pct") is not None:
+        fb.append(f"{float(r['gross_margin_pct']):.0f}% GM")
+    if r.get("piotroski") is not None:
+        fb.append(f"Piotroski {int(r['piotroski'])}/9")
+    fund_s = (" | " + ", ".join(fb)) if fb else ""
     head = (f"- **{r['ticker']}** ({(r.get('company_name') or '')[:26]}, {mcap_s}) | "
-            f"Score {score:.0f} | {r.get('signal','')} | "
-            f"{r.get('theme','')} → {r.get('bottleneck','')} | {ret6_s} | {vol_s}{x_s}")
+            f"Score {score:.0f} | {sleeve} | {r.get('theme','')} → {r.get('bottleneck','')} "
+            f"| {vol_s}{fund_s}{x_s}")
     thesis = r.get("thesis")
     return head + (f"\n  {thesis}" if thesis else "")
 
@@ -352,8 +361,10 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
     as_of = gems[0].get("scored_date")
     lines = [
         f"**HIDDEN GEMS — Next-Parabolic Watch** (Top {len(gems)}, scanned {as_of})",
-        "*Hottest sectors → the supply-chain bottleneck each must scale → small/mid-caps "
-        "fixing it that haven't gone parabolic yet (rising volume & building X chatter favored).*\n",
+        "*Two evidence-backed sleeves in the market's hot bottleneck industries: "
+        "MOMENTUM (strong & still trending) and REVERSAL (beaten down, turning up). "
+        "Rising volume + real fundamentals (quality/growth) favored; distress/dilution/"
+        "negative-margin junk and true blow-offs are screened out.*\n",
     ]
     for r in gems:
         lines.append(_fmt_gem(r))
