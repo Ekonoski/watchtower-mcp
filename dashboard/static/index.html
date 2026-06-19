@@ -170,6 +170,46 @@
     background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
     padding: 10px 18px; font-size: 13px; z-index: 300; display: none;
   }
+
+  /* ── Hidden Gems ── */
+  .gems-intro { margin: 4px 0 14px; }
+  .gems-intro h3 { margin: 0 0 4px; letter-spacing: 1px; }
+  .gems-intro p { color: var(--muted); font-size: 13px; max-width: 760px; margin: 0; line-height: 1.5; }
+  .heat-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; }
+  .heat-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .heat-title { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: var(--text); }
+  .heat-sub { color: var(--muted); text-transform: none; letter-spacing: 0; font-size: 12px; }
+  .heat-legend { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  .heat-legend .hl { display: inline-block; width: 16px; height: 10px; border-radius: 2px; }
+  .heat-legend .hl.cold { background: #ff5c5c; } .heat-legend .hl.warm { background: #ffc24b; } .heat-legend .hl.hot { background: #2bd576; }
+  .heat-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .heat-tile { border-radius: 8px; padding: 10px 11px; color: #08110b; position: relative; overflow: hidden; min-height: 64px; }
+  .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
+  .heat-tile .ht-ret { font-size: 19px; font-weight: 800; margin-top: 6px; }
+  .heat-tile .ht-n { position: absolute; top: 8px; right: 9px; font-size: 10px; opacity: 0.6; font-weight: 600; }
+
+  .gem-list { display: flex; flex-direction: column; gap: 16px; }
+  .gem-theme { }
+  .gem-theme-h { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .gem-theme-h b { font-size: 14px; letter-spacing: 0.5px; }
+  .gem-theme-h .gth-bn { color: var(--yellow); font-size: 12.5px; }
+  .gem-theme-h .gth-heat { margin-left: auto; font-size: 11px; color: var(--muted); }
+  .gem-card { display: grid; grid-template-columns: 78px 1fr auto; gap: 12px; align-items: center;
+              background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 11px 14px; cursor: pointer; }
+  .gem-card:hover { border-color: #34406080; background: var(--panel2); }
+  .gem-card + .gem-card { margin-top: 8px; }
+  .gem-tkr { font-weight: 800; font-size: 15px; }
+  .gem-tkr .gem-price { display: block; color: var(--muted); font-size: 11.5px; font-weight: 500; margin-top: 2px; }
+  .gem-mid .gem-name { font-size: 13px; font-weight: 600; }
+  .gem-mid .gem-thesis { color: var(--muted); font-size: 12px; line-height: 1.4; margin-top: 3px; }
+  .gem-right { text-align: right; min-width: 110px; }
+  .gem-score { font-size: 20px; font-weight: 800; }
+  .gem-score .gs-lbl { display: block; font-size: 9px; color: var(--muted); font-weight: 600; letter-spacing: 1px; }
+  .gem-tags { margin-top: 5px; display: flex; gap: 5px; justify-content: flex-end; flex-wrap: wrap; }
+  .gem-tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .gem-tag.sig-early { color: var(--green); border-color: #2bd57655; }
+  .gem-tag.sig-coiled { color: #8b9cff; border-color: #6366f155; }
+  .gem-tag.sig-accum { color: var(--yellow); border-color: #ffc24b55; }
 </style>
 </head>
 <body>
@@ -202,6 +242,7 @@
 <nav>
   <button data-tab="scanner" class="active">Day Trades</button>
   <button data-tab="swings">Swings</button>
+  <button data-tab="gems">Hidden Gems</button>
   <button data-tab="news">News Catalysts</button>
   <button data-tab="performance">Performance</button>
   <button data-tab="watchlist">Watchlist</button>
@@ -279,6 +320,32 @@
       </table>
       <div id="swing-empty" class="empty" style="display:none">No swing signals yet. The daily screens run pre-market at 6 AM ET, Mon–Fri. <b>Gems</b> = under-the-radar names fixing the bottlenecks of the market's hottest sectors (next-parabolic watch, already-parabolic excluded) — hover a row's notes for the thesis.</div>
     </div>
+  </section>
+
+  <!-- ── HIDDEN GEMS ── -->
+  <section id="tab-gems" class="tabpane">
+    <div class="gems-intro">
+      <h3>Next-Parabolic Watch</h3>
+      <p>The market's hottest sectors → the supply-chain <b>bottleneck</b> each must scale through →
+      the under-the-radar small/mid-caps fixing it that <b>haven't moved yet</b> (MU/SDNK-style).
+      Already-parabolic names (up &gt;100%/6mo or stretched) are excluded.</p>
+    </div>
+
+    <div class="heat-wrap">
+      <div class="heat-head">
+        <span class="heat-title">Sector Heat Map <span class="heat-sub">— 3-month momentum, hottest → coldest</span></span>
+        <span class="heat-legend"><i class="hl cold"></i>cold <i class="hl warm"></i> <i class="hl hot"></i>hot</span>
+      </div>
+      <div id="heat-map" class="heat-map"></div>
+    </div>
+
+    <div class="controls">
+      <div class="seg" id="gem-theme-filter"></div>
+      <input type="text" id="gem-search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="gem-count"></span>
+    </div>
+    <div id="gem-list" class="gem-list"></div>
+    <div id="gem-empty" class="empty" style="display:none">No hidden gems yet. The bottleneck scan runs pre-market at 6 AM ET, Mon–Fri.</div>
   </section>
 
   <!-- ── NEWS ── -->
@@ -371,6 +438,9 @@ let state = {
   swing: null,
   swingSleeve: "all",
   swingSearch: "",
+  gems: null,
+  gemTheme: "all",
+  gemSearch: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -416,6 +486,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "performance" && !state.perfLoaded) loadPerformance();
   if (b.dataset.tab === "watchlist") loadWatchlist();
   if (b.dataset.tab === "swings") loadSwings();
+  if (b.dataset.tab === "gems") loadGems();
 });
 
 /* ── browser pop-up notifications ── */
@@ -655,6 +726,7 @@ document.querySelectorAll("#swing-filter button").forEach(b => b.onclick = () =>
   renderSwings();
 });
 $("swing-search").addEventListener("input", e => { state.swingSearch = (e.target.value || "").toUpperCase().trim(); renderSwings(); });
+$("gem-search").addEventListener("input", e => { state.gemSearch = (e.target.value || "").toUpperCase().trim(); renderGems(); });
 
 async function loadSwings() {
   let data;
@@ -685,6 +757,96 @@ function renderSwings() {
     </tr>`;
   }).join("");
   document.querySelectorAll("#swing-body tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
+}
+
+/* ── hidden gems ── */
+const GEM_SIG_CLS = { "EARLY TURN": "sig-early", "COILED BASE": "sig-coiled", "ACCUMULATE": "sig-accum" };
+function heatColor(heat) {
+  // 0 (cold) -> red, 0.5 -> amber, 1 (hot) -> green. Interpolate hue 0..130.
+  const h = Math.max(0, Math.min(1, heat || 0));
+  const hue = h * 130;                      // 0=red, 130=green
+  const light = 52 + (0.5 - Math.abs(h - 0.5)) * 16;  // a touch brighter mid-range
+  return `hsl(${hue}, 68%, ${light}%)`;
+}
+async function loadGems() {
+  let data;
+  try { data = await api("/api/gems/latest"); } catch { return; }
+  state.gems = data;
+  // Build theme filter chips from the loaded gems.
+  const themes = [...new Set((data.gems || []).map(g => g.theme).filter(Boolean))];
+  const seg = $("gem-theme-filter");
+  seg.innerHTML = `<button data-gtheme="all" class="${state.gemTheme === "all" ? "on" : ""}">All themes</button>` +
+    themes.map(t => `<button data-gtheme="${esc(t)}" class="${state.gemTheme === t ? "on" : ""}">${esc(t)}</button>`).join("");
+  seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+    seg.querySelectorAll("button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); state.gemTheme = b.dataset.gtheme; renderGems();
+  });
+  renderGems();
+}
+function renderHeatMap(heat) {
+  const el = $("heat-map");
+  if (!heat || !heat.length) { el.innerHTML = `<span class="empty" style="grid-column:1/-1">Heat map unavailable.</span>`; return; }
+  el.innerHTML = heat.map(s => {
+    const pct = (s.avg_ret_3m * 100);
+    const sign = pct >= 0 ? "+" : "";
+    return `<div class="heat-tile" style="background:${heatColor(s.heat)}" title="${esc(s.sector)} · ${s.n} stocks · median ${(s.median_ret_3m*100).toFixed(1)}%">
+      <span class="ht-n">${s.n}</span>
+      <div class="ht-sec">${esc(s.sector)}</div>
+      <div class="ht-ret">${sign}${pct.toFixed(1)}%</div>
+    </div>`;
+  }).join("");
+}
+function renderGems() {
+  const data = state.gems || {};
+  renderHeatMap(data.heat);
+  const all = data.gems || [];
+  const rows = all.filter(g =>
+    (state.gemTheme === "all" || g.theme === state.gemTheme) &&
+    (!state.gemSearch || (g.ticker || "").includes(state.gemSearch)));
+  $("gem-count").textContent = `${rows.length} of ${all.length} gems` + (data.as_of ? ` · scanned ${data.as_of}` : "");
+  $("gem-empty").style.display = rows.length ? "none" : "block";
+
+  // Group by theme, themes ordered by best score within.
+  const groups = {};
+  rows.forEach(g => { (groups[g.theme || "Other"] = groups[g.theme || "Other"] || []).push(g); });
+  const order = Object.keys(groups).sort((a, b) =>
+    Math.max(...groups[b].map(x => x.score || 0)) - Math.max(...groups[a].map(x => x.score || 0)));
+
+  $("gem-list").innerHTML = order.map(theme => {
+    const items = groups[theme].sort((a, b) => (b.score || 0) - (a.score || 0));
+    const bn = items[0].bottleneck || "";
+    const hs = items[0].hot_sector || "";
+    return `<div class="gem-theme">
+      <div class="gem-theme-h">
+        <b>${esc(theme)}</b>
+        ${bn ? `<span class="gth-bn">→ ${esc(bn)}</span>` : ""}
+        <span class="gth-heat">${hs ? esc(hs) + " · " : ""}${items.length} name${items.length > 1 ? "s" : ""}</span>
+      </div>
+      ${items.map(g => gemCard(g)).join("")}
+    </div>`;
+  }).join("");
+  $("gem-list").querySelectorAll(".gem-card").forEach(c => c.onclick = () => openDrawer(c.dataset.ticker));
+}
+function gemCard(g) {
+  const sigCls = GEM_SIG_CLS[g.signal] || "sig-accum";
+  const mcap = g.market_cap ? (g.market_cap >= 1e9 ? "$" + (g.market_cap/1e9).toFixed(1) + "B" : "$" + Math.round(g.market_cap/1e6) + "M") : "";
+  const ret6 = (g.ret_6m_pct != null) ? `${g.ret_6m_pct >= 0 ? "+" : ""}${Math.round(g.ret_6m_pct)}% 6mo` : "";
+  const buzz = (g.buzz_7d != null) ? (g.buzz_7d === 0 ? "no buzz" : g.buzz_7d + " buzz") : "";
+  return `<div class="gem-card" data-ticker="${esc(g.ticker)}">
+    <div class="gem-tkr">${esc(g.ticker)}<span class="gem-price">${g.current_price ? "$" + fmtNum(g.current_price) : ""}</span></div>
+    <div class="gem-mid">
+      <div class="gem-name">${esc(g.company_name || "")} ${mcap ? `<span style="color:var(--muted);font-weight:500">· ${mcap}</span>` : ""}</div>
+      <div class="gem-thesis">${esc(g.rationale || g.thesis || "")}</div>
+    </div>
+    <div class="gem-right">
+      <div class="gem-score">${fmtNum(g.score, 0)}<span class="gs-lbl">SCORE</span></div>
+      <div class="gem-tags">
+        <span class="gem-tag ${sigCls}">${esc(g.signal || "")}</span>
+        ${ret6 ? `<span class="gem-tag">${ret6}</span>` : ""}
+        ${buzz ? `<span class="gem-tag">${buzz}</span>` : ""}
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ── ticker drawer ── */
