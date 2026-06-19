@@ -72,7 +72,7 @@ _GEM_COLS = (
     "signal, sleeve, theme, bottleneck, thesis, hot_sector, sector_heat, ret_6m_pct, "
     "vol_trend_d, vol_trend_w, buzz_7d, buzz_accel, buzz_x_level, buzz_x_rising, "
     "buzz_x_note, fund_score, rev_yoy_pct, piotroski, altman_z, gross_margin_pct, "
-    "market_cap, scored_date"
+    "market_cap, market_regime, scored_date"
 )
 
 
@@ -359,12 +359,21 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
         return ("No hidden gems in the latest scan. The bottleneck scan runs pre-market "
                 "(6 AM ET, Mon–Fri) and writes the day's list to the cache.")
     as_of = gems[0].get("scored_date")
+    regime = next((g.get("market_regime") for g in gems if g.get("market_regime")), None)
+    _RT = {
+        "risk_on":  "RISK-ON (breadth healthy — reversals given more room, momentum trusted normally)",
+        "neutral":  "NEUTRAL (mixed breadth — balanced sleeves)",
+        "risk_off": "RISK-OFF (breadth weak — momentum de-emphasized, fundamentals lead, list tightened)",
+    }
+    regime_line = f"\n*Market regime: {_RT.get(regime, regime.upper())}*" if regime else ""
     lines = [
         f"**HIDDEN GEMS — Next-Parabolic Watch** (Top {len(gems)}, scanned {as_of})",
         "*Two evidence-backed sleeves in the market's hot bottleneck industries: "
         "MOMENTUM (strong & still trending) and REVERSAL (beaten down, turning up). "
         "Rising volume + real fundamentals (quality/growth) favored; distress/dilution/"
-        "negative-margin junk and true blow-offs are screened out.*\n",
+        "negative-margin junk and true blow-offs are screened out. Scoring is regime-aware — "
+        "momentum is trusted less when market breadth is weak.*"
+        + regime_line + "\n",
     ]
     for r in gems:
         lines.append(_fmt_gem(r))

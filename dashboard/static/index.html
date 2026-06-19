@@ -182,6 +182,10 @@
   .heat-legend { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
   .heat-legend .hl { display: inline-block; width: 16px; height: 10px; border-radius: 2px; }
   .heat-legend .hl.cold { background: #ff5c5c; } .heat-legend .hl.warm { background: #ffc24b; } .heat-legend .hl.hot { background: #2bd576; }
+  .regime-badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; vertical-align: middle; letter-spacing: .3px; }
+  .regime-badge.risk_on  { background: rgba(43,213,118,.16); color: #2bd576; border: 1px solid rgba(43,213,118,.4); }
+  .regime-badge.neutral  { background: rgba(255,194,75,.14); color: #ffc24b; border: 1px solid rgba(255,194,75,.4); }
+  .regime-badge.risk_off { background: rgba(255,92,92,.14); color: #ff7a7a; border: 1px solid rgba(255,92,92,.4); }
   #heat-tf { font-size: 11px; }
   #heat-tf button { padding: 3px 9px; font-size: 11px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
   #heat-tf button.on { background: var(--panel2); color: var(--text); }
@@ -332,11 +336,12 @@
   <!-- ── HIDDEN GEMS ── -->
   <section id="tab-gems" class="tabpane">
     <div class="gems-intro">
-      <h3>Next-Parabolic Watch</h3>
+      <h3>Next-Parabolic Watch <span id="gem-regime" class="regime-badge" style="display:none"></span></h3>
       <p>Small/mid-caps in the market's hottest <b>bottleneck</b> industries, split into two evidence-backed
       sleeves: <b>Momentum</b> (strong &amp; still trending) and <b>Reversal</b> (beaten down, turning back up).
       Rising volume + real fundamentals (quality &amp; growth) favored; distress, dilution, negative-margin
-      junk and true blow-offs are screened out.</p>
+      junk and true blow-offs are screened out. Scoring is <b>regime-aware</b>: when breadth is weak the engine
+      trusts momentum less and leans on fundamentals; when breadth is healthy it gives reversals more room.</p>
     </div>
 
     <div class="heat-wrap">
@@ -846,6 +851,23 @@ function renderGems() {
     (!state.gemSearch || (g.ticker || "").includes(state.gemSearch)));
   $("gem-count").textContent = `${rows.length} of ${all.length} gems` + (data.as_of ? ` · scanned ${data.as_of}` : "");
   $("gem-empty").style.display = rows.length ? "none" : "block";
+
+  const reg = data.market_regime;
+  const rb = $("gem-regime");
+  if (reg) {
+    const RT = { risk_on: "RISK-ON", neutral: "NEUTRAL", risk_off: "RISK-OFF" };
+    const RH = {
+      risk_on:  "Breadth healthy — reversals given more room, momentum trusted normally",
+      neutral:  "Mixed breadth — balanced sleeves",
+      risk_off: "Breadth weak — momentum de-emphasized, fundamentals lead, list tightened",
+    };
+    rb.className = "regime-badge " + reg;
+    rb.textContent = RT[reg] || reg.toUpperCase();
+    rb.title = RH[reg] || "";
+    rb.style.display = "";
+  } else {
+    rb.style.display = "none";
+  }
 
   // Group by theme, themes ordered by best score within.
   const groups = {};

@@ -107,7 +107,8 @@ def _swing_rows() -> dict:
                        signal, scored_date, theme, bottleneck, thesis, hot_sector,
                        ret_6m_pct, buzz_7d, buzz_accel, vol_trend_d, vol_trend_w,
                        buzz_x_level, buzz_x_rising, buzz_x_note, market_cap,
-                       sleeve, fund_score, rev_yoy_pct, piotroski, altman_z, gross_margin_pct
+                       sleeve, fund_score, rev_yoy_pct, piotroski, altman_z, gross_margin_pct,
+                       market_regime
                 FROM up_and_comers_cache
                 WHERE scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
                 ORDER BY up_and_comer_score DESC NULLS LAST
@@ -117,7 +118,8 @@ def _swing_rows() -> dict:
             for (tk, cn, sec, price, score, sig, sdate, theme, bottleneck,
                  thesis, hot_sector, ret6, buzz, baccel, vtd, vtw,
                  xlvl, xris, xnote, mcap,
-                 gem_sleeve, fscore, rev_yoy, pio, altz, gmpct) in cur.fetchall():
+                 gem_sleeve, fscore, rev_yoy, pio, altz, gmpct,
+                 mregime) in cur.fetchall():
                 d = str(sdate) if sdate else None
                 if d and (as_of is None or d > as_of):
                     as_of = d
@@ -151,6 +153,7 @@ def _swing_rows() -> dict:
                     "piotroski": int(pio) if pio is not None else None,
                     "altman_z": float(altz) if altz is not None else None,
                     "gross_margin_pct": float(gmpct) if gmpct is not None else None,
+                    "market_regime": mregime or None,
                     "as_of": d,
                 })
     finally:
@@ -232,12 +235,14 @@ def _gems_rows() -> dict:
     dedicated Hidden Gems section (heat map + thesis cards)."""
     gems = [r for r in _swing_rows()["rows"] if r.get("sleeve") == "gem"]
     as_of = gems[0]["as_of"] if gems else None
+    regime = next((g.get("market_regime") for g in gems if g.get("market_regime")), None)
     try:
         heat = _sector_heat_live()
     except Exception as e:
         heat = []
         log.warning("sector heat compute failed: %s", e)
-    return {"as_of": as_of, "gems": gems, "heat": heat, "count": len(gems)}
+    return {"as_of": as_of, "gems": gems, "heat": heat,
+            "market_regime": regime, "count": len(gems)}
 
 
 def register_routes(mcp) -> None:
