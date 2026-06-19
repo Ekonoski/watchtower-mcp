@@ -166,9 +166,9 @@ def _sector_heat_live() -> list:
                     SELECT dp.ticker,
                            (array_agg(dp.close ORDER BY dp.trade_date DESC))[1] AS last_close,
                            (array_agg(dp.close ORDER BY dp.trade_date DESC)
-                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - 63))[1] AS close_3m
+                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - 91))[1] AS close_3m
                     FROM daily_prices dp
-                    WHERE dp.trade_date >= CURRENT_DATE - 110
+                    WHERE dp.trade_date >= CURRENT_DATE - 140
                     GROUP BY dp.ticker
                 ), ret AS (
                     SELECT t.sector, p.last_close / NULLIF(p.close_3m, 0) - 1 AS r

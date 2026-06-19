@@ -117,9 +117,9 @@ def _gem_exclusion_reason(ticker: str) -> str:
                 WITH px AS (
                     SELECT (array_agg(close ORDER BY trade_date DESC))[1] AS last_close,
                            (array_agg(close ORDER BY trade_date DESC)
-                              FILTER (WHERE trade_date <= CURRENT_DATE - 126))[1] AS close_6m,
+                              FILTER (WHERE trade_date <= CURRENT_DATE - 182))[1] AS close_6m,
                            AVG(close) FILTER (WHERE trade_date >= CURRENT_DATE - 210) AS sma_30w
-                    FROM daily_prices WHERE ticker = %s AND trade_date >= CURRENT_DATE - 230)
+                    FROM daily_prices WHERE ticker = %s AND trade_date >= CURRENT_DATE - 250)
                 SELECT t.market_cap, t.industry, p.last_close,
                        (p.last_close / NULLIF(p.close_6m, 0) - 1) AS ret6,
                        (p.last_close / NULLIF(p.sma_30w, 0) - 1) AS vs_sma
