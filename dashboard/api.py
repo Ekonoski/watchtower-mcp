@@ -104,7 +104,7 @@ def _swing_rows() -> dict:
                 """
                 SELECT ticker, company_name, sector, current_price, up_and_comer_score,
                        signal, scored_date, theme, bottleneck, thesis, hot_sector,
-                       ret_6m_pct, buzz_7d, vol_trend_d, vol_trend_w, market_cap
+                       ret_6m_pct, buzz_7d, buzz_accel, vol_trend_d, vol_trend_w, market_cap
                 FROM up_and_comers_cache
                 WHERE scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
                 ORDER BY up_and_comer_score DESC NULLS LAST
@@ -112,7 +112,7 @@ def _swing_rows() -> dict:
                 """
             )
             for (tk, cn, sec, price, score, sig, sdate, theme, bottleneck,
-                 thesis, hot_sector, ret6, buzz, vtd, vtw, mcap) in cur.fetchall():
+                 thesis, hot_sector, ret6, buzz, baccel, vtd, vtw, mcap) in cur.fetchall():
                 d = str(sdate) if sdate else None
                 if d and (as_of is None or d > as_of):
                     as_of = d
@@ -133,6 +133,7 @@ def _swing_rows() -> dict:
                     "hot_sector": hot_sector or "",
                     "ret_6m_pct": float(ret6) if ret6 is not None else None,
                     "buzz_7d": int(buzz) if buzz is not None else None,
+                    "buzz_accel": float(baccel) if baccel is not None else None,
                     "vol_trend_d": float(vtd) if vtd is not None else None,
                     "vol_trend_w": float(vtw) if vtw is not None else None,
                     "market_cap": float(mcap) if mcap is not None else None,
