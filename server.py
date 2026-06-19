@@ -62,6 +62,66 @@ def _get_screens():
     return run_reversal, run_momentum, run_breakdown, run_master, run_insider, run_upcomer, run_volume_burst
 
 
+# ============================================================
+# Hidden-gem bottleneck engine — read the cache the nightly scan writes.
+# (This is the same data that powers the dashboard Hidden Gems tab + daily
+# email, so Grok, the UI, and the email all tell the SAME story.)
+# ============================================================
+_GEM_COLS = (
+    "ticker, company_name, sector, industry, current_price, up_and_comer_score, "
+    "signal, theme, bottleneck, thesis, hot_sector, sector_heat, ret_6m_pct, "
+    "vol_trend_d, vol_trend_w, buzz_7d, buzz_accel, buzz_x_level, buzz_x_rising, "
+    "buzz_x_note, market_cap, scored_date"
+)
+
+
+def _read_gem_cache(top_n: int = 10, ticker: str = "") -> list:
+    """Top gems from the latest scored_date in up_and_comers_cache (or one ticker)."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            if ticker:
+                cur.execute(
+                    f"SELECT {_GEM_COLS} FROM up_and_comers_cache "
+                    "WHERE ticker = %s AND scored_date = "
+                    "(SELECT max(scored_date) FROM up_and_comers_cache)",
+                    (ticker.upper(),),
+                )
+            else:
+                cur.execute(
+                    f"SELECT {_GEM_COLS} FROM up_and_comers_cache "
+                    "WHERE scored_date = (SELECT max(scored_date) FROM up_and_comers_cache) "
+                    "ORDER BY up_and_comer_score DESC NULLS LAST LIMIT %s",
+                    (top_n,),
+                )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _fmt_gem(r: dict) -> str:
+    mcap = r.get("market_cap") or 0
+    mcap_s = (f"${mcap/1e9:.1f}B" if mcap >= 1e9 else f"${mcap/1e6:.0f}M") if mcap else "—"
+    vd, vw = r.get("vol_trend_d"), r.get("vol_trend_w")
+    vol_s = f"vol {float(vd):.1f}x/d · {float(vw):.1f}x/wk" if vd is not None and vw is not None else ""
+    xl = r.get("buzz_x_level")
+    x_s = f" | 𝕏 {xl}{' ▲' if r.get('buzz_x_rising') else ''}" if xl and xl != "none" else ""
+    score = float(r.get("up_and_comer_score") or 0)
+    ret6 = r.get("ret_6m_pct")
+    ret6_s = f"{float(ret6):+.0f}%/6mo" if ret6 is not None else ""
+    head = (f"- **{r['ticker']}** ({(r.get('company_name') or '')[:26]}, {mcap_s}) | "
+            f"Score {score:.0f} | {r.get('signal','')} | "
+            f"{r.get('theme','')} → {r.get('bottleneck','')} | {ret6_s} | {vol_s}{x_s}")
+    thesis = r.get("thesis")
+    return head + (f"\n  {thesis}" if thesis else "")
+
+
+
 @mcp.tool()
 def watchtower_run_screen(
     screen: str,
@@ -78,7 +138,9 @@ def watchtower_run_screen(
     - breakdown: bearish ideas, shorting candidates
     - master: broad fundamental composite
     - insider: insider activity driven
-    - upcomer: hidden gems / 10x potential — off-radar small/mid caps breaking out of bases
+    - upcomer / gems / hidden_gems: Hidden Gems — small/mid-caps fixing the supply-chain
+      bottleneck of the market's hottest sectors, set up to move next, not yet parabolic
+      (from the nightly bottleneck scan; same as watchtower_get_hidden_gems)
     - volume_burst: unusual volume surges — breakouts and exhaustion signals
 
     Use ticker="AAPL" to score any single stock through the chosen screen, regardless of
@@ -100,7 +162,9 @@ def watchtower_run_screen(
     elif screen == "insider":
         results = run_insider(single_ticker=t)[:top_n]
     elif screen in ("upcomer", "hidden_gems", "gems"):
-        results = run_upcomer(min_score=30.0, top_n=top_n, with_synthesis=False)
+        # Hidden Gems come from the nightly bottleneck engine's cache, not a live
+        # per-ticker screen — hand off to the dedicated formatter.
+        return watchtower_get_hidden_gems(top_n=top_n)
     elif screen == "volume_burst":
         results = run_volume_burst(min_surge=1.75, single_ticker=t)[:top_n]
     else:
@@ -210,41 +274,36 @@ def watchtower_get_bearish_ideas(top_n: int = 5) -> str:
 @mcp.tool()
 def watchtower_get_hidden_gems(top_n: int = 10) -> str:
     """
-    Scan for hidden gems and up-and-comer stocks — completely separate from the momentum screen.
+    The Hidden Gems / Next-Parabolic watchlist — the SAME data shown on the
+    dashboard Hidden Gems tab and the daily email (reads the nightly bottleneck
+    scan's cache; does not recompute live).
 
-    Scans the full daily_prices universe (not just the quality 40) to find truly
-    off-radar small/mid cap stocks that:
-    - Are 18-60% off their 52-week highs (NOT near highs like momentum names)
-    - Are breaking out of long consolidation bases on expanding volume
-    - Show fundamental acceleration (QoQ revenue/earnings improving)
-    - Have big upside to analyst price targets (or no analyst coverage yet)
-    - Small/mid cap bias — the less covered, the more potential
+    How the list is built (supply-chain bottleneck engine):
+    - Rank the market's hottest sectors/industries (price momentum + analyst
+      revisions + news + social).
+    - For each hot theme, identify the supply-chain BOTTLENECK that must scale
+      for it to keep running (e.g. AI compute → memory/HBM like MU, grid power,
+      datacenter build-out, cooling, components).
+    - Surface $100M–$10B names in those bottleneck industries that have NOT yet
+      gone parabolic (excluded if up >100% in 6mo or stretched >35% above their
+      30-week base) and are just turning up — favoring rising volume and building
+      X chatter.
 
-    These are early-stage 10x candidates, not established momentum names.
+    Each gem includes its theme → bottleneck, score, signal, 6-month return,
+    daily/weekly volume trend, the Grok-X buzz read, and a one-line thesis.
     """
-    from screen.upcomer_screen import run_screen as run_upcomer
-    results = run_upcomer(min_score=30.0, top_n=top_n, with_synthesis=False)
-    if not results:
-        return "No hidden gems found above threshold right now."
-
-    lines = [f"**HIDDEN GEMS / UP-AND-COMER SCREEN** (Top {len(results)})"]
-    lines.append("*Stocks 18-60% off highs, breaking bases, with fundamental acceleration*\n")
-    for r in results:
-        score = r.get("score", 0)
-        ticker = r.get("ticker", "")
-        price = r.get("current_price", 0)
-        dd = r.get("drawdown_pct", 0)
-        rsi = r.get("rsi") or 0
-        rationale = r.get("rationale", "")
-        pt = r.get("price_target_avg")
-        upside_str = ""
-        if pt and price > 0:
-            upside = (pt - price) / price * 100
-            upside_str = f" | PT upside: {upside:+.0f}%"
-        lines.append(
-            f"- **{ticker}** | Score: {score:.0f} | ${price:.2f} | "
-            f"Off high: {dd:.0f}% | RSI: {rsi:.0f}{upside_str} | {rationale}"
-        )
+    gems = _read_gem_cache(top_n)
+    if not gems:
+        return ("No hidden gems in the latest scan. The bottleneck scan runs pre-market "
+                "(6 AM ET, Mon–Fri) and writes the day's list to the cache.")
+    as_of = gems[0].get("scored_date")
+    lines = [
+        f"**HIDDEN GEMS — Next-Parabolic Watch** (Top {len(gems)}, scanned {as_of})",
+        "*Hottest sectors → the supply-chain bottleneck each must scale → small/mid-caps "
+        "fixing it that haven't gone parabolic yet (rising volume & building X chatter favored).*\n",
+    ]
+    for r in gems:
+        lines.append(_fmt_gem(r))
     return "\n".join(lines)
 
 
@@ -279,7 +338,6 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
         ("BREAKDOWN",    lambda: run_breakdown(min_breakdown=20.0, single_ticker=ticker)),
         ("MASTER",       lambda: run_master(single_ticker=ticker)),
         ("INSIDER",      lambda: run_insider(single_ticker=ticker)),
-        ("UPCOMER",      lambda: run_upcomer(min_score=0.0, top_n=1, single_ticker=ticker)),
     ]
 
     for sleeve_name, fn in screen_configs:
@@ -298,6 +356,34 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
                 })
         except Exception as e:
             sleeve_results.append({"sleeve": sleeve_name, "score": 0, "error": str(e)[:80]})
+
+    # Upcomer / Hidden Gem — from the new bottleneck engine's cache (the same
+    # list the dashboard + email use), NOT a live per-ticker technical screen.
+    try:
+        hits = _read_gem_cache(top_n=1, ticker=ticker)
+        if hits:
+            g = hits[0]
+            xl = g.get("buzz_x_level")
+            x_s = f"; 𝕏 chatter {xl}{' rising' if g.get('buzz_x_rising') else ''}" if xl and xl != "none" else ""
+            rationale = (f"HIDDEN GEM ({g.get('signal','')}) — {g.get('theme','')} → "
+                         f"{g.get('bottleneck','')}. {g.get('thesis','') or ''}{x_s}")
+            sleeve_results.append({
+                "sleeve": "UPCOMER",
+                "score": float(g.get("up_and_comer_score") or 0),
+                "data": {"ticker": ticker, "score": float(g.get("up_and_comer_score") or 0),
+                         "rationale": rationale},
+            })
+        else:
+            sleeve_results.append({
+                "sleeve": "UPCOMER",
+                "score": 0,
+                "data": {"ticker": ticker, "score": 0, "rationale": (
+                    "Not a current hidden-gem candidate — not in a hot-sector bottleneck setup, "
+                    "or already extended/parabolic (up >100%/6mo or >35% above its 30-week base), "
+                    "or outside the $100M–$10B gem universe.")},
+            })
+    except Exception as e:
+        sleeve_results.append({"sleeve": "UPCOMER", "score": 0, "error": str(e)[:80]})
 
     # Intraday — live snapshot
     try:
