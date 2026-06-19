@@ -321,7 +321,7 @@
         </tr></thead>
         <tbody id="swing-body"></tbody>
       </table>
-      <div id="swing-empty" class="empty" style="display:none">No swing signals yet. The daily screens run pre-market at 6 AM ET, Mon–Fri. <b>Gems</b> = under-the-radar names fixing the bottlenecks of the market's hottest sectors (next-parabolic watch, already-parabolic excluded) — hover a row's notes for the thesis.</div>
+      <div id="swing-empty" class="empty" style="display:none">No swing signals yet. The daily screens run pre-market at 6 AM ET, Mon–Fri. <b>Gems</b> = names fixing the bottlenecks of the market's hottest sectors, set up to move next (next-parabolic watch, already-parabolic excluded) — hover a row's notes for the thesis.</div>
     </div>
   </section>
 
@@ -330,8 +330,8 @@
     <div class="gems-intro">
       <h3>Next-Parabolic Watch</h3>
       <p>The market's hottest sectors → the supply-chain <b>bottleneck</b> each must scale through →
-      the under-the-radar small/mid-caps fixing it that <b>haven't moved yet</b> (MU/SDNK-style).
-      Already-parabolic names (up &gt;100%/6mo or stretched) are excluded.</p>
+      the small/mid-caps fixing it that are <b>set up to move next</b> (MU/SDNK-style), favoring rising
+      volume and building chatter. Already-parabolic names (up &gt;100%/6mo or stretched) are excluded.</p>
     </div>
 
     <div class="heat-wrap">
@@ -836,11 +836,17 @@ function volTag(label, v) {
   const cls = v >= 1.5 ? "vol-hot" : v >= 1.15 ? "vol-up" : v < 0.9 ? "vol-dn" : "";
   return `<span class="gem-tag ${cls}" title="${label} volume vs its recent baseline — &gt;1 = rising interest / accumulation">${label} ${v.toFixed(1)}x ${arrow}</span>`;
 }
+function buzzTag(buzz, accel) {
+  if (buzz == null) return "";
+  // Rising chatter from a low/moderate base = early discovery (green ▲).
+  if (accel != null && buzz >= 5 && accel >= 1.3)
+    return `<span class="gem-tag vol-up" title="social mentions rising ${accel.toFixed(1)}x week/week — early discovery">buzz ${buzz} ▲${accel.toFixed(1)}x</span>`;
+  return `<span class="gem-tag" title="social mentions last 7 days">${buzz === 0 ? "off radar" : "buzz " + buzz}</span>`;
+}
 function gemCard(g) {
   const sigCls = GEM_SIG_CLS[g.signal] || "sig-accum";
   const mcap = g.market_cap ? (g.market_cap >= 1e9 ? "$" + (g.market_cap/1e9).toFixed(1) + "B" : "$" + Math.round(g.market_cap/1e6) + "M") : "";
   const ret6 = (g.ret_6m_pct != null) ? `${g.ret_6m_pct >= 0 ? "+" : ""}${Math.round(g.ret_6m_pct)}% 6mo` : "";
-  const buzz = (g.buzz_7d != null) ? (g.buzz_7d === 0 ? "no buzz" : g.buzz_7d + " buzz") : "";
   return `<div class="gem-card" data-ticker="${esc(g.ticker)}">
     <div class="gem-tkr">${esc(g.ticker)}<span class="gem-price">${g.current_price ? "$" + fmtNum(g.current_price) : ""}</span></div>
     <div class="gem-mid">
@@ -854,7 +860,7 @@ function gemCard(g) {
         ${volTag("Vol D", g.vol_trend_d)}
         ${volTag("Vol W", g.vol_trend_w)}
         ${ret6 ? `<span class="gem-tag">${ret6}</span>` : ""}
-        ${buzz ? `<span class="gem-tag">${buzz}</span>` : ""}
+        ${buzzTag(g.buzz_7d, g.buzz_accel)}
       </div>
     </div>
   </div>`;
