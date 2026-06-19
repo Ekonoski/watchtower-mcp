@@ -101,24 +101,38 @@ def _swing_rows() -> dict:
                 })
             cur.execute(
                 """
-                SELECT ticker, company_name, sector, current_price, up_and_comer_score, signal, scored_date
+                SELECT ticker, company_name, sector, current_price, up_and_comer_score,
+                       signal, scored_date, theme, bottleneck, thesis, hot_sector,
+                       ret_6m_pct, buzz_7d, market_cap
                 FROM up_and_comers_cache
                 WHERE scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
                 ORDER BY up_and_comer_score DESC NULLS LAST
                 LIMIT 40
                 """
             )
-            for tk, cn, sec, price, score, sig, sdate in cur.fetchall():
+            for (tk, cn, sec, price, score, sig, sdate, theme, bottleneck,
+                 thesis, hot_sector, ret6, buzz, mcap) in cur.fetchall():
                 d = str(sdate) if sdate else None
                 if d and (as_of is None or d > as_of):
                     as_of = d
+                # Prefer the bottleneck thesis as the rationale; fall back to the signal.
+                rationale = thesis or (
+                    f"{theme} → {bottleneck}" if theme else (sig or "")
+                )
                 rows.append({
                     "ticker": tk, "sleeve": "gem",
                     "score": float(score) if score is not None else None,
                     "company_name": cn or "",
                     "current_price": float(price) if price is not None else None,
                     "sector": sec or "",
-                    "rationale": sig or "",
+                    "rationale": rationale,
+                    "theme": theme or "",
+                    "bottleneck": bottleneck or "",
+                    "signal": sig or "",
+                    "hot_sector": hot_sector or "",
+                    "ret_6m_pct": float(ret6) if ret6 is not None else None,
+                    "buzz_7d": int(buzz) if buzz is not None else None,
+                    "market_cap": float(mcap) if mcap is not None else None,
                     "as_of": d,
                 })
     finally:
