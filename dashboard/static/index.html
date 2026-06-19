@@ -182,6 +182,10 @@
   .heat-legend { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
   .heat-legend .hl { display: inline-block; width: 16px; height: 10px; border-radius: 2px; }
   .heat-legend .hl.cold { background: #ff5c5c; } .heat-legend .hl.warm { background: #ffc24b; } .heat-legend .hl.hot { background: #2bd576; }
+  #heat-tf { font-size: 11px; }
+  #heat-tf button { padding: 3px 9px; font-size: 11px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
+  #heat-tf button.on { background: var(--panel2); color: var(--text); }
+  #heat-tf button + button { border-left: 1px solid var(--border); }
   .heat-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
   .heat-tile { border-radius: 8px; padding: 10px 11px; color: #08110b; position: relative; overflow: hidden; min-height: 64px; }
   .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
@@ -336,7 +340,13 @@
 
     <div class="heat-wrap">
       <div class="heat-head">
-        <span class="heat-title">Sector Heat Map <span class="heat-sub">— 3-month momentum, hottest → coldest</span></span>
+        <span class="heat-title">Sector Heat Map <span class="heat-sub" id="heat-sub">— 3-month median, hottest → coldest</span></span>
+        <div class="seg" id="heat-tf">
+          <button data-tf="daily">Daily</button>
+          <button data-tf="weekly">Weekly</button>
+          <button data-tf="monthly">Monthly</button>
+          <button data-tf="quarterly" class="on">Quarterly</button>
+        </div>
         <span class="heat-legend"><i class="hl cold"></i>cold <i class="hl warm"></i> <i class="hl hot"></i>hot</span>
       </div>
       <div id="heat-map" class="heat-map"></div>
@@ -444,6 +454,7 @@ let state = {
   gems: null,
   gemTheme: "all",
   gemSearch: "",
+  heatTf: "quarterly",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -765,11 +776,13 @@ function renderSwings() {
 /* ── hidden gems ── */
 const GEM_SIG_CLS = { "EARLY TURN": "sig-early", "COILED BASE": "sig-coiled", "ACCUMULATE": "sig-accum" };
 function heatColor(heat) {
-  // 0 (cold) -> red, 0.5 -> amber, 1 (hot) -> green. Interpolate hue 0..130.
+  // Vivid cold→hot: deep red → orange → yellow → green. High saturation pops;
+  // the mid brightens toward yellow while the red/green ends stay deep so the
+  // extremes are unmistakable. Tiles use dark text, so keep lightness ~50-56.
   const h = Math.max(0, Math.min(1, heat || 0));
-  const hue = h * 130;                      // 0=red, 130=green
-  const light = 52 + (0.5 - Math.abs(h - 0.5)) * 16;  // a touch brighter mid-range
-  return `hsl(${hue}, 68%, ${light}%)`;
+  const hue = h * 142;                          // 0 = red, 71 = yellow, 142 = green
+  const light = 50 + Math.sin(h * Math.PI) * 6; // 50% at ends, ~56% in the middle
+  return `hsl(${hue}, 90%, ${light}%)`;
 }
 async function loadGems() {
   let data;
@@ -790,15 +803,27 @@ function renderHeatMap(heat) {
   const el = $("heat-map");
   if (!heat || !heat.length) { el.innerHTML = `<span class="empty" style="grid-column:1/-1">Heat map unavailable.</span>`; return; }
   el.innerHTML = heat.map(s => {
-    const pct = (s.avg_ret_3m * 100);
-    const sign = pct >= 0 ? "+" : "";
-    return `<div class="heat-tile" style="background:${heatColor(s.heat)}" title="${esc(s.sector)} · ${s.n} stocks · median ${(s.median_ret_3m*100).toFixed(1)}%">
+    // median = the typical stock (robust); avg is skewed by a few moonshots.
+    const med = (s.median_ret != null ? s.median_ret : (s.median_ret_3m || 0)) * 100;
+    const avg = (s.avg_ret != null ? s.avg_ret : (s.avg_ret_3m || 0)) * 100;
+    const sign = med >= 0 ? "+" : "";
+    return `<div class="heat-tile" style="background:${heatColor(s.heat)}" title="${esc(s.sector)} · ${s.n} stocks · median ${med.toFixed(1)}% · avg ${avg >= 0 ? "+" : ""}${avg.toFixed(1)}%">
       <span class="ht-n">${s.n}</span>
       <div class="ht-sec">${esc(s.sector)}</div>
-      <div class="ht-ret">${sign}${pct.toFixed(1)}%</div>
+      <div class="ht-ret">${sign}${med.toFixed(1)}%</div>
     </div>`;
   }).join("");
 }
+const HEAT_TF_LABEL = { daily: "today's move", weekly: "1-week", monthly: "1-month", quarterly: "3-month" };
+async function loadHeatmap(tf) {
+  state.heatTf = tf;
+  document.querySelectorAll("#heat-tf button").forEach(b => b.classList.toggle("on", b.dataset.tf === tf));
+  $("heat-sub").textContent = `— ${HEAT_TF_LABEL[tf] || ""} median, hottest → coldest`;
+  let data;
+  try { data = await api("/api/heatmap?tf=" + encodeURIComponent(tf)); } catch { return; }
+  renderHeatMap((data && data.sectors) || []);
+}
+document.querySelectorAll("#heat-tf button").forEach(b => b.onclick = () => loadHeatmap(b.dataset.tf));
 function renderGems() {
   const data = state.gems || {};
   renderHeatMap(data.heat);

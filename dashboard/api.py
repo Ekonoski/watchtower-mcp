@@ -10,6 +10,7 @@ Routes (all JSON unless noted):
   GET  /api/performance          → alert performance report (?days=90&type=intraday)
   GET  /api/swing/latest         → latest swing-screen signals (reversal/momentum/breakdown/insider/gems)
   GET  /api/gems/latest          → hidden-gem candidates + live sector heat map
+  GET  /api/heatmap?tf=quarterly  → sector heat map for a timeframe (daily|weekly|monthly|quarterly)
   GET  /api/watchlist            → active watchlist rows
   POST /api/watchlist            → {ticker, notes} → add/re-activate
   DELETE /api/watchlist/{ticker} → deactivate
@@ -152,10 +153,15 @@ def _swing_rows() -> dict:
     return {"as_of": as_of, "rows": rows, "count": len(rows)}
 
 
-def _sector_heat_live() -> list:
-    """Live sector heat map: rank every GICS sector hottest->coldest by 3-month
-    price momentum across real common stocks. Computed on the fly so the heat
-    map is always current (independent of the nightly gem job)."""
+_HEAT_WINDOWS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
+
+
+def _sector_heat_live(window_days: int = 91) -> list:
+    """Live sector heat map: rank every GICS sector hottest->coldest by price
+    momentum over `window_days`, across real common stocks. Uses the MEDIAN
+    stock (robust — the average is skewed by a few micro-cap moonshots) and
+    colors relative to the spread within the chosen window, so the map is
+    readable at any horizon (daily..quarterly)."""
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
@@ -166,47 +172,51 @@ def _sector_heat_live() -> list:
                     SELECT dp.ticker,
                            (array_agg(dp.close ORDER BY dp.trade_date DESC))[1] AS last_close,
                            (array_agg(dp.close ORDER BY dp.trade_date DESC)
-                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - 91))[1] AS close_3m
+                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - %(w)s))[1] AS close_then
                     FROM daily_prices dp
-                    WHERE dp.trade_date >= CURRENT_DATE - 140
+                    WHERE dp.trade_date >= CURRENT_DATE - (%(w)s + 50)
                     GROUP BY dp.ticker
                 ), ret AS (
-                    SELECT t.sector, p.last_close / NULLIF(p.close_3m, 0) - 1 AS r
+                    SELECT t.sector, p.last_close / NULLIF(p.close_then, 0) - 1 AS r
                     FROM px p JOIN tickers t ON t.ticker = p.ticker
                     WHERE t.delisted = false AND t.sector IS NOT NULL
                       AND t.industry NOT ILIKE '%%Asset Management%%'
                       AND t.company_name NOT ILIKE '%% ETF%%'
                       AND t.company_name NOT ILIKE '%% Fund%%'
                       AND COALESCE(t.market_cap, 0) >= 50000000
-                      AND p.last_close >= 1.50 AND p.close_3m > 0
+                      AND p.last_close >= 1.50 AND p.close_then > 0
                 )
                 SELECT sector, COUNT(*) n, AVG(r) avg_ret,
                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r) median_ret
                 FROM ret WHERE r IS NOT NULL
                 GROUP BY sector HAVING COUNT(*) >= 5
-                ORDER BY avg_ret DESC
-                """
+                """,
+                {"w": window_days},
             )
-            out = []
-            for sector, n, avg_ret, median_ret in cur.fetchall():
-                ar = float(avg_ret or 0.0)
-                # heat 0-1: -10% 3mo => 0, +40% => 1 (linear), for the color scale.
-                heat = max(0.0, min(1.0, (ar + 0.10) / 0.50))
-                out.append({
-                    "sector": sector,
-                    "n": int(n),
-                    "avg_ret_3m": round(ar, 4),
-                    "median_ret_3m": round(float(median_ret or 0.0), 4),
-                    "heat": round(heat, 3),
-                })
-            for i, row in enumerate(out, 1):
-                row["rank"] = i
-            return out
+            raw = [(s, int(n), float(a or 0.0), float(m or 0.0))
+                   for s, n, a, m in cur.fetchall()]
     finally:
         try:
             conn.close()
         except Exception:
             pass
+    if not raw:
+        return []
+    meds = [m for _, _, _, m in raw]
+    lo, hi = min(meds), max(meds)
+    span = (hi - lo) or 1.0
+    out = [{
+        "sector": s, "n": n,
+        "avg_ret": round(a, 4),
+        "median_ret": round(m, 4),
+        # heat = where this sector's median sits between the coldest (0) and
+        # hottest (1) sector for THIS window — always spans the full spectrum.
+        "heat": round((m - lo) / span, 3),
+    } for s, n, a, m in raw]
+    out.sort(key=lambda r: r["median_ret"], reverse=True)
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return out
 
 
 def _gems_rows() -> dict:
@@ -369,6 +379,18 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"as_of": None, "gems": [], "heat": [], "count": 0, "error": str(e)[:120]})
         return JSONResponse(data)
+
+    @mcp.custom_route("/api/heatmap", methods=["GET"])
+    async def heatmap(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        tf = (request.query_params.get("tf") or "quarterly").lower()
+        days = _HEAT_WINDOWS.get(tf, 91)
+        try:
+            sectors = await asyncio.to_thread(_sector_heat_live, days)
+        except Exception as e:
+            return JSONResponse({"tf": tf, "window_days": days, "sectors": [], "error": str(e)[:120]})
+        return JSONResponse({"tf": tf, "window_days": days, "sectors": sectors})
 
     @mcp.custom_route("/api/watchlist", methods=["GET", "POST"])
     async def watchlist(request: Request):
