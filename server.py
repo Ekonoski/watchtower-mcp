@@ -104,6 +104,59 @@ def _read_gem_cache(top_n: int = 10, ticker: str = "") -> list:
             pass
 
 
+def _gem_exclusion_reason(ticker: str) -> str:
+    """Why a specific ticker is NOT a hidden-gem candidate — computed from data so
+    we state the ACTUAL disqualifier instead of a vague catch-all. Gates mirror
+    analysis/hidden_gems.py (CAP 100M-10B, <100%/6mo, within -5%..+35% of 30w base)."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH px AS (
+                    SELECT (array_agg(close ORDER BY trade_date DESC))[1] AS last_close,
+                           (array_agg(close ORDER BY trade_date DESC)
+                              FILTER (WHERE trade_date <= CURRENT_DATE - 126))[1] AS close_6m,
+                           AVG(close) FILTER (WHERE trade_date >= CURRENT_DATE - 210) AS sma_30w
+                    FROM daily_prices WHERE ticker = %s AND trade_date >= CURRENT_DATE - 230)
+                SELECT t.market_cap, t.industry, p.last_close,
+                       (p.last_close / NULLIF(p.close_6m, 0) - 1) AS ret6,
+                       (p.last_close / NULLIF(p.sma_30w, 0) - 1) AS vs_sma
+                FROM tickers t LEFT JOIN px p ON true WHERE t.ticker = %s
+                """,
+                (ticker, ticker),
+            )
+            row = cur.fetchone()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not row:
+        return "no ticker/price data on file for it"
+    mcap, ind, last, ret6, vs = row
+    reasons = []
+    if mcap is None:
+        reasons.append("no market cap on file")
+    elif mcap < 100e6:
+        reasons.append(f"market cap ${mcap/1e6:.0f}M is below the $100M floor")
+    elif mcap > 10e9:
+        reasons.append(f"market cap ${mcap/1e9:.1f}B is above the $10B gem ceiling")
+    if ret6 is not None and float(ret6) >= 1.0:
+        reasons.append(f"already up {float(ret6)*100:.0f}% over 6 months (past the not-parabolic limit)")
+    if vs is not None:
+        v = float(vs)
+        if v >= 0.35:
+            reasons.append(f"stretched {v*100:.0f}% above its 30-week base (extended)")
+        elif v < -0.05:
+            reasons.append(f"{abs(v)*100:.0f}% below its 30-week base (downtrend, not a coiled setup)")
+    if not reasons:
+        reasons.append("it clears the size/price gates, but its industry isn't currently flagged as a "
+                       "hot-sector bottleneck (or it didn't rank in today's top 50)")
+    return "; ".join(reasons)
+
+
 def _fmt_gem(r: dict) -> str:
     mcap = r.get("market_cap") or 0
     mcap_s = (f"${mcap/1e9:.1f}B" if mcap >= 1e9 else f"${mcap/1e6:.0f}M") if mcap else "—"
@@ -374,13 +427,12 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
                          "rationale": rationale},
             })
         else:
+            why = _gem_exclusion_reason(ticker)
             sleeve_results.append({
                 "sleeve": "UPCOMER",
                 "score": 0,
-                "data": {"ticker": ticker, "score": 0, "rationale": (
-                    "Not a current hidden-gem candidate — not in a hot-sector bottleneck setup, "
-                    "or already extended/parabolic (up >100%/6mo or >35% above its 30-week base), "
-                    "or outside the $100M–$10B gem universe.")},
+                "data": {"ticker": ticker, "score": 0,
+                         "rationale": f"Not a current hidden-gem candidate — {why}."},
             })
     except Exception as e:
         sleeve_results.append({"sleeve": "UPCOMER", "score": 0, "error": str(e)[:80]})
