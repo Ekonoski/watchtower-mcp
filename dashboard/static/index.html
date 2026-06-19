@@ -333,9 +333,10 @@
   <section id="tab-gems" class="tabpane">
     <div class="gems-intro">
       <h3>Next-Parabolic Watch</h3>
-      <p>The market's hottest sectors → the supply-chain <b>bottleneck</b> each must scale through →
-      the small/mid-caps fixing it that are <b>set up to move next</b> (MU/SDNK-style), favoring rising
-      volume and building chatter. Already-parabolic names (up &gt;100%/6mo or stretched) are excluded.</p>
+      <p>Small/mid-caps in the market's hottest <b>bottleneck</b> industries, split into two evidence-backed
+      sleeves: <b>Momentum</b> (strong &amp; still trending) and <b>Reversal</b> (beaten down, turning back up).
+      Rising volume + real fundamentals (quality &amp; growth) favored; distress, dilution, negative-margin
+      junk and true blow-offs are screened out.</p>
     </div>
 
     <div class="heat-wrap">
@@ -353,6 +354,11 @@
     </div>
 
     <div class="controls">
+      <div class="seg" id="gem-sleeve-filter">
+        <button data-gsleeve="all" class="on">All</button>
+        <button data-gsleeve="momentum">Momentum</button>
+        <button data-gsleeve="reversal">Reversal</button>
+      </div>
       <div class="seg" id="gem-theme-filter"></div>
       <input type="text" id="gem-search" placeholder="Filter ticker…" size="12">
       <span class="count-note" id="gem-count"></span>
@@ -453,6 +459,7 @@ let state = {
   swingSearch: "",
   gems: null,
   gemTheme: "all",
+  gemSleeve: "all",
   gemSearch: "",
   heatTf: "quarterly",
 };
@@ -774,7 +781,8 @@ function renderSwings() {
 }
 
 /* ── hidden gems ── */
-const GEM_SIG_CLS = { "EARLY TURN": "sig-early", "COILED BASE": "sig-coiled", "ACCUMULATE": "sig-accum" };
+const GEM_SIG_CLS = { "MOMENTUM": "sig-early", "REVERSAL": "sig-coiled",
+  "EARLY TURN": "sig-early", "COILED BASE": "sig-coiled", "ACCUMULATE": "sig-accum" };
 function heatColor(heat) {
   // Vivid cold→hot: deep red → orange → yellow → green. High saturation pops;
   // the mid brightens toward yellow while the red/green ends stay deep so the
@@ -796,6 +804,10 @@ async function loadGems() {
   seg.querySelectorAll("button").forEach(b => b.onclick = () => {
     seg.querySelectorAll("button").forEach(x => x.classList.remove("on"));
     b.classList.add("on"); state.gemTheme = b.dataset.gtheme; renderGems();
+  });
+  document.querySelectorAll("#gem-sleeve-filter button").forEach(b => b.onclick = () => {
+    document.querySelectorAll("#gem-sleeve-filter button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); state.gemSleeve = b.dataset.gsleeve; renderGems();
   });
   renderGems();
 }
@@ -830,6 +842,7 @@ function renderGems() {
   const all = data.gems || [];
   const rows = all.filter(g =>
     (state.gemTheme === "all" || g.theme === state.gemTheme) &&
+    (state.gemSleeve === "all" || (g.gem_sleeve || "") === state.gemSleeve) &&
     (!state.gemSearch || (g.ticker || "").includes(state.gemSearch)));
   $("gem-count").textContent = `${rows.length} of ${all.length} gems` + (data.as_of ? ` · scanned ${data.as_of}` : "");
   $("gem-empty").style.display = rows.length ? "none" : "block";
@@ -876,6 +889,15 @@ function buzzTag(g) {
     return `<span class="gem-tag vol-up" title="social mentions rising ${accel.toFixed(1)}x week/week">buzz ${buzz} ▲${accel.toFixed(1)}x</span>`;
   return `<span class="gem-tag" title="social mentions last 7 days">${buzz === 0 ? "off radar" : "buzz " + buzz}</span>`;
 }
+function fundTag(g) {
+  // Compact fundamentals chip: revenue YoY + Piotroski quality.
+  const bits = [];
+  if (g.rev_yoy_pct != null) bits.push(`rev ${g.rev_yoy_pct >= 0 ? "+" : ""}${Math.round(g.rev_yoy_pct)}%`);
+  if (g.piotroski != null) bits.push(`F${g.piotroski}`);
+  if (!bits.length) return "";
+  const good = (g.fund_score != null && g.fund_score >= 0.6);
+  return `<span class="gem-tag ${good ? "vol-up" : ""}" title="fundamentals — revenue YoY · Piotroski F-score /9${g.altman_z != null ? " · Altman-Z " + g.altman_z.toFixed(1) : ""}">${bits.join(" ")}</span>`;
+}
 function gemCard(g) {
   const sigCls = GEM_SIG_CLS[g.signal] || "sig-accum";
   const mcap = g.market_cap ? (g.market_cap >= 1e9 ? "$" + (g.market_cap/1e9).toFixed(1) + "B" : "$" + Math.round(g.market_cap/1e6) + "M") : "";
@@ -890,8 +912,8 @@ function gemCard(g) {
       <div class="gem-score">${fmtNum(g.score, 0)}<span class="gs-lbl">SCORE</span></div>
       <div class="gem-tags">
         <span class="gem-tag ${sigCls}">${esc(g.signal || "")}</span>
-        ${volTag("Vol D", g.vol_trend_d)}
         ${volTag("Vol W", g.vol_trend_w)}
+        ${fundTag(g)}
         ${ret6 ? `<span class="gem-tag">${ret6}</span>` : ""}
         ${buzzTag(g)}
       </div>

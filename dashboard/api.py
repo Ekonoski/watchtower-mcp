@@ -106,7 +106,8 @@ def _swing_rows() -> dict:
                 SELECT ticker, company_name, sector, current_price, up_and_comer_score,
                        signal, scored_date, theme, bottleneck, thesis, hot_sector,
                        ret_6m_pct, buzz_7d, buzz_accel, vol_trend_d, vol_trend_w,
-                       buzz_x_level, buzz_x_rising, buzz_x_note, market_cap
+                       buzz_x_level, buzz_x_rising, buzz_x_note, market_cap,
+                       sleeve, fund_score, rev_yoy_pct, piotroski, altman_z, gross_margin_pct
                 FROM up_and_comers_cache
                 WHERE scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
                 ORDER BY up_and_comer_score DESC NULLS LAST
@@ -115,7 +116,8 @@ def _swing_rows() -> dict:
             )
             for (tk, cn, sec, price, score, sig, sdate, theme, bottleneck,
                  thesis, hot_sector, ret6, buzz, baccel, vtd, vtw,
-                 xlvl, xris, xnote, mcap) in cur.fetchall():
+                 xlvl, xris, xnote, mcap,
+                 gem_sleeve, fscore, rev_yoy, pio, altz, gmpct) in cur.fetchall():
                 d = str(sdate) if sdate else None
                 if d and (as_of is None or d > as_of):
                     as_of = d
@@ -143,6 +145,12 @@ def _swing_rows() -> dict:
                     "buzz_x_rising": bool(xris) if xris is not None else None,
                     "buzz_x_note": xnote or None,
                     "market_cap": float(mcap) if mcap is not None else None,
+                    "gem_sleeve": gem_sleeve or None,
+                    "fund_score": float(fscore) if fscore is not None else None,
+                    "rev_yoy_pct": float(rev_yoy) if rev_yoy is not None else None,
+                    "piotroski": int(pio) if pio is not None else None,
+                    "altman_z": float(altz) if altz is not None else None,
+                    "gross_margin_pct": float(gmpct) if gmpct is not None else None,
                     "as_of": d,
                 })
     finally:
