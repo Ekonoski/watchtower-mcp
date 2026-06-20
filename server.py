@@ -137,6 +137,7 @@ def _gem_exclusion_reason(ticker: str) -> str:
     if not row:
         return "no ticker/price data on file for it"
     mcap, ind, last, ret6, vs = row
+    mcap = float(mcap) if mcap is not None else None  # Decimal from Postgres → float for the /1e9 math below
     reasons = []
     if mcap is None:
         reasons.append("no market cap on file")
@@ -159,7 +160,7 @@ def _gem_exclusion_reason(ticker: str) -> str:
 
 
 def _fmt_gem(r: dict) -> str:
-    mcap = r.get("market_cap") or 0
+    mcap = float(r.get("market_cap") or 0)  # Postgres numeric arrives as Decimal; float() avoids Decimal/float errors
     mcap_s = (f"${mcap/1e9:.1f}B" if mcap >= 1e9 else f"${mcap/1e6:.0f}M") if mcap else "—"
     vw = r.get("vol_trend_w")
     vol_s = f"vol {float(vw):.1f}x/wk" if vw is not None else ""
