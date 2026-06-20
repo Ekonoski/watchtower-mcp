@@ -528,6 +528,53 @@ def _early_turn_rows(limit: int = 18) -> dict:
     return {"as_of": str(as_of) if as_of else None, "rows": out, "count": len(out)}
 
 
+_THEME_WINDOWS = {"1m": "r1m", "3m": "r3m", "ytd": "rytd"}
+
+
+def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
+    """Market Themes board (migration 0040): thematic-basket returns over a
+    window (1m|3m|ytd), ranked best-first. weight=median is the breadth read
+    (typical member); weight=cap is the index read (cap-weighted)."""
+    from screen.reversal_screen import _conn
+    win = _THEME_WINDOWS.get((window or "ytd").lower(), "rytd")
+    suffix = "cap" if (weight or "median").lower() == "cap" else "med"
+    col = f"{win}_{suffix}"
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT tp.theme, tp.n, tp.{col} AS ret,
+                       tp.r1m_med, tp.r3m_med, tp.rytd_med,
+                       tp.r1m_cap, tp.r3m_cap, tp.rytd_cap,
+                       tp.leaders, COALESCE(td.sort_order, 100) AS so
+                FROM theme_performance tp
+                LEFT JOIN theme_defs td ON td.theme = tp.theme
+                ORDER BY tp.{col} DESC NULLS LAST
+                """,
+            )
+            rows = cur.fetchall()
+            cur.execute("SELECT max(as_of) FROM theme_performance")
+            as_of = cur.fetchone()[0]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _f(v):
+        return float(v) if v is not None else None
+    out = [{
+        "theme": r[0], "n": int(r[1]), "ret": _f(r[2]),
+        "r1m_med": _f(r[3]), "r3m_med": _f(r[4]), "ytd_med": _f(r[5]),
+        "r1m_cap": _f(r[6]), "r3m_cap": _f(r[7]), "ytd_cap": _f(r[8]),
+        "leaders": list(r[9] or []),
+    } for r in rows]
+    return {"as_of": str(as_of) if as_of else None, "window": window,
+            "weight": ("cap" if suffix == "cap" else "median"),
+            "rows": out, "count": len(out)}
+
+
 # ── Vantage: fundamentals map ──────────────────────────────────────────────
 # A sector/index ranked into color-graded tiles by ONE fundamental. Each metric
 # maps to a COLUMN in the vantage_snapshot materialized view (precomputed daily —
@@ -907,6 +954,18 @@ def register_routes(mcp) -> None:
             return _unauthorized()
         try:
             data = await asyncio.to_thread(_early_turn_rows)
+        except Exception as e:
+            return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/themes", methods=["GET"])
+    async def themes(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        window = request.query_params.get("window") or "ytd"
+        weight = request.query_params.get("weight") or "median"
+        try:
+            data = await asyncio.to_thread(_theme_rows, window, weight)
         except Exception as e:
             return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
         return JSONResponse(data)

@@ -221,6 +221,17 @@
   .vantage-map .v-tk { font-size: 12px; font-weight: 800; line-height: 1.05; }
   .vantage-map .v-val { font-size: 15px; font-weight: 800; margin-top: 2px; }
   .vantage-map .v-co { font-size: 9px; opacity: .72; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Market Themes board — basket-performance tiles */
+  .themes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .theme-tile { border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; position: relative; }
+  .theme-tile .tt-name { font-size: 13px; font-weight: 700; line-height: 1.2; padding-right: 38px; }
+  .theme-tile .tt-ret { font-family: var(--mono); font-size: 22px; font-weight: 800; margin-top: 7px; }
+  .theme-tile .tt-n { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .theme-tile .tt-leaders { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .theme-tile .tt-tk { font-family: var(--mono); font-size: 10.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; cursor: pointer; }
+  .theme-tile .tt-tk:hover { color: var(--text); border-color: var(--muted); }
+  .theme-tile .tt-hot { position: absolute; top: 10px; right: 11px; font-size: 9.5px; font-weight: 800; letter-spacing: .5px; color: #08110b; background: var(--green); border-radius: 4px; padding: 1px 5px; }
+  .theme-tile .tt-cold { position: absolute; top: 10px; right: 11px; font-size: 9.5px; font-weight: 800; letter-spacing: .5px; color: #fff; background: var(--red); border-radius: 4px; padding: 1px 5px; }
   .vantage-map .heat-tile.v-hit { outline: 3px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 2px #000, 0 0 16px rgba(255,255,255,.6); z-index: 3; }
   .vantage-map.dimmed .heat-tile:not(.v-hit) { opacity: .22; }
   #v-lookup { display: none; margin: 4px 0 14px; padding: 10px 14px; border-radius: 8px;
@@ -287,6 +298,7 @@
   <button data-tab="scanner" class="active">Day Trades</button>
   <button data-tab="swings">Swings</button>
   <button data-tab="gems">Hidden Gems</button>
+  <button data-tab="themes">Themes</button>
   <button data-tab="screener">Screener</button>
   <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
@@ -433,6 +445,34 @@
     </div>
     <div id="gem-list" class="gem-list"></div>
     <div id="gem-empty" class="empty" style="display:none">No hidden gems yet. The bottleneck scan runs pre-market at 6 AM ET, Mon–Fri.</div>
+  </section>
+
+  <!-- ── MARKET THEMES ── -->
+  <section id="tab-themes" class="tabpane">
+    <div class="gems-intro">
+      <h3>Market Themes</h3>
+      <p>Curated thematic baskets (AI, Quantum, Nuclear, Drones, Fintech, Cloud…) ranked by basket
+      performance, hottest → coldest. Each basket is a hybrid of hand-picked anchor names plus every
+      stock that matches the theme by industry or business description — all-cap. <b>Median</b> is the
+      typical member (breadth); <b>Cap-weighted</b> is the index read (mega-cap driven). Click any
+      leader to open its chart.</p>
+    </div>
+    <div class="heat-wrap">
+      <div class="heat-head">
+        <span class="heat-title">Theme Performance <span class="heat-sub" id="theme-sub">— year-to-date, median</span></span>
+        <div class="seg" id="theme-win">
+          <button data-win="1m">1M</button>
+          <button data-win="3m">3M</button>
+          <button data-win="ytd" class="on">YTD</button>
+        </div>
+        <div class="seg" id="theme-wt" title="Median = the typical stock in the basket (breadth). Cap-weighted = basket index, mega-cap driven.">
+          <button data-wt="median" class="on">Median</button>
+          <button data-wt="cap">Cap-weighted</button>
+        </div>
+      </div>
+      <div id="themes-grid" class="themes-grid"></div>
+      <div id="themes-empty" class="empty" style="display:none">No theme data yet — refreshed with the daily snapshots.</div>
+    </div>
   </section>
 
   <!-- ── SCREENER ── -->
@@ -798,6 +838,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "watchlist") loadWatchlist();
   if (b.dataset.tab === "swings") loadSwings();
   if (b.dataset.tab === "gems") loadGems();
+  if (b.dataset.tab === "themes") loadThemes();
   if (b.dataset.tab === "screener") loadScreener();
   if (b.dataset.tab === "vantage") loadVantage();
 });
@@ -1140,6 +1181,49 @@ async function loadEarlyTurn() {
     </tr>`).join("");
   etb.querySelectorAll(".et-ind").forEach(el => el.onclick = () => screenerJump(el.dataset.industry));
 }
+/* ── Market Themes board ── */
+state.themes = { window: "ytd", weight: "median" };
+function themeTint(ret) {
+  if (ret == null) return "transparent";
+  const a = Math.min(0.20, 0.04 + Math.abs(ret) * 0.22);
+  return ret >= 0 ? `rgba(43,213,118,${a})` : `rgba(255,92,92,${a})`;
+}
+async function loadThemes() {
+  const t = state.themes;
+  let d;
+  try { d = await api(`/api/themes?window=${t.window}&weight=${t.weight}`); } catch { return; }
+  const winLbl = { "1m": "1-month", "3m": "3-month", "ytd": "year-to-date" }[t.window] || t.window;
+  $("theme-sub").textContent = `— ${winLbl}, ${t.weight === "cap" ? "cap-weighted" : "median"}`;
+  const rows = (d && d.rows) || [];
+  $("themes-empty").style.display = rows.length ? "none" : "";
+  const grid = $("themes-grid");
+  // rows arrive ranked best→worst; flag the single hottest and coldest.
+  grid.innerHTML = rows.map((r, idx) => {
+    const ret = r.ret;
+    const pctTxt = ret == null ? "—"
+      : `${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%`;
+    const cls = ret == null ? "" : (ret >= 0 ? "pos" : "neg");
+    const badge = idx === 0 && ret != null && ret > 0 ? `<span class="tt-hot">HOT</span>`
+      : (idx === rows.length - 1 && ret != null && ret < 0 ? `<span class="tt-cold">COLD</span>` : "");
+    const leaders = (r.leaders || []).slice(0, 5).map(tk =>
+      `<span class="tt-tk" onclick="openDrawer('${esc(tk)}')">${esc(tk)}</span>`).join("");
+    return `<div class="theme-tile" style="background:${themeTint(ret)}">
+      ${badge}
+      <div class="tt-name">${esc(r.theme)}</div>
+      <div class="tt-ret ${cls}">${pctTxt}</div>
+      <div class="tt-n">${r.n} names</div>
+      <div class="tt-leaders">${leaders}</div>
+    </div>`;
+  }).join("");
+}
+document.querySelectorAll("#theme-win button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#theme-win button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.themes.window = b.dataset.win; loadThemes();
+});
+document.querySelectorAll("#theme-wt button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#theme-wt button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.themes.weight = b.dataset.wt; loadThemes();
+});
 async function loadRotation() {
   let d;
   try { d = await api("/api/rotation"); } catch { return; }
