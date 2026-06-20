@@ -491,6 +491,41 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
             "total": sum(s["n"] for s in sectors)}
 
 
+def _early_turn_rows(limit: int = 18) -> dict:
+    """Early-turn / coiling-sector radar (migration 0038): industries whose SHORT
+    window (2-week breadth + volume) is turning up before they're '3-month hot'.
+    Lower-conviction by design (early = more head-fakes) — a watch, not a trigger."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT industry, sector, n, r2w_med, r1m_med, r3m_med, breadth_2w,
+                       vol_surge, leaders, early_score
+                FROM industry_pulse WHERE state='early_turn'
+                ORDER BY early_score DESC LIMIT %s
+                """, (limit,),
+            )
+            rows = cur.fetchall()
+            cur.execute("SELECT max(as_of) FROM industry_pulse")
+            as_of = cur.fetchone()[0]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    def _f(v):
+        return float(v) if v is not None else None
+    out = [{
+        "industry": r[0], "sector": r[1], "n": int(r[2]),
+        "r2w": _f(r[3]), "r1m": _f(r[4]), "r3m": _f(r[5]),
+        "breadth": _f(r[6]), "vol_surge": _f(r[7]),
+        "leaders": list(r[8] or []), "score": _f(r[9]),
+    } for r in rows]
+    return {"as_of": str(as_of) if as_of else None, "rows": out, "count": len(out)}
+
+
 # ── Vantage: fundamentals map ──────────────────────────────────────────────
 # A sector/index ranked into color-graded tiles by ONE fundamental. Each metric
 # maps to a COLUMN in the vantage_snapshot materialized view (precomputed daily —
@@ -798,6 +833,16 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"as_of": None, "narrative": None, "rotating_in": [],
                                  "rotating_out": [], "sectors": [], "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/early-turn", methods=["GET"])
+    async def early_turn(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            data = await asyncio.to_thread(_early_turn_rows)
+        except Exception as e:
+            return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/screener", methods=["GET"])

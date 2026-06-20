@@ -391,6 +391,18 @@
       <div id="rot-narrative" class="rot-narrative"></div>
     </div>
 
+    <div class="heat-wrap" id="et-wrap" style="display:none">
+      <div class="heat-head">
+        <span class="heat-title">Early-Turn Radar <span class="heat-sub">— industries coiling before they're "3-month hot" (2-wk breadth + volume). A watch, not a trigger.</span></span>
+      </div>
+      <div class="tblwrap">
+        <table id="et-table">
+          <thead><tr><th class="left">Industry</th><th class="left">Sector</th><th>2-Wk</th><th>1-Mo</th><th>3-Mo</th><th title="% of names up over 2 weeks">Breadth</th><th title="recent vs prior volume">Vol</th><th class="left">Turning up</th></tr></thead>
+          <tbody id="et-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="heat-wrap">
       <div class="heat-head">
         <span class="heat-title">Sector Heat Map <span class="heat-sub" id="heat-sub">— 3-month median, hottest → coldest</span></span>
@@ -1085,6 +1097,30 @@ async function loadGems() {
   });
   renderGems();
   loadRotation();
+  loadEarlyTurn();
+}
+async function loadEarlyTurn() {
+  let d;
+  try { d = await api("/api/early-turn"); } catch { return; }
+  const wrap = $("et-wrap");
+  const rows = (d && d.rows) || [];
+  if (!rows.length) { wrap.style.display = "none"; return; }
+  wrap.style.display = "";
+  const pct = (v) => {
+    if (v == null) return `<span style="color:var(--muted)">—</span>`;
+    const p = v * 100, cls = p >= 0 ? "pos" : "neg", s = p >= 0 ? "+" : "";
+    return `<span class="${cls}">${s}${p.toFixed(0)}%</span>`;
+  };
+  $("et-body").innerHTML = rows.map(r => `<tr>
+      <td class="left"><b>${esc(r.industry)}</b></td>
+      <td class="left" style="color:var(--muted)">${esc(r.sector)}</td>
+      <td class="num">${pct(r.r2w)}</td>
+      <td class="num">${pct(r.r1m)}</td>
+      <td class="num">${pct(r.r3m)}</td>
+      <td class="num">${r.breadth != null ? (r.breadth * 100).toFixed(0) + "%" : "—"}</td>
+      <td class="num">${r.vol_surge != null ? r.vol_surge.toFixed(2) + "×" : "—"}</td>
+      <td class="left">${(r.leaders || []).slice(0, 4).map(t => `<span class="tkr" style="cursor:pointer" onclick="openDrawer('${esc(t)}')">${esc(t)}</span>`).join(" ")}</td>
+    </tr>`).join("");
 }
 async function loadRotation() {
   let d;
