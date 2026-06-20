@@ -434,12 +434,13 @@ _SCREENER_CAPS = {
 
 
 def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = False,
-                   cap: str = "gem") -> dict:
+                   cap: str = "gem", industry: str = "") -> dict:
     """Full gem-screener pool (migrations 0035/0036): every name that clears the
-    gem gates, filterable by sector and market-cap band, with the live gem score
-    joined in. The user applies their own technicals on top."""
+    gem gates, filterable by sector, market-cap band, and (for radar drill-down)
+    a specific industry, with the live gem score joined in."""
     order = _SCREENER_SORTS.get(sort, _SCREENER_SORTS["score"])
     cap_ceiling = _SCREENER_CAPS.get(cap, _SCREENER_CAPS["gem"])
+    industry = (industry or "").strip()
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
@@ -462,12 +463,13 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
                   ON g.ticker = s.ticker
                  AND g.scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
                 WHERE (%(sec)s = 'ALL' OR s.sector = %(sec)s)
+                  AND (%(ind)s = '' OR s.industry = %(ind)s)
                   AND (%(go)s = false OR g.up_and_comer_score IS NOT NULL)
                   AND (%(capc)s IS NULL OR s.market_cap < %(capc)s)
                 ORDER BY {order}, s.market_cap DESC NULLS LAST
                 LIMIT 1200
                 """,
-                {"sec": sector, "go": gems_only, "capc": cap_ceiling},
+                {"sec": sector, "go": gems_only, "capc": cap_ceiling, "ind": industry},
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -488,7 +490,7 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
         "gem_score": _f(r["up_and_comer_score"]), "gem_theme": r["theme"], "gem_sleeve": r["sleeve"],
     } for r in rows]
     return {"sectors": sectors, "rows": out, "count": len(out),
-            "total": sum(s["n"] for s in sectors)}
+            "total": sum(s["n"] for s in sectors), "industry": industry}
 
 
 def _early_turn_rows(limit: int = 18) -> dict:
@@ -855,8 +857,9 @@ def register_routes(mcp) -> None:
         cap = (request.query_params.get("cap") or "gem").lower()
         if cap not in _SCREENER_CAPS:
             cap = "gem"
+        industry = request.query_params.get("industry") or ""
         try:
-            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only, cap)
+            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only, cap, industry)
         except Exception as e:
             return JSONResponse({"sectors": [], "rows": [], "count": 0, "total": 0, "error": str(e)[:120]})
         return JSONResponse(data)

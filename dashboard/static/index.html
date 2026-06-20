@@ -708,7 +708,20 @@ $("login-btn").onclick = async () => {
 $("login-pw").addEventListener("keydown", e => { if (e.key === "Enter") $("login-btn").click(); });
 
 /* ── Screener: full gem-gate pool, sector-filterable ── */
-state.scr = { sector: "ALL", sort: "score", gemsOnly: "0", cap: "gem", search: "", sectorsLoaded: false };
+state.scr = { sector: "ALL", sort: "score", gemsOnly: "0", cap: "gem", industry: "", search: "", sectorsLoaded: false };
+function screenerJump(industry) {
+  state.scr.industry = industry; state.scr.sector = "ALL"; state.scr.cap = "all"; state.scr.search = "";
+  // switch to the Screener tab
+  document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tabpane").forEach(x => x.classList.remove("active"));
+  const btn = document.querySelector('nav button[data-tab="screener"]');
+  if (btn) btn.classList.add("active");
+  $("tab-screener").classList.add("active");
+  document.querySelectorAll("#scr-cap button").forEach(x => x.classList.toggle("on", x.dataset.cap === "all"));
+  if ($("scr-search")) $("scr-search").value = "";
+  loadScreener();
+}
+function scrClearIndustry() { state.scr.industry = ""; loadScreener(); }
 function scrPct(v) {
   if (v == null) return `<span style="color:var(--muted)">—</span>`;
   const p = v * 100, cls = p >= 0 ? "pos" : "neg", sign = p >= 0 ? "+" : "";
@@ -722,7 +735,7 @@ async function loadScreener() {
   const s = state.scr;
   let d;
   try {
-    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}&cap=${encodeURIComponent(s.cap)}`);
+    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}&cap=${encodeURIComponent(s.cap)}&industry=${encodeURIComponent(s.industry || "")}`);
   } catch { return; }
   if (d.sectors) {
     // Refresh sector counts each load — they change with the cap band.
@@ -739,12 +752,14 @@ function renderScreener() {
     !state.scr.search || (r.ticker || "").includes(state.scr.search.toUpperCase()));
   const body = $("scr-body");
   $("scr-empty").style.display = rows.length ? "none" : "";
-  $("scr-count").textContent = rows.length ? `${rows.length} names` : "";
+  $("scr-count").innerHTML = (state.scr.industry
+      ? `<span class="rot-chip in" style="cursor:pointer" onclick="scrClearIndustry()">${esc(state.scr.industry)} ✕</span> `
+      : "") + (rows.length ? `${rows.length} names` : "");
   body.innerHTML = rows.map(r => {
     const gem = r.gem_score != null
       ? `<span class="scr-gembadge" title="${esc(r.gem_theme || "")}">${r.gem_score.toFixed(0)}</span>` : "";
     const fcls = r.piotroski == null ? "" : (r.piotroski >= 7 ? "pos" : r.piotroski <= 3 ? "neg" : "");
-    return `<tr class="${r.gem_score != null ? "is-gem" : ""}">
+    return `<tr class="${r.gem_score != null ? "is-gem" : ""}" data-ticker="${esc(r.ticker)}" style="cursor:pointer">
       <td class="left"><b>${esc(r.ticker)}</b></td>
       <td class="left">${esc((r.company_name || "").slice(0, 26))}</td>
       <td class="left">${esc(r.sector || "")}</td>
@@ -759,6 +774,7 @@ function renderScreener() {
       <td class="num">${gem}</td>
     </tr>`;
   }).join("");
+  body.querySelectorAll("tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
 }
 $("scr-sector").addEventListener("change", e => { state.scr.sector = e.target.value; loadScreener(); });
 $("scr-sort").addEventListener("change", e => { state.scr.sort = e.target.value; loadScreener(); });
@@ -1111,8 +1127,9 @@ async function loadEarlyTurn() {
     const p = v * 100, cls = p >= 0 ? "pos" : "neg", s = p >= 0 ? "+" : "";
     return `<span class="${cls}">${s}${p.toFixed(0)}%</span>`;
   };
-  $("et-body").innerHTML = rows.map(r => `<tr>
-      <td class="left"><b>${esc(r.industry)}</b></td>
+  const etb = $("et-body");
+  etb.innerHTML = rows.map(r => `<tr>
+      <td class="left"><b class="et-ind" data-industry="${esc(r.industry)}" style="cursor:pointer;text-decoration:underline dotted" title="See every stock in this industry">${esc(r.industry)}</b></td>
       <td class="left" style="color:var(--muted)">${esc(r.sector)}</td>
       <td class="num">${pct(r.r2w)}</td>
       <td class="num">${pct(r.r1m)}</td>
@@ -1121,6 +1138,7 @@ async function loadEarlyTurn() {
       <td class="num">${r.vol_surge != null ? r.vol_surge.toFixed(2) + "×" : "—"}</td>
       <td class="left">${(r.leaders || []).slice(0, 4).map(t => `<span class="tkr" style="cursor:pointer" onclick="openDrawer('${esc(t)}')">${esc(t)}</span>`).join(" ")}</td>
     </tr>`).join("");
+  etb.querySelectorAll(".et-ind").forEach(el => el.onclick = () => screenerJump(el.dataset.industry));
 }
 async function loadRotation() {
   let d;
