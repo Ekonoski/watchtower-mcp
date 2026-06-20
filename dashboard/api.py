@@ -365,16 +365,32 @@ _SCREENER_SORTS = {
 }
 
 
-def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = False) -> dict:
-    """Full gem-screener pool (migration 0035): every name that clears the gem
-    gates, filterable by sector, with the live gem score joined in. The user
-    applies their own technicals on top."""
+# Market-cap bands (cumulative ceilings). Default keeps the gem window so the
+# default Screener view == the gem-gate pool; wider bands reach into large/mega.
+_SCREENER_CAPS = {
+    "gem":   10e9,    # < $10B — the hidden-gem window (default)
+    "large": 50e9,    # < $50B — adds large-caps (e.g. DKS ~$19B)
+    "all":   None,    # no ceiling
+}
+
+
+def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = False,
+                   cap: str = "gem") -> dict:
+    """Full gem-screener pool (migrations 0035/0036): every name that clears the
+    gem gates, filterable by sector and market-cap band, with the live gem score
+    joined in. The user applies their own technicals on top."""
     order = _SCREENER_SORTS.get(sort, _SCREENER_SORTS["score"])
+    cap_ceiling = _SCREENER_CAPS.get(cap, _SCREENER_CAPS["gem"])
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT sector, count(*) FROM screener_snapshot GROUP BY sector ORDER BY count(*) DESC")
+            cur.execute(
+                "SELECT sector, count(*) FROM screener_snapshot "
+                "WHERE (%(capc)s IS NULL OR market_cap < %(capc)s) "
+                "GROUP BY sector ORDER BY count(*) DESC",
+                {"capc": cap_ceiling},
+            )
             sectors = [{"sector": s, "n": int(n)} for s, n in cur.fetchall()]
             cur.execute(
                 f"""
@@ -388,10 +404,11 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
                  AND g.scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
                 WHERE (%(sec)s = 'ALL' OR s.sector = %(sec)s)
                   AND (%(go)s = false OR g.up_and_comer_score IS NOT NULL)
+                  AND (%(capc)s IS NULL OR s.market_cap < %(capc)s)
                 ORDER BY {order}, s.market_cap DESC NULLS LAST
                 LIMIT 1200
                 """,
-                {"sec": sector, "go": gems_only},
+                {"sec": sector, "go": gems_only, "capc": cap_ceiling},
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -726,8 +743,11 @@ def register_routes(mcp) -> None:
         sector = request.query_params.get("sector") or "ALL"
         sort = (request.query_params.get("sort") or "score").lower()
         gems_only = (request.query_params.get("gems_only") or "").lower() in ("1", "true", "yes")
+        cap = (request.query_params.get("cap") or "gem").lower()
+        if cap not in _SCREENER_CAPS:
+            cap = "gem"
         try:
-            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only)
+            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only, cap)
         except Exception as e:
             return JSONResponse({"sectors": [], "rows": [], "count": 0, "total": 0, "error": str(e)[:120]})
         return JSONResponse(data)

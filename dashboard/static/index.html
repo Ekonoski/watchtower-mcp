@@ -349,6 +349,9 @@
         <button data-sleeve="insider">Insider</button>
       </div>
       <input type="text" id="swing-search" placeholder="Filter ticker…" size="12">
+      <label class="ctl">Sector
+        <select id="swing-sector"><option value="ALL">All sectors</option></select>
+      </label>
       <span class="count-note" id="swing-count"></span>
     </div>
     <div class="tblwrap">
@@ -444,6 +447,11 @@
           <option value="ticker">Ticker A–Z</option>
         </select>
       </label>
+      <div class="seg" id="scr-cap" title="Market-cap band. Default = the hidden-gem window (<$10B); widen to reach into large/mega-caps for your own technical screening.">
+        <button data-cap="gem" class="on">Gems &lt;$10B</button>
+        <button data-cap="large">≤$50B</button>
+        <button data-cap="all">All caps</button>
+      </div>
       <div class="seg" id="scr-gemsonly">
         <button data-go="0" class="on">All names</button>
         <button data-go="1">Gems only</button>
@@ -627,6 +635,7 @@ let state = {
   swing: null,
   swingSleeve: "all",
   swingSearch: "",
+  swingSector: "ALL",
   gems: null,
   gemTheme: "all",
   gemSleeve: "all",
@@ -670,7 +679,7 @@ $("login-btn").onclick = async () => {
 $("login-pw").addEventListener("keydown", e => { if (e.key === "Enter") $("login-btn").click(); });
 
 /* ── Screener: full gem-gate pool, sector-filterable ── */
-state.scr = { sector: "ALL", sort: "score", gemsOnly: "0", search: "", sectorsLoaded: false };
+state.scr = { sector: "ALL", sort: "score", gemsOnly: "0", cap: "gem", search: "", sectorsLoaded: false };
 function scrPct(v) {
   if (v == null) return `<span style="color:var(--muted)">—</span>`;
   const p = v * 100, cls = p >= 0 ? "pos" : "neg", sign = p >= 0 ? "+" : "";
@@ -684,14 +693,14 @@ async function loadScreener() {
   const s = state.scr;
   let d;
   try {
-    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}`);
+    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}&cap=${encodeURIComponent(s.cap)}`);
   } catch { return; }
-  if (!s.sectorsLoaded && d.sectors) {
+  if (d.sectors) {
+    // Refresh sector counts each load — they change with the cap band.
     const sel = $("scr-sector");
     sel.innerHTML = `<option value="ALL">All sectors (${d.total})</option>` +
       d.sectors.map(x => `<option value="${esc(x.sector)}">${esc(x.sector)} (${x.n})</option>`).join("");
     sel.value = s.sector;
-    s.sectorsLoaded = true;
   }
   state.scrRows = d.rows || [];
   renderScreener();
@@ -728,6 +737,10 @@ $("scr-search").addEventListener("input", e => { state.scr.search = e.target.val
 document.querySelectorAll("#scr-gemsonly button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#scr-gemsonly button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.scr.gemsOnly = b.dataset.go; loadScreener();
+});
+document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#scr-cap button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.scr.cap = b.dataset.cap; loadScreener();
 });
 
 /* ── tabs ── */
@@ -981,12 +994,21 @@ document.querySelectorAll("#swing-filter button").forEach(b => b.onclick = () =>
   renderSwings();
 });
 $("swing-search").addEventListener("input", e => { state.swingSearch = (e.target.value || "").toUpperCase().trim(); renderSwings(); });
+$("swing-sector").addEventListener("change", e => { state.swingSector = e.target.value; renderSwings(); });
 $("gem-search").addEventListener("input", e => { state.gemSearch = (e.target.value || "").toUpperCase().trim(); renderGems(); });
 
 async function loadSwings() {
   let data;
   try { data = await api("/api/swing/latest"); } catch { return; }
   state.swing = data;
+  // Populate the sector dropdown from the loaded signals (once).
+  const secs = [...new Set((data.rows || []).map(r => r.sector).filter(Boolean))].sort();
+  const sel = $("swing-sector");
+  if (sel) {
+    sel.innerHTML = `<option value="ALL">All sectors</option>` +
+      secs.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+    sel.value = state.swingSector || "ALL";
+  }
   renderSwings();
 }
 
@@ -994,6 +1016,7 @@ function renderSwings() {
   const all = ((state.swing || {}).rows) || [];
   const rows = all.filter(r =>
     (state.swingSleeve === "all" || r.sleeve === state.swingSleeve) &&
+    (state.swingSector === "ALL" || !state.swingSector || (r.sector || "") === state.swingSector) &&
     (!state.swingSearch || (r.ticker || "").includes(state.swingSearch)));
   const asOf = (state.swing || {}).as_of;
   $("swing-count").textContent = `${rows.length} of ${all.length} signals` + (asOf ? ` · screened ${asOf}` : "");
