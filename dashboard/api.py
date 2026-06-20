@@ -247,25 +247,25 @@ def _gems_rows() -> dict:
 
 # ── Vantage: fundamentals map ──────────────────────────────────────────────
 # A sector/index ranked into color-graded tiles by ONE fundamental. Each metric
-# maps to a value expression over the base CTEs and whether higher is better
-# (quality/growth/yield) or lower is better (valuation multiples). Forward P/E is
-# derived live = price / next-fiscal-year consensus EPS. Keys are a fixed
-# whitelist, so inlining the expressions into SQL is safe.
-#   (label, value_expr, higher_is_better, positive_only, fmt)
+# maps to a COLUMN in the vantage_snapshot materialized view (precomputed daily —
+# see migration 0031), whether higher is better (quality/growth/yield) or lower
+# is better (valuation multiples), positive-only, and a display formatter. Keys
+# are a fixed whitelist, so inlining the column into SQL is safe.
+#   (label, snapshot_column, higher_is_better, positive_only, fmt)
 _VANTAGE_METRICS = {
-    "pe":               ("Trailing P/E",          "vm.pe",                False, True,  "mult"),
-    "forward_pe":       ("Forward P/E",           "vm.price / NULLIF(est.eps_avg, 0)", False, True, "mult"),
-    "ps":               ("P/S",                   "vm.ps",                False, True,  "mult"),
-    "ev_ebitda":        ("EV/EBITDA",             "vm.ev_ebitda",         False, True,  "mult"),
-    "pb":               ("P/B",                   "vm.pb",                False, True,  "mult"),
-    "fcf_yield":        ("FCF Yield",             "vm.fcf_yield",         True,  False, "pct"),
-    "roe":              ("ROE",                   "fq.roe",               True,  False, "pct"),
-    "roic":             ("ROIC",                  "fq.roic",              True,  False, "pct"),
-    "gross_margin":     ("Gross Margin",          "fq.gross_margin",      True,  False, "pct"),
-    "operating_margin": ("Operating Margin",      "fq.operating_margin",  True,  False, "pct"),
-    "rev_growth":       ("Revenue Growth (YoY)",  "fqy.rev_yoy",          True,  False, "pct"),
-    "piotroski":        ("Piotroski F-Score",     "fs.piotroski_score",   True,  False, "score9"),
-    "altman_z":         ("Altman Z-Score",        "fs.altman_z_score",    True,  False, "znum"),
+    "pe":               ("Trailing P/E",          "pe",                False, True,  "mult"),
+    "forward_pe":       ("Forward P/E",           "forward_pe",        False, True,  "mult"),
+    "ps":               ("P/S",                   "ps",                False, True,  "mult"),
+    "ev_ebitda":        ("EV/EBITDA",             "ev_ebitda",         False, True,  "mult"),
+    "pb":               ("P/B",                   "pb",                False, True,  "mult"),
+    "fcf_yield":        ("FCF Yield",             "fcf_yield",         True,  False, "pct"),
+    "roe":              ("ROE",                   "roe",               True,  False, "pct"),
+    "roic":             ("ROIC",                  "roic",              True,  False, "pct"),
+    "gross_margin":     ("Gross Margin",          "gross_margin",      True,  False, "pct"),
+    "operating_margin": ("Operating Margin",      "operating_margin",  True,  False, "pct"),
+    "rev_growth":       ("Revenue Growth (YoY)",  "rev_yoy",           True,  False, "pct"),
+    "piotroski":        ("Piotroski F-Score",     "piotroski_score",   True,  False, "score9"),
+    "altman_z":         ("Altman Z-Score",        "altman_z_score",    True,  False, "znum"),
 }
 
 
@@ -286,50 +286,22 @@ def _vantage_rows(metric: str, universe: str, color: str,
     meta = _VANTAGE_METRICS.get(metric)
     if not meta:
         return {"tiles": [], "count": 0, "error": f"unknown metric: {metric}"}
-    label, expr, higher, positive_only, fmt = meta
+    label, col, higher, positive_only, fmt = meta
     universe = (universe or "ALL").strip() or "ALL"
     color = "sector" if color == "sector" else "abs"
-    pos_filter = f" AND ({expr}) > 0" if positive_only else ""
+    pos_filter = f" AND {col} > 0" if positive_only else ""
     order = "DESC" if higher else "ASC"   # best (green) first
 
+    # Reads the precomputed vantage_snapshot (one row per valued ticker, refreshed
+    # daily) instead of re-deriving per-ticker metrics over ~230k fundamentals
+    # rows on every request. `col` is a fixed-whitelist column name.
     sql = f"""
-        WITH vm AS (
-            SELECT ticker, sector, price, market_cap, pe, ps, ev_ebitda, pb, fcf_yield
-            FROM valuation_metrics
-            WHERE as_of_date = (SELECT max(as_of_date) FROM valuation_metrics)
-        ), fq AS (
-            SELECT DISTINCT ON (ticker) ticker, roe, roic, gross_margin, operating_margin
-            FROM fundamentals_quarterly ORDER BY ticker, period_end_date DESC
-        ), fqy AS (
-            SELECT ticker, rev_yoy FROM (
-                SELECT ticker,
-                       revenue / NULLIF(lag(revenue, 4) OVER (
-                           PARTITION BY ticker ORDER BY period_end_date), 0) - 1 AS rev_yoy,
-                       row_number() OVER (PARTITION BY ticker ORDER BY period_end_date DESC) AS rn
-                FROM fundamentals_quarterly
-            ) z WHERE rn = 1
-        ), fs AS (
-            SELECT DISTINCT ON (ticker) ticker, piotroski_score, altman_z_score
-            FROM financial_scores ORDER BY ticker, as_of_date DESC
-        ), est AS (
-            SELECT DISTINCT ON (ticker) ticker, eps_avg
-            FROM analyst_estimates
-            WHERE fiscal_year > EXTRACT(year FROM CURRENT_DATE)::int
-            ORDER BY ticker, fiscal_year ASC
-        ), base AS (
-            SELECT t.ticker, t.company_name,
-                   COALESCE(vm.sector, t.sector) AS sector, t.market_cap,
-                   ({expr}) AS val
-            FROM vm
-            JOIN tickers t ON t.ticker = vm.ticker
-            LEFT JOIN fq  ON fq.ticker  = vm.ticker
-            LEFT JOIN fqy ON fqy.ticker = vm.ticker
-            LEFT JOIN fs  ON fs.ticker  = vm.ticker
-            LEFT JOIN est ON est.ticker = vm.ticker
-            WHERE COALESCE(t.delisted, false) = false
-              AND COALESCE(t.market_cap, 0) >= %(mincap)s
-              AND (%(uni)s = 'ALL' OR COALESCE(vm.sector, t.sector) = %(uni)s)
-              AND ({expr}) IS NOT NULL{pos_filter}
+        WITH base AS (
+            SELECT ticker, company_name, sector, market_cap, {col} AS val
+            FROM vantage_snapshot
+            WHERE {col} IS NOT NULL{pos_filter}
+              AND COALESCE(market_cap, 0) >= %(mincap)s
+              AND (%(uni)s = 'ALL' OR sector = %(uni)s)
         ), ranked AS (
             SELECT ticker, company_name, sector, market_cap, val,
                    percent_rank() OVER (ORDER BY val) AS p_abs,
