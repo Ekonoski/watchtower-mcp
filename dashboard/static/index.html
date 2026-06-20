@@ -190,6 +190,17 @@
   #heat-tf button, #heat-wt button { padding: 3px 9px; font-size: 11px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
   #heat-tf button.on, #heat-wt button.on { background: var(--panel2); color: var(--text); }
   #heat-tf button + button, #heat-wt button + button { border-left: 1px solid var(--border); }
+  /* Sector rotation card */
+  .rot-flows { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .rot-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 7px; font-size: 12px; font-weight: 700; border: 1px solid var(--border); }
+  .rot-chip.in { background: rgba(43,213,118,.14); color: #2bd576; border-color: rgba(43,213,118,.35); }
+  .rot-chip.out { background: rgba(255,92,92,.12); color: #ff7a7a; border-color: rgba(255,92,92,.32); }
+  .rot-chip .rc-acc { font-size: 11px; opacity: .85; font-weight: 600; }
+  .rot-chip .rc-led { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; background: #2bd576; color: #08110b; border-radius: 3px; padding: 1px 4px; font-weight: 800; }
+  .rot-chip.none { color: var(--muted); font-weight: 600; border-style: dashed; }
+  .rot-narrative { font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--panel2); border-left: 3px solid #2bd576; border-radius: 6px; padding: 9px 12px; }
+  .rot-narrative .rn-tag { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 3px; }
+  .rot-narrative.data-only { border-left-color: var(--border); }
   .heat-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
   .heat-tile { border-radius: 8px; padding: 10px 11px; color: #08110b; position: relative; overflow: hidden; min-height: 64px; }
   .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
@@ -357,6 +368,15 @@
       Rising volume + real fundamentals (quality &amp; growth) favored; distress, dilution, negative-margin
       junk and true blow-offs are screened out. Scoring is <b>regime-aware</b>: when breadth is weak the engine
       trusts momentum less and leans on fundamentals; when breadth is healthy it gives reversals more room.</p>
+    </div>
+
+    <div class="heat-wrap" id="rotation-wrap" style="display:none">
+      <div class="heat-head">
+        <span class="heat-title">Sector Rotation <span class="heat-sub" id="rot-sub">— early money flows (breadth-led)</span></span>
+        <span class="heat-legend"><i class="hl hot"></i>rotating in <i class="hl cold"></i>rotating out</span>
+      </div>
+      <div id="rot-flows" class="rot-flows"></div>
+      <div id="rot-narrative" class="rot-narrative"></div>
     </div>
 
     <div class="heat-wrap">
@@ -900,6 +920,37 @@ async function loadGems() {
     b.classList.add("on"); state.gemSleeve = b.dataset.gsleeve; renderGems();
   });
   renderGems();
+  loadRotation();
+}
+async function loadRotation() {
+  let d;
+  try { d = await api("/api/rotation"); } catch { return; }
+  const wrap = $("rotation-wrap");
+  const sectors = (d && d.sectors) || [];
+  const ins = (d && d.rotating_in) || [];
+  const outs = (d && d.rotating_out) || [];
+  if (!sectors.length && !ins.length && !outs.length) { wrap.style.display = "none"; return; }
+  wrap.style.display = "";
+  const chip = (s, kind) => {
+    const acc = s.accel_median > 0 ? `+${s.accel_median}` : `${s.accel_median}`;
+    const led = (kind === "in" && s.breadth_led) ? `<span class="rc-led">breadth-led</span>` : "";
+    const wr = s.week_rank || s.week_rank_med, qr = s.qtr_rank || s.qtr_rank_med;
+    const title = `weekly rank #${wr} vs quarterly #${qr} (median) · accel ${acc}`;
+    return `<span class="rot-chip ${kind}" title="${title}">${esc(s.sector)} <span class="rc-acc">${acc}</span>${led}</span>`;
+  };
+  const inHtml = ins.length ? ins.map(s => chip(s, "in")).join("") : `<span class="rot-chip none">no clear inflows</span>`;
+  const outHtml = outs.length ? outs.map(s => chip(s, "out")).join("") : "";
+  $("rot-flows").innerHTML = inHtml + outHtml;
+  const nar = $("rot-narrative");
+  if (d.narrative) {
+    nar.style.display = ""; nar.classList.remove("data-only");
+    nar.innerHTML = `<span class="rn-tag">Grok rotation read</span>${esc(d.narrative)}`;
+  } else if (ins.length || outs.length) {
+    nar.style.display = ""; nar.classList.add("data-only");
+    const inN = ins.map(s => s.sector).join(", ") || "none";
+    const outN = outs.map(s => s.sector).join(", ") || "none";
+    nar.innerHTML = `<span class="rn-tag">Rotation signal (breadth)</span>Money rotating <b>in</b>: ${esc(inN)}. Rotating <b>out</b>: ${esc(outN)}.`;
+  } else { nar.style.display = "none"; }
 }
 function renderHeatMap(heat) {
   const el = $("heat-map");

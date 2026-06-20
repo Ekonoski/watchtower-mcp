@@ -310,6 +310,49 @@ def _gems_rows() -> dict:
             "market_regime": regime, "count": len(gems)}
 
 
+def _rotation_rows() -> dict:
+    """Latest sector-rotation read (watchtower migration 0034): which sectors are
+    seeing early money inflow/outflow, plus Grok's narrative. Median (breadth) is
+    the primary signal; cap-weighted confirms; breadth-led = the earliest move."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT as_of, regime, narrative, source, rotating_in, rotating_out
+                FROM sector_rotation_read ORDER BY as_of DESC LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                return {"as_of": None, "narrative": None, "rotating_in": [], "rotating_out": [], "sectors": []}
+            as_of, regime, narrative, source, r_in, r_out = row
+            cur.execute(
+                """
+                SELECT sector, state, accel_median, breadth_led, week_rank_med,
+                       month_rank_med, qtr_rank_med, week_ret_med, month_ret_med, qtr_ret_med
+                FROM sector_rotation WHERE as_of = %s ORDER BY accel_median DESC
+                """,
+                (as_of,),
+            )
+            sectors = [{
+                "sector": s, "state": st, "accel_median": int(a) if a is not None else 0,
+                "breadth_led": bool(bl), "week_rank": wr, "month_rank": mr, "qtr_rank": qr,
+                "week_ret": float(wt) if wt is not None else None,
+                "month_ret": float(mt) if mt is not None else None,
+                "qtr_ret": float(qt) if qt is not None else None,
+            } for (s, st, a, bl, wr, mr, qr, wt, mt, qt) in cur.fetchall()]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return {"as_of": str(as_of), "regime": regime, "narrative": narrative,
+            "source": source, "rotating_in": r_in or [], "rotating_out": r_out or [],
+            "sectors": sectors}
+
+
 # ── Vantage: fundamentals map ──────────────────────────────────────────────
 # A sector/index ranked into color-graded tiles by ONE fundamental. Each metric
 # maps to a COLUMN in the vantage_snapshot materialized view (precomputed daily —
@@ -602,6 +645,17 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": [], "error": str(e)[:120]})
         return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": sectors})
+
+    @mcp.custom_route("/api/rotation", methods=["GET"])
+    async def rotation(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            data = await asyncio.to_thread(_rotation_rows)
+        except Exception as e:
+            return JSONResponse({"as_of": None, "narrative": None, "rotating_in": [],
+                                 "rotating_out": [], "sectors": [], "error": str(e)[:120]})
+        return JSONResponse(data)
 
     @mcp.custom_route("/api/vantage", methods=["GET"])
     async def vantage(request: Request):
