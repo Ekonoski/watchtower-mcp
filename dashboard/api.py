@@ -167,7 +167,57 @@ def _swing_rows() -> dict:
 _HEAT_WINDOWS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
 
 
-def _sector_heat_live(window_days: int = 91, weight: str = "median") -> list:
+def _sector_heat_snapshot(tf: str, weight: str) -> list:
+    """Read the precomputed sector heat map (migration 0033 — refreshed nightly
+    by ingestion/refresh_vantage.py). Returns [] if the snapshot is missing or
+    empty so the caller can fall back to a live compute."""
+    from screen.reversal_screen import _conn
+    try:
+        conn = _conn()
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT sector, n, avg_ret, median_ret, capwtd_ret, ret, weight, heat, rank
+                FROM sector_heat_snapshot
+                WHERE tf = %(tf)s AND weight = %(wt)s
+                ORDER BY rank
+                """,
+                {"tf": tf, "wt": weight},
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return [{
+        "sector": s, "n": int(n),
+        "avg_ret": float(a) if a is not None else 0.0,
+        "median_ret": float(m) if m is not None else 0.0,
+        "capwtd_ret": float(c) if c is not None else 0.0,
+        "ret": float(r) if r is not None else 0.0,
+        "weight": w,
+        "heat": float(h) if h is not None else 0.5,
+        "rank": int(rk),
+    } for s, n, a, m, c, r, w, h, rk in rows]
+
+
+def _sector_heat_live(tf: str = "quarterly", weight: str = "median") -> list:
+    """Sector heat map for a timeframe + weighting. Reads the nightly snapshot
+    (fast); falls back to a live compute if the snapshot isn't there yet."""
+    weight = weight if weight in ("median", "cap") else "median"
+    rows = _sector_heat_snapshot(tf, weight)
+    if rows:
+        return rows
+    return _sector_heat_compute(_HEAT_WINDOWS.get(tf, 91), weight)
+
+
+def _sector_heat_compute(window_days: int = 91, weight: str = "median") -> list:
     """Live sector heat map: rank every GICS sector hottest->coldest by price
     momentum over `window_days`, across real common stocks. Colors relative to
     the spread within the chosen window, so the map is readable at any horizon
@@ -541,12 +591,14 @@ def register_routes(mcp) -> None:
         if not _is_authed(request):
             return _unauthorized()
         tf = (request.query_params.get("tf") or "quarterly").lower()
-        days = _HEAT_WINDOWS.get(tf, 91)
+        if tf not in _HEAT_WINDOWS:
+            tf = "quarterly"
+        days = _HEAT_WINDOWS[tf]
         weight = (request.query_params.get("weight") or "median").lower()
         if weight not in ("median", "cap"):
             weight = "median"
         try:
-            sectors = await asyncio.to_thread(_sector_heat_live, days, weight)
+            sectors = await asyncio.to_thread(_sector_heat_live, tf, weight)
         except Exception as e:
             return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": [], "error": str(e)[:120]})
         return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": sectors})
