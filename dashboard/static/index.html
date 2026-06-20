@@ -530,6 +530,12 @@
         <button data-vcolor="abs" class="on">Absolute</button>
         <button data-vcolor="sector">Sector-relative</button>
       </div>
+      <div class="seg" id="v-mincap" title="Market-cap floor for the tiles. Lower it to bring small-cap gems into the map (best within a single sector).">
+        <button data-mincap="2b" class="on">$2B+</button>
+        <button data-mincap="500m">$500M+</button>
+        <button data-mincap="250m">$250M+</button>
+        <button data-mincap="all">All</button>
+      </div>
       <input id="v-search" type="text" placeholder="Find ticker…" autocomplete="off" style="width:130px">
       <span id="v-count" style="font-size:12px;color:var(--muted)"></span>
     </div>
@@ -1138,11 +1144,12 @@ async function loadVantage() {
   const metric = state.vMetric || "pe";
   const uni = state.vUniverse || "Technology";
   const color = state.vColor || "abs";
+  const mincap = state.vMincap || "2b";
   $("v-map").innerHTML = `<span class="empty" style="grid-column:1/-1">Loading…</span>`;
   $("v-empty").style.display = "none";
   let data;
   try {
-    data = await api(`/api/vantage?metric=${encodeURIComponent(metric)}&universe=${encodeURIComponent(uni)}&color=${encodeURIComponent(color)}`);
+    data = await api(`/api/vantage?metric=${encodeURIComponent(metric)}&universe=${encodeURIComponent(uni)}&color=${encodeURIComponent(color)}&mincap=${encodeURIComponent(mincap)}`);
   } catch { return; }
   state.vData = data;
   renderVantage();
@@ -1180,6 +1187,10 @@ $("v-universe").onchange = e => { state.vUniverse = e.target.value; loadVantage(
 document.querySelectorAll("#v-color button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#v-color button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.vColor = b.dataset.vcolor; renderVantage();  // recolor only — both modes are in the payload
+});
+document.querySelectorAll("#v-mincap button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#v-mincap button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.vMincap = b.dataset.mincap; loadVantage();
 });
 
 /* ── Vantage ticker search / highlight ── */

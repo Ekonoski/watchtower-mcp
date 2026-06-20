@@ -456,6 +456,11 @@ _VANTAGE_METRICS = {
 }
 
 
+# Market-cap floor for the Vantage tiles. Default $2B keeps the map to sizable
+# names; lower it to pull small-caps (e.g. a $450M hidden gem) into the grid.
+_VANTAGE_MINCAPS = {"2b": 2e9, "500m": 5e8, "250m": 2.5e8, "all": 0.0}
+
+
 def _vantage_fmt(v: float, fmt: str) -> str:
     if fmt == "mult":
         return f"{v:.1f}×"
@@ -759,8 +764,13 @@ def register_routes(mcp) -> None:
         metric = (request.query_params.get("metric") or "pe").lower()
         universe = request.query_params.get("universe") or "ALL"
         color = (request.query_params.get("color") or "abs").lower()
+        mincap = _VANTAGE_MINCAPS.get((request.query_params.get("mincap") or "2b").lower(), 2e9)
+        # A single sector rarely has >1500 valued names, so show ALL of them above
+        # the chosen floor (lets small-caps like a $450M gem tile). The ALL-sectors
+        # overview stays size-capped so it doesn't render thousands of tiles.
+        limit = 400 if universe == "ALL" else 1500
         try:
-            data = await asyncio.to_thread(_vantage_rows, metric, universe, color)
+            data = await asyncio.to_thread(_vantage_rows, metric, universe, color, mincap, limit)
         except Exception as e:
             return JSONResponse({"tiles": [], "count": 0, "error": str(e)[:160]})
         return JSONResponse(data)
