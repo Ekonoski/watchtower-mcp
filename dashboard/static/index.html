@@ -559,6 +559,17 @@
 
   <!-- ── PERFORMANCE ── -->
   <section id="tab-performance" class="tabpane">
+    <div class="heat-wrap" id="gp-wrap">
+      <div class="heat-head">
+        <span class="heat-title">Hidden-Gem Pick Performance <span class="heat-sub" id="gp-sub">— forward returns from each pick's entry</span></span>
+      </div>
+      <div class="tblwrap">
+        <table id="gp-table">
+          <thead><tr><th class="left">Cohort</th><th>7-Day</th><th>30-Day</th><th>90-Day</th></tr></thead>
+          <tbody id="gp-body"></tbody>
+        </table>
+      </div>
+    </div>
     <div class="controls">
       <select id="perf-days">
         <option value="30">Last 30 days</option>
@@ -755,7 +766,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabpane").forEach(x => x.classList.remove("active"));
   b.classList.add("active");
   $("tab-" + b.dataset.tab).classList.add("active");
-  if (b.dataset.tab === "performance" && !state.perfLoaded) loadPerformance();
+  if (b.dataset.tab === "performance") { loadGemPerformance(); if (!state.perfLoaded) loadPerformance(); }
   if (b.dataset.tab === "watchlist") loadWatchlist();
   if (b.dataset.tab === "swings") loadSwings();
   if (b.dataset.tab === "gems") loadGems();
@@ -1473,6 +1484,28 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(
 
 /* ── performance ── */
 $("perf-days").onchange = () => loadPerformance();
+async function loadGemPerformance() {
+  let d;
+  try { d = await api("/api/gem-performance"); } catch { return; }
+  const cell = (h) => {
+    if (!h || !h.n) return `<span style="color:var(--muted)">— maturing</span>`;
+    const p = (h.avg || 0) * 100, cls = p >= 0 ? "pos" : "neg", sign = p >= 0 ? "+" : "";
+    const win = h.win != null ? `${(h.win * 100).toFixed(0)}% win` : "";
+    return `<span class="${cls}" style="font-weight:700">${sign}${p.toFixed(1)}%</span> <span style="color:var(--muted);font-size:11px">${win} · n=${h.n}</span>`;
+  };
+  const label = { all: "All gems", momentum: "Momentum", reversal: "Reversal" };
+  const rows = [...(d.overall || []), ...(d.by_sleeve || [])];
+  $("gp-sub").textContent = d.total_picks
+    ? `— ${d.total_picks} picks tracked since ${d.first_day || "?"} (returns from each pick's entry price)`
+    : "— no picks tracked yet";
+  $("gp-body").innerHTML = rows.map(r => `<tr>
+      <td class="left"><b>${esc(label[r.group] || r.group)}</b></td>
+      <td class="num">${cell(r.d7)}</td>
+      <td class="num">${cell(r.d30)}</td>
+      <td class="num">${cell(r.d90)}</td>
+    </tr>`).join("") ||
+    `<tr><td colspan="4" class="empty">No picks tracked yet.</td></tr>`;
+}
 async function loadPerformance() {
   state.perfLoaded = true;
   $("perf-note").textContent = "loading…";

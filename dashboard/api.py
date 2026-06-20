@@ -353,6 +353,65 @@ def _rotation_rows() -> dict:
             "sectors": sectors}
 
 
+def _gem_performance() -> dict:
+    """Forward performance of every hidden-gem pick (gem_pick_history, migration
+    0037) at 7/30/90 calendar days — overall and by sleeve. Only picks with
+    enough elapsed time count toward each horizon; the rest are still maturing."""
+    from screen.reversal_screen import _conn
+    base = """
+        WITH picks AS (
+            SELECT pick_date, ticker, entry_price, sleeve FROM gem_pick_history
+            WHERE entry_price > 0
+        ), r AS (
+            SELECT {grp_col} AS grp_val,
+              CASE WHEN p.pick_date <= CURRENT_DATE - 7 THEN
+                (SELECT close FROM daily_prices d WHERE d.ticker=p.ticker AND d.trade_date >= p.pick_date+7  ORDER BY d.trade_date LIMIT 1)/NULLIF(p.entry_price,0)-1 END AS r7,
+              CASE WHEN p.pick_date <= CURRENT_DATE - 30 THEN
+                (SELECT close FROM daily_prices d WHERE d.ticker=p.ticker AND d.trade_date >= p.pick_date+30 ORDER BY d.trade_date LIMIT 1)/NULLIF(p.entry_price,0)-1 END AS r30,
+              CASE WHEN p.pick_date <= CURRENT_DATE - 90 THEN
+                (SELECT close FROM daily_prices d WHERE d.ticker=p.ticker AND d.trade_date >= p.pick_date+90 ORDER BY d.trade_date LIMIT 1)/NULLIF(p.entry_price,0)-1 END AS r90
+            FROM picks p
+        )
+        SELECT grp_val,
+            count(r7)  AS n7,  avg(r7)  AS a7,  avg((r7>0)::int)::float  AS w7,
+            count(r30) AS n30, avg(r30) AS a30, avg((r30>0)::int)::float AS w30,
+            count(r90) AS n90, avg(r90) AS a90, avg((r90>0)::int)::float AS w90
+        FROM r GROUP BY grp_val ORDER BY grp_val
+    """
+    out = {"horizons": [7, 30, 90]}
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*), min(pick_date), max(pick_date) FROM gem_pick_history")
+            n, first, last = cur.fetchone()
+            out["total_picks"] = int(n or 0)
+            out["first_day"] = str(first) if first else None
+            out["last_day"] = str(last) if last else None
+            cur.execute(base.format(grp_col="'all'"))
+            overall = cur.fetchall()
+            cur.execute(base.format(grp_col="p.sleeve"))
+            by_sleeve = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def pack(rows):
+        res = []
+        for (gv, n7, a7, w7, n30, a30, w30, n90, a90, w90) in rows:
+            res.append({
+                "group": gv,
+                "d7":  {"n": int(n7 or 0),  "avg": float(a7)  if a7  is not None else None, "win": float(w7)  if w7  is not None else None},
+                "d30": {"n": int(n30 or 0), "avg": float(a30) if a30 is not None else None, "win": float(w30) if w30 is not None else None},
+                "d90": {"n": int(n90 or 0), "avg": float(a90) if a90 is not None else None, "win": float(w90) if w90 is not None else None},
+            })
+        return res
+    out["overall"] = pack(overall)
+    out["by_sleeve"] = pack(by_sleeve)
+    return out
+
+
 # Whitelisted sort keys -> ORDER BY (keys are fixed, safe to inline)
 _SCREENER_SORTS = {
     "score":  "g.up_and_comer_score DESC NULLS LAST",
@@ -755,6 +814,16 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only, cap)
         except Exception as e:
             return JSONResponse({"sectors": [], "rows": [], "count": 0, "total": 0, "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/gem-performance", methods=["GET"])
+    async def gem_performance(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            data = await asyncio.to_thread(_gem_performance)
+        except Exception as e:
+            return JSONResponse({"total_picks": 0, "overall": [], "by_sleeve": [], "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/vantage", methods=["GET"])
