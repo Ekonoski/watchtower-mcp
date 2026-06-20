@@ -245,6 +245,135 @@ def _gems_rows() -> dict:
             "market_regime": regime, "count": len(gems)}
 
 
+# ── Vantage: fundamentals map ──────────────────────────────────────────────
+# A sector/index ranked into color-graded tiles by ONE fundamental. Each metric
+# maps to a value expression over the base CTEs and whether higher is better
+# (quality/growth/yield) or lower is better (valuation multiples). Forward P/E is
+# derived live = price / next-fiscal-year consensus EPS. Keys are a fixed
+# whitelist, so inlining the expressions into SQL is safe.
+#   (label, value_expr, higher_is_better, positive_only, fmt)
+_VANTAGE_METRICS = {
+    "pe":               ("Trailing P/E",          "vm.pe",                False, True,  "mult"),
+    "forward_pe":       ("Forward P/E",           "vm.price / NULLIF(est.eps_avg, 0)", False, True, "mult"),
+    "ps":               ("P/S",                   "vm.ps",                False, True,  "mult"),
+    "ev_ebitda":        ("EV/EBITDA",             "vm.ev_ebitda",         False, True,  "mult"),
+    "pb":               ("P/B",                   "vm.pb",                False, True,  "mult"),
+    "fcf_yield":        ("FCF Yield",             "vm.fcf_yield",         True,  False, "pct"),
+    "roe":              ("ROE",                   "fq.roe",               True,  False, "pct"),
+    "roic":             ("ROIC",                  "fq.roic",              True,  False, "pct"),
+    "gross_margin":     ("Gross Margin",          "fq.gross_margin",      True,  False, "pct"),
+    "operating_margin": ("Operating Margin",      "fq.operating_margin",  True,  False, "pct"),
+    "rev_growth":       ("Revenue Growth (YoY)",  "fqy.rev_yoy",          True,  False, "pct"),
+    "piotroski":        ("Piotroski F-Score",     "fs.piotroski_score",   True,  False, "score9"),
+    "altman_z":         ("Altman Z-Score",        "fs.altman_z_score",    True,  False, "znum"),
+}
+
+
+def _vantage_fmt(v: float, fmt: str) -> str:
+    if fmt == "mult":
+        return f"{v:.1f}×"
+    if fmt == "pct":
+        return f"{v * 100:.1f}%"
+    if fmt == "score9":
+        return f"{int(round(v))}/9"
+    if fmt == "znum":
+        return f"{v:.1f}"
+    return f"{v:.2f}"
+
+
+def _vantage_rows(metric: str, universe: str, color: str,
+                  mincap: float = 2e9, limit: int = 400) -> dict:
+    meta = _VANTAGE_METRICS.get(metric)
+    if not meta:
+        return {"tiles": [], "count": 0, "error": f"unknown metric: {metric}"}
+    label, expr, higher, positive_only, fmt = meta
+    universe = (universe or "ALL").strip() or "ALL"
+    color = "sector" if color == "sector" else "abs"
+    pos_filter = f" AND ({expr}) > 0" if positive_only else ""
+    order = "DESC" if higher else "ASC"   # best (green) first
+
+    sql = f"""
+        WITH vm AS (
+            SELECT ticker, sector, price, market_cap, pe, ps, ev_ebitda, pb, fcf_yield
+            FROM valuation_metrics
+            WHERE as_of_date = (SELECT max(as_of_date) FROM valuation_metrics)
+        ), fq AS (
+            SELECT DISTINCT ON (ticker) ticker, roe, roic, gross_margin, operating_margin
+            FROM fundamentals_quarterly ORDER BY ticker, period_end_date DESC
+        ), fqy AS (
+            SELECT ticker, rev_yoy FROM (
+                SELECT ticker,
+                       revenue / NULLIF(lag(revenue, 4) OVER (
+                           PARTITION BY ticker ORDER BY period_end_date), 0) - 1 AS rev_yoy,
+                       row_number() OVER (PARTITION BY ticker ORDER BY period_end_date DESC) AS rn
+                FROM fundamentals_quarterly
+            ) z WHERE rn = 1
+        ), fs AS (
+            SELECT DISTINCT ON (ticker) ticker, piotroski_score, altman_z_score
+            FROM financial_scores ORDER BY ticker, as_of_date DESC
+        ), est AS (
+            SELECT DISTINCT ON (ticker) ticker, eps_avg
+            FROM analyst_estimates
+            WHERE fiscal_year > EXTRACT(year FROM CURRENT_DATE)::int
+            ORDER BY ticker, fiscal_year ASC
+        ), base AS (
+            SELECT t.ticker, t.company_name,
+                   COALESCE(vm.sector, t.sector) AS sector, t.market_cap,
+                   ({expr}) AS val
+            FROM vm
+            JOIN tickers t ON t.ticker = vm.ticker
+            LEFT JOIN fq  ON fq.ticker  = vm.ticker
+            LEFT JOIN fqy ON fqy.ticker = vm.ticker
+            LEFT JOIN fs  ON fs.ticker  = vm.ticker
+            LEFT JOIN est ON est.ticker = vm.ticker
+            WHERE COALESCE(t.delisted, false) = false
+              AND COALESCE(t.market_cap, 0) >= %(mincap)s
+              AND (%(uni)s = 'ALL' OR COALESCE(vm.sector, t.sector) = %(uni)s)
+              AND ({expr}) IS NOT NULL{pos_filter}
+        ), ranked AS (
+            SELECT ticker, company_name, sector, market_cap, val,
+                   percent_rank() OVER (ORDER BY val) AS p_abs,
+                   percent_rank() OVER (PARTITION BY sector ORDER BY val) AS p_sector,
+                   row_number() OVER (ORDER BY market_cap DESC NULLS LAST) AS mc_rank
+            FROM base
+        )
+        SELECT ticker, company_name, sector, market_cap, val, p_abs, p_sector
+        FROM ranked WHERE mc_rank <= %(limit)s
+        ORDER BY val {order}
+    """
+
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT max(as_of_date) FROM valuation_metrics")
+            row = cur.fetchone()
+            as_of = row[0] if row else None
+            cur.execute(sql, {"uni": universe, "mincap": mincap, "limit": limit})
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    tiles = []
+    for (tk, cn, sec, mcap, val, p_abs, p_sec) in rows:
+        v = float(val)
+        g_abs = float(p_abs) if higher else (1.0 - float(p_abs))
+        g_sec = float(p_sec) if higher else (1.0 - float(p_sec))
+        tiles.append({
+            "ticker": tk, "company": cn, "sector": sec,
+            "market_cap": float(mcap) if mcap is not None else None,
+            "value": round(v, 4), "display": _vantage_fmt(v, fmt),
+            "g_abs": round(g_abs, 4), "g_sector": round(g_sec, 4),
+        })
+
+    return {
+        "metric": metric, "metric_label": label, "lower_is_better": (not higher),
+        "universe": universe, "color": color,
+        "as_of": str(as_of) if as_of else None,
+        "count": len(tiles), "tiles": tiles,
+    }
+
+
 def register_routes(mcp) -> None:
     """Attach all dashboard routes to the FastMCP instance. Must be called
     before mcp.streamable_http_app() builds the Starlette app."""
@@ -404,6 +533,19 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"tf": tf, "window_days": days, "sectors": [], "error": str(e)[:120]})
         return JSONResponse({"tf": tf, "window_days": days, "sectors": sectors})
+
+    @mcp.custom_route("/api/vantage", methods=["GET"])
+    async def vantage(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        metric = (request.query_params.get("metric") or "pe").lower()
+        universe = request.query_params.get("universe") or "ALL"
+        color = (request.query_params.get("color") or "abs").lower()
+        try:
+            data = await asyncio.to_thread(_vantage_rows, metric, universe, color)
+        except Exception as e:
+            return JSONResponse({"tiles": [], "count": 0, "error": str(e)[:160]})
+        return JSONResponse(data)
 
     @mcp.custom_route("/api/watchlist", methods=["GET", "POST"])
     async def watchlist(request: Request):

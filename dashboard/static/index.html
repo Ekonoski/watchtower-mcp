@@ -195,6 +195,13 @@
   .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
   .heat-tile .ht-ret { font-size: 19px; font-weight: 800; margin-top: 6px; }
   .heat-tile .ht-n { position: absolute; top: 8px; right: 9px; font-size: 10px; opacity: 0.6; font-weight: 600; }
+  /* Vantage — denser tiles (many names per sector), clickable */
+  .vantage-map { grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 6px; }
+  .vantage-map .heat-tile { min-height: 50px; padding: 7px 8px; cursor: pointer; transition: transform .06s; }
+  .vantage-map .heat-tile:hover { transform: translateY(-1px); }
+  .vantage-map .v-tk { font-size: 12px; font-weight: 800; line-height: 1.05; }
+  .vantage-map .v-val { font-size: 15px; font-weight: 800; margin-top: 2px; }
+  .vantage-map .v-co { font-size: 9px; opacity: .72; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .gem-list { display: flex; flex-direction: column; gap: 16px; }
   .gem-theme { }
@@ -254,6 +261,7 @@
   <button data-tab="scanner" class="active">Day Trades</button>
   <button data-tab="swings">Swings</button>
   <button data-tab="gems">Hidden Gems</button>
+  <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
   <button data-tab="performance">Performance</button>
   <button data-tab="watchlist">Watchlist</button>
@@ -370,6 +378,68 @@
     </div>
     <div id="gem-list" class="gem-list"></div>
     <div id="gem-empty" class="empty" style="display:none">No hidden gems yet. The bottleneck scan runs pre-market at 6 AM ET, Mon–Fri.</div>
+  </section>
+
+  <!-- ── VANTAGE ── -->
+  <section id="tab-vantage" class="tabpane">
+    <div class="gems-intro">
+      <h3>Vantage</h3>
+      <p>The lay of the land: pick a <b>fundamental</b> and a <b>sector</b>, and every name is ranked into
+      color-graded tiles — <span style="color:#2bd576">green = better</span> (cheaper for valuation
+      multiples, higher for quality / growth / yield), <span style="color:#ff5c5c">red = worse</span>.
+      Color by <b>absolute</b> value or <b>sector-relative</b> percentile, so a "cheap" Tech name and a
+      "cheap" Utility are judged on the same scale. Click any tile to open the ticker.</p>
+    </div>
+
+    <div class="controls">
+      <select id="v-metric">
+        <optgroup label="Valuation (lower = better)">
+          <option value="pe" selected>Trailing P/E</option>
+          <option value="forward_pe">Forward P/E</option>
+          <option value="ps">P/S</option>
+          <option value="ev_ebitda">EV/EBITDA</option>
+          <option value="pb">P/B</option>
+        </optgroup>
+        <optgroup label="Quality / Growth / Yield (higher = better)">
+          <option value="fcf_yield">FCF Yield</option>
+          <option value="roe">ROE</option>
+          <option value="roic">ROIC</option>
+          <option value="gross_margin">Gross Margin</option>
+          <option value="operating_margin">Operating Margin</option>
+          <option value="rev_growth">Revenue Growth (YoY)</option>
+          <option value="piotroski">Piotroski F-Score</option>
+          <option value="altman_z">Altman Z-Score</option>
+        </optgroup>
+      </select>
+      <select id="v-universe">
+        <option value="Technology" selected>Technology</option>
+        <option value="Healthcare">Healthcare</option>
+        <option value="Financial Services">Financial Services</option>
+        <option value="Consumer Cyclical">Consumer Cyclical</option>
+        <option value="Consumer Defensive">Consumer Defensive</option>
+        <option value="Industrials">Industrials</option>
+        <option value="Energy">Energy</option>
+        <option value="Basic Materials">Basic Materials</option>
+        <option value="Communication Services">Communication Services</option>
+        <option value="Utilities">Utilities</option>
+        <option value="Real Estate">Real Estate</option>
+        <option value="ALL">All sectors (top 400 by size)</option>
+      </select>
+      <div class="seg" id="v-color">
+        <button data-vcolor="abs" class="on">Absolute</button>
+        <button data-vcolor="sector">Sector-relative</button>
+      </div>
+      <span id="v-count" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+
+    <div class="heat-wrap">
+      <div class="heat-head">
+        <div class="heat-title">Vantage <span id="v-sub" class="heat-sub"></span></div>
+        <div class="heat-legend"><span class="hl cold"></span>worse <span class="hl warm"></span> <span class="hl hot"></span>better</div>
+      </div>
+      <div id="v-map" class="heat-map vantage-map"></div>
+      <div id="v-empty" class="empty" style="display:none"></div>
+    </div>
   </section>
 
   <!-- ── NEWS ── -->
@@ -513,6 +583,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "watchlist") loadWatchlist();
   if (b.dataset.tab === "swings") loadSwings();
   if (b.dataset.tab === "gems") loadGems();
+  if (b.dataset.tab === "vantage") loadVantage();
 });
 
 /* ── browser pop-up notifications ── */
@@ -841,6 +912,54 @@ async function loadHeatmap(tf) {
   renderHeatMap((data && data.sectors) || []);
 }
 document.querySelectorAll("#heat-tf button").forEach(b => b.onclick = () => loadHeatmap(b.dataset.tf));
+
+/* ── Vantage: fundamentals map ── */
+async function loadVantage() {
+  const metric = state.vMetric || "pe";
+  const uni = state.vUniverse || "Technology";
+  const color = state.vColor || "abs";
+  $("v-map").innerHTML = `<span class="empty" style="grid-column:1/-1">Loading…</span>`;
+  $("v-empty").style.display = "none";
+  let data;
+  try {
+    data = await api(`/api/vantage?metric=${encodeURIComponent(metric)}&universe=${encodeURIComponent(uni)}&color=${encodeURIComponent(color)}`);
+  } catch { return; }
+  state.vData = data;
+  renderVantage();
+}
+function renderVantage() {
+  const d = state.vData || {};
+  const tiles = d.tiles || [];
+  const color = state.vColor || "abs";
+  $("v-sub").textContent = d.metric_label
+    ? `— ${d.metric_label}, ${d.universe === "ALL" ? "all sectors" : d.universe}` + (d.as_of ? ` · ${d.as_of}` : "")
+    : "";
+  $("v-count").textContent = tiles.length ? `${tiles.length} names` : "";
+  if (!tiles.length) {
+    $("v-map").innerHTML = "";
+    $("v-empty").style.display = "block";
+    $("v-empty").textContent = (d.metric === "forward_pe")
+      ? "No forward estimates yet — they populate on the next weekly run (Saturday)."
+      : "No names match this metric/sector.";
+    return;
+  }
+  $("v-empty").style.display = "none";
+  $("v-map").innerHTML = tiles.map(t => {
+    const g = color === "sector" ? t.g_sector : t.g_abs;
+    const capB = t.market_cap ? ` · $${(t.market_cap / 1e9).toFixed(1)}B` : "";
+    return `<div class="heat-tile" style="background:${heatColor(g)}" title="${esc(t.company)} · ${esc(t.sector)} · ${esc(d.metric_label)} ${esc(t.display)}${capB}" onclick="openDrawer('${esc(t.ticker)}')">
+      <div class="v-tk">${esc(t.ticker)}</div>
+      <div class="v-val">${esc(t.display)}</div>
+      <div class="v-co">${esc(t.company || "")}</div>
+    </div>`;
+  }).join("");
+}
+$("v-metric").onchange = e => { state.vMetric = e.target.value; loadVantage(); };
+$("v-universe").onchange = e => { state.vUniverse = e.target.value; loadVantage(); };
+document.querySelectorAll("#v-color button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#v-color button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.vColor = b.dataset.vcolor; renderVantage();  // recolor only — both modes are in the payload
+});
 function renderGems() {
   const data = state.gems || {};
   renderHeatMap(data.heat);
