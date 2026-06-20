@@ -167,12 +167,19 @@ def _swing_rows() -> dict:
 _HEAT_WINDOWS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
 
 
-def _sector_heat_live(window_days: int = 91) -> list:
+def _sector_heat_live(window_days: int = 91, weight: str = "median") -> list:
     """Live sector heat map: rank every GICS sector hottest->coldest by price
-    momentum over `window_days`, across real common stocks. Uses the MEDIAN
-    stock (robust — the average is skewed by a few micro-cap moonshots) and
-    colors relative to the spread within the chosen window, so the map is
-    readable at any horizon (daily..quarterly)."""
+    momentum over `window_days`, across real common stocks. Colors relative to
+    the spread within the chosen window, so the map is readable at any horizon
+    (daily..quarterly).
+
+    weight = "median" → the MEDIAN stock (breadth: how the typical stock did;
+                        robust — the average is skewed by a few micro-cap moonshots).
+    weight = "cap"    → CAP-WEIGHTED mean (the sector index / ETF view — what
+                        Finviz/CNBC show; dominated by the mega-caps).
+    Both are computed every call; `weight` only decides which one drives the
+    displayed number, ranking and color."""
+    use_cap = (weight == "cap")
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
@@ -188,7 +195,8 @@ def _sector_heat_live(window_days: int = 91) -> list:
                     WHERE dp.trade_date >= CURRENT_DATE - (%(w)s + 50)
                     GROUP BY dp.ticker
                 ), ret AS (
-                    SELECT t.sector, p.last_close / NULLIF(p.close_then, 0) - 1 AS r
+                    SELECT t.sector, COALESCE(t.market_cap, 0) AS mcap,
+                           p.last_close / NULLIF(p.close_then, 0) - 1 AS r
                     FROM px p JOIN tickers t ON t.ticker = p.ticker
                     WHERE t.delisted = false AND t.sector IS NOT NULL
                       AND t.industry NOT ILIKE '%%Asset Management%%'
@@ -198,14 +206,16 @@ def _sector_heat_live(window_days: int = 91) -> list:
                       AND p.last_close >= 1.50 AND p.close_then > 0
                 )
                 SELECT sector, COUNT(*) n, AVG(r) avg_ret,
-                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r) median_ret
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r) median_ret,
+                       SUM(r * mcap) / NULLIF(SUM(mcap), 0) AS capwtd_ret
                 FROM ret WHERE r IS NOT NULL
                 GROUP BY sector HAVING COUNT(*) >= 5
                 """,
                 {"w": window_days},
             )
-            raw = [(s, int(n), float(a or 0.0), float(m or 0.0))
-                   for s, n, a, m in cur.fetchall()]
+            raw = [(s, int(n), float(a or 0.0), float(m or 0.0),
+                    (float(c) if c is not None else float(m or 0.0)))
+                   for s, n, a, m, c in cur.fetchall()]
     finally:
         try:
             conn.close()
@@ -213,18 +223,23 @@ def _sector_heat_live(window_days: int = 91) -> list:
             pass
     if not raw:
         return []
-    meds = [m for _, _, _, m in raw]
-    lo, hi = min(meds), max(meds)
+    # the metric that drives ranking + color, per the chosen weighting
+    vals = [(c if use_cap else m) for _, _, _, m, c in raw]
+    lo, hi = min(vals), max(vals)
     span = (hi - lo) or 1.0
     out = [{
         "sector": s, "n": n,
         "avg_ret": round(a, 4),
         "median_ret": round(m, 4),
-        # heat = where this sector's median sits between the coldest (0) and
-        # hottest (1) sector for THIS window — always spans the full spectrum.
-        "heat": round((m - lo) / span, 3),
-    } for s, n, a, m in raw]
-    out.sort(key=lambda r: r["median_ret"], reverse=True)
+        "capwtd_ret": round(c, 4),
+        # `ret` = the value actually displayed, given the weighting
+        "ret": round(c if use_cap else m, 4),
+        "weight": ("cap" if use_cap else "median"),
+        # heat = where this sector sits between the coldest (0) and hottest (1)
+        # sector for THIS window — always spans the full spectrum.
+        "heat": round(((c if use_cap else m) - lo) / span, 3),
+    } for s, n, a, m, c in raw]
+    out.sort(key=lambda r: r["ret"], reverse=True)
     for i, r in enumerate(out, 1):
         r["rank"] = i
     return out
@@ -527,11 +542,14 @@ def register_routes(mcp) -> None:
             return _unauthorized()
         tf = (request.query_params.get("tf") or "quarterly").lower()
         days = _HEAT_WINDOWS.get(tf, 91)
+        weight = (request.query_params.get("weight") or "median").lower()
+        if weight not in ("median", "cap"):
+            weight = "median"
         try:
-            sectors = await asyncio.to_thread(_sector_heat_live, days)
+            sectors = await asyncio.to_thread(_sector_heat_live, days, weight)
         except Exception as e:
-            return JSONResponse({"tf": tf, "window_days": days, "sectors": [], "error": str(e)[:120]})
-        return JSONResponse({"tf": tf, "window_days": days, "sectors": sectors})
+            return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": [], "error": str(e)[:120]})
+        return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": sectors})
 
     @mcp.custom_route("/api/vantage", methods=["GET"])
     async def vantage(request: Request):

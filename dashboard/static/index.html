@@ -186,10 +186,10 @@
   .regime-badge.risk_on  { background: rgba(43,213,118,.16); color: #2bd576; border: 1px solid rgba(43,213,118,.4); }
   .regime-badge.neutral  { background: rgba(255,194,75,.14); color: #ffc24b; border: 1px solid rgba(255,194,75,.4); }
   .regime-badge.risk_off { background: rgba(255,92,92,.14); color: #ff7a7a; border: 1px solid rgba(255,92,92,.4); }
-  #heat-tf { font-size: 11px; }
-  #heat-tf button { padding: 3px 9px; font-size: 11px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
-  #heat-tf button.on { background: var(--panel2); color: var(--text); }
-  #heat-tf button + button { border-left: 1px solid var(--border); }
+  #heat-tf, #heat-wt { font-size: 11px; }
+  #heat-tf button, #heat-wt button { padding: 3px 9px; font-size: 11px; background: transparent; color: var(--muted); border: none; cursor: pointer; }
+  #heat-tf button.on, #heat-wt button.on { background: var(--panel2); color: var(--text); }
+  #heat-tf button + button, #heat-wt button + button { border-left: 1px solid var(--border); }
   .heat-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
   .heat-tile { border-radius: 8px; padding: 10px 11px; color: #08110b; position: relative; overflow: hidden; min-height: 64px; }
   .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
@@ -367,6 +367,10 @@
           <button data-tf="weekly">Weekly</button>
           <button data-tf="monthly">Monthly</button>
           <button data-tf="quarterly" class="on">Quarterly</button>
+        </div>
+        <div class="seg" id="heat-wt" title="Median = the typical stock (breadth). Cap-weighted = the sector index, mega-cap driven (matches Finviz/CNBC).">
+          <button data-wt="median" class="on">Median</button>
+          <button data-wt="cap">Cap-weighted</button>
         </div>
         <span class="heat-legend"><i class="hl cold"></i>cold <i class="hl warm"></i> <i class="hl hot"></i>hot</span>
       </div>
@@ -546,6 +550,7 @@ let state = {
   gemSleeve: "all",
   gemSearch: "",
   heatTf: "quarterly",
+  heatWeight: "median",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -900,27 +905,35 @@ function renderHeatMap(heat) {
   const el = $("heat-map");
   if (!heat || !heat.length) { el.innerHTML = `<span class="empty" style="grid-column:1/-1">Heat map unavailable.</span>`; return; }
   el.innerHTML = heat.map(s => {
-    // median = the typical stock (robust); avg is skewed by a few moonshots.
-    const med = (s.median_ret != null ? s.median_ret : (s.median_ret_3m || 0)) * 100;
-    const avg = (s.avg_ret != null ? s.avg_ret : (s.avg_ret_3m || 0)) * 100;
-    const sign = med >= 0 ? "+" : "";
-    return `<div class="heat-tile" style="background:${heatColor(s.heat)}" title="${esc(s.sector)} · ${s.n} stocks · median ${med.toFixed(1)}% · avg ${avg >= 0 ? "+" : ""}${avg.toFixed(1)}%">
+    // `ret` = the displayed value per the chosen weighting (median or cap-weighted).
+    // Fall back to median_ret for older payloads.
+    const val = (s.ret != null ? s.ret : (s.median_ret || 0)) * 100;
+    const med = (s.median_ret != null ? s.median_ret : 0) * 100;
+    const cap = (s.capwtd_ret != null ? s.capwtd_ret : 0) * 100;
+    const sign = val >= 0 ? "+" : "";
+    const tip = `${esc(s.sector)} · ${s.n} stocks · median ${med >= 0 ? "+" : ""}${med.toFixed(1)}% · cap-weighted ${cap >= 0 ? "+" : ""}${cap.toFixed(1)}%`;
+    return `<div class="heat-tile" style="background:${heatColor(s.heat)}" title="${tip}">
       <span class="ht-n">${s.n}</span>
       <div class="ht-sec">${esc(s.sector)}</div>
-      <div class="ht-ret">${sign}${med.toFixed(1)}%</div>
+      <div class="ht-ret">${sign}${val.toFixed(1)}%</div>
     </div>`;
   }).join("");
 }
 const HEAT_TF_LABEL = { daily: "today's move", weekly: "1-week", monthly: "1-month", quarterly: "3-month" };
-async function loadHeatmap(tf) {
-  state.heatTf = tf;
+const HEAT_WT_LABEL = { median: "median (typical stock)", cap: "cap-weighted (index)" };
+async function loadHeatmap(tf, wt) {
+  if (tf) state.heatTf = tf;
+  if (wt) state.heatWeight = wt;
+  tf = state.heatTf; wt = state.heatWeight || "median";
   document.querySelectorAll("#heat-tf button").forEach(b => b.classList.toggle("on", b.dataset.tf === tf));
-  $("heat-sub").textContent = `— ${HEAT_TF_LABEL[tf] || ""} median, hottest → coldest`;
+  document.querySelectorAll("#heat-wt button").forEach(b => b.classList.toggle("on", b.dataset.wt === wt));
+  $("heat-sub").textContent = `— ${HEAT_TF_LABEL[tf] || ""} ${HEAT_WT_LABEL[wt] || ""}, hottest → coldest`;
   let data;
-  try { data = await api("/api/heatmap?tf=" + encodeURIComponent(tf)); } catch { return; }
+  try { data = await api(`/api/heatmap?tf=${encodeURIComponent(tf)}&weight=${encodeURIComponent(wt)}`); } catch { return; }
   renderHeatMap((data && data.sectors) || []);
 }
-document.querySelectorAll("#heat-tf button").forEach(b => b.onclick = () => loadHeatmap(b.dataset.tf));
+document.querySelectorAll("#heat-tf button").forEach(b => b.onclick = () => loadHeatmap(b.dataset.tf, null));
+document.querySelectorAll("#heat-wt button").forEach(b => b.onclick = () => loadHeatmap(null, b.dataset.wt));
 
 /* ── Vantage: fundamentals map ── */
 async function loadVantage() {
@@ -1040,7 +1053,13 @@ function vJump(kind, value) {
 $("v-search").addEventListener("input", e => { state.vSearch = e.target.value; applyVantageSearch(); });
 function renderGems() {
   const data = state.gems || {};
-  renderHeatMap(data.heat);
+  // The gems payload embeds a median/quarterly heat snapshot (fast first paint).
+  // Only use it while the toggles are at their default; once the user picks a
+  // different timeframe/weighting, leave their chosen map intact across the
+  // frequent gem-filter re-renders.
+  if ((state.heatTf || "quarterly") === "quarterly" && (state.heatWeight || "median") === "median") {
+    renderHeatMap(data.heat);
+  }
   const all = data.gems || [];
   const rows = all.filter(g =>
     (state.gemTheme === "all" || g.theme === state.gemTheme) &&
