@@ -201,6 +201,14 @@
   .rot-narrative { font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--panel2); border-left: 3px solid #2bd576; border-radius: 6px; padding: 9px 12px; }
   .rot-narrative .rn-tag { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 3px; }
   .rot-narrative.data-only { border-left-color: var(--border); }
+  /* Screener */
+  .ctl { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .ctl select { font-size: 12px; padding: 4px 6px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+  #scr-table td.num, #scr-table th { text-align: right; white-space: nowrap; }
+  #scr-table td .pos { color: #2bd576; } #scr-table td .neg { color: #ff7a7a; }
+  .scr-gem { color: #2bd576; font-weight: 700; }
+  .scr-gembadge { display: inline-block; min-width: 30px; text-align: center; background: rgba(43,213,118,.16); color: #2bd576; border-radius: 5px; padding: 1px 6px; font-weight: 800; font-size: 11px; }
+  #scr-table tr.is-gem { background: rgba(43,213,118,.05); }
   .heat-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
   .heat-tile { border-radius: 8px; padding: 10px 11px; color: #08110b; position: relative; overflow: hidden; min-height: 64px; }
   .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
@@ -279,6 +287,7 @@
   <button data-tab="scanner" class="active">Day Trades</button>
   <button data-tab="swings">Swings</button>
   <button data-tab="gems">Hidden Gems</button>
+  <button data-tab="screener">Screener</button>
   <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
   <button data-tab="performance">Performance</button>
@@ -409,6 +418,59 @@
     </div>
     <div id="gem-list" class="gem-list"></div>
     <div id="gem-empty" class="empty" style="display:none">No hidden gems yet. The bottleneck scan runs pre-market at 6 AM ET, Mon–Fri.</div>
+  </section>
+
+  <!-- ── SCREENER ── -->
+  <section id="tab-screener" class="tabpane">
+    <div class="gems-intro">
+      <h3>Screener</h3>
+      <p>Every name that clears the hidden-gem gates — <b>$100M–$10B</b> cap, liquid,
+      priced ≥ $1.50, <b>not yet blown off</b> (&lt;150% in 6mo) — across <b>all sectors</b>,
+      not just the curated shortlist. Filter by sector, sort by what matters, and apply your own
+      technicals. A <span class="scr-gem">gem score</span> shows where the engine already surfaced a name.</p>
+    </div>
+    <div class="controls">
+      <label class="ctl">Sector
+        <select id="scr-sector"><option value="ALL">All sectors</option></select>
+      </label>
+      <label class="ctl">Sort
+        <select id="scr-sort">
+          <option value="score">Gem score</option>
+          <option value="3m">3-mo return</option>
+          <option value="6m">6-mo return</option>
+          <option value="1m">1-mo return</option>
+          <option value="rev">Revenue growth</option>
+          <option value="mktcap">Market cap</option>
+          <option value="ticker">Ticker A–Z</option>
+        </select>
+      </label>
+      <div class="seg" id="scr-gemsonly">
+        <button data-go="0" class="on">All names</button>
+        <button data-go="1">Gems only</button>
+      </div>
+      <input type="text" id="scr-search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="scr-count"></span>
+    </div>
+    <div class="tblwrap">
+      <table id="scr-table">
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th class="left">Company</th>
+          <th class="left">Sector</th>
+          <th>Mkt Cap</th>
+          <th>Price</th>
+          <th>1M</th>
+          <th>3M</th>
+          <th>6M</th>
+          <th title="Price vs 30-week base">vs Base</th>
+          <th title="Revenue growth YoY">Rev YoY</th>
+          <th title="Piotroski F-score 0–9">F</th>
+          <th title="Hidden-gem score (blank = not surfaced)">Gem</th>
+        </tr></thead>
+        <tbody id="scr-body"></tbody>
+      </table>
+      <div id="scr-empty" class="empty" style="display:none">No names match. The screener refreshes nightly pre-market.</div>
+    </div>
   </section>
 
   <!-- ── VANTAGE ── -->
@@ -607,6 +669,67 @@ $("login-btn").onclick = async () => {
 };
 $("login-pw").addEventListener("keydown", e => { if (e.key === "Enter") $("login-btn").click(); });
 
+/* ── Screener: full gem-gate pool, sector-filterable ── */
+state.scr = { sector: "ALL", sort: "score", gemsOnly: "0", search: "", sectorsLoaded: false };
+function scrPct(v) {
+  if (v == null) return `<span style="color:var(--muted)">—</span>`;
+  const p = v * 100, cls = p >= 0 ? "pos" : "neg", sign = p >= 0 ? "+" : "";
+  return `<span class="${cls}">${sign}${p.toFixed(0)}%</span>`;
+}
+function scrMcap(v) {
+  if (v == null) return "—";
+  return v >= 1e9 ? `$${(v/1e9).toFixed(1)}B` : `$${(v/1e6).toFixed(0)}M`;
+}
+async function loadScreener() {
+  const s = state.scr;
+  let d;
+  try {
+    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}`);
+  } catch { return; }
+  if (!s.sectorsLoaded && d.sectors) {
+    const sel = $("scr-sector");
+    sel.innerHTML = `<option value="ALL">All sectors (${d.total})</option>` +
+      d.sectors.map(x => `<option value="${esc(x.sector)}">${esc(x.sector)} (${x.n})</option>`).join("");
+    sel.value = s.sector;
+    s.sectorsLoaded = true;
+  }
+  state.scrRows = d.rows || [];
+  renderScreener();
+}
+function renderScreener() {
+  const rows = (state.scrRows || []).filter(r =>
+    !state.scr.search || (r.ticker || "").includes(state.scr.search.toUpperCase()));
+  const body = $("scr-body");
+  $("scr-empty").style.display = rows.length ? "none" : "";
+  $("scr-count").textContent = rows.length ? `${rows.length} names` : "";
+  body.innerHTML = rows.map(r => {
+    const gem = r.gem_score != null
+      ? `<span class="scr-gembadge" title="${esc(r.gem_theme || "")}">${r.gem_score.toFixed(0)}</span>` : "";
+    const fcls = r.piotroski == null ? "" : (r.piotroski >= 7 ? "pos" : r.piotroski <= 3 ? "neg" : "");
+    return `<tr class="${r.gem_score != null ? "is-gem" : ""}">
+      <td class="left"><b>${esc(r.ticker)}</b></td>
+      <td class="left">${esc((r.company_name || "").slice(0, 26))}</td>
+      <td class="left">${esc(r.sector || "")}</td>
+      <td class="num">${scrMcap(r.market_cap)}</td>
+      <td class="num">${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
+      <td class="num">${scrPct(r.ret_1m)}</td>
+      <td class="num">${scrPct(r.ret_3m)}</td>
+      <td class="num">${scrPct(r.ret_6m)}</td>
+      <td class="num">${scrPct(r.vs_sma)}</td>
+      <td class="num">${scrPct(r.rev_yoy)}</td>
+      <td class="num"><span class="${fcls}">${r.piotroski != null ? r.piotroski : "—"}</span></td>
+      <td class="num">${gem}</td>
+    </tr>`;
+  }).join("");
+}
+$("scr-sector").addEventListener("change", e => { state.scr.sector = e.target.value; loadScreener(); });
+$("scr-sort").addEventListener("change", e => { state.scr.sort = e.target.value; loadScreener(); });
+$("scr-search").addEventListener("input", e => { state.scr.search = e.target.value; renderScreener(); });
+document.querySelectorAll("#scr-gemsonly button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#scr-gemsonly button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.scr.gemsOnly = b.dataset.go; loadScreener();
+});
+
 /* ── tabs ── */
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
@@ -617,6 +740,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "watchlist") loadWatchlist();
   if (b.dataset.tab === "swings") loadSwings();
   if (b.dataset.tab === "gems") loadGems();
+  if (b.dataset.tab === "screener") loadScreener();
   if (b.dataset.tab === "vantage") loadVantage();
 });
 

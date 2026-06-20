@@ -353,6 +353,68 @@ def _rotation_rows() -> dict:
             "sectors": sectors}
 
 
+# Whitelisted sort keys -> ORDER BY (keys are fixed, safe to inline)
+_SCREENER_SORTS = {
+    "score":  "g.up_and_comer_score DESC NULLS LAST",
+    "1m":     "s.ret_1m DESC NULLS LAST",
+    "3m":     "s.ret_3m DESC NULLS LAST",
+    "6m":     "s.ret_6m DESC NULLS LAST",
+    "rev":    "s.rev_yoy DESC NULLS LAST",
+    "mktcap": "s.market_cap DESC NULLS LAST",
+    "ticker": "s.ticker ASC",
+}
+
+
+def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = False) -> dict:
+    """Full gem-screener pool (migration 0035): every name that clears the gem
+    gates, filterable by sector, with the live gem score joined in. The user
+    applies their own technicals on top."""
+    order = _SCREENER_SORTS.get(sort, _SCREENER_SORTS["score"])
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT sector, count(*) FROM screener_snapshot GROUP BY sector ORDER BY count(*) DESC")
+            sectors = [{"sector": s, "n": int(n)} for s, n in cur.fetchall()]
+            cur.execute(
+                f"""
+                SELECT s.ticker, s.company_name, s.sector, s.industry, s.market_cap, s.price,
+                       s.ret_1m, s.ret_3m, s.ret_6m, s.vs_sma, s.rev_yoy,
+                       s.piotroski_score, s.altman_z_score, s.gross_margin,
+                       g.up_and_comer_score, g.theme, g.sleeve
+                FROM screener_snapshot s
+                LEFT JOIN up_and_comers_cache g
+                  ON g.ticker = s.ticker
+                 AND g.scored_date = (SELECT max(scored_date) FROM up_and_comers_cache)
+                WHERE (%(sec)s = 'ALL' OR s.sector = %(sec)s)
+                  AND (%(go)s = false OR g.up_and_comer_score IS NOT NULL)
+                ORDER BY {order}, s.market_cap DESC NULLS LAST
+                LIMIT 1200
+                """,
+                {"sec": sector, "go": gems_only},
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    def _f(v):
+        return float(v) if v is not None else None
+    out = [{
+        "ticker": r["ticker"], "company_name": r["company_name"], "sector": r["sector"],
+        "industry": r["industry"], "market_cap": _f(r["market_cap"]), "price": _f(r["price"]),
+        "ret_1m": _f(r["ret_1m"]), "ret_3m": _f(r["ret_3m"]), "ret_6m": _f(r["ret_6m"]),
+        "vs_sma": _f(r["vs_sma"]), "rev_yoy": _f(r["rev_yoy"]),
+        "piotroski": int(r["piotroski_score"]) if r["piotroski_score"] is not None else None,
+        "altman_z": _f(r["altman_z_score"]), "gross_margin": _f(r["gross_margin"]),
+        "gem_score": _f(r["up_and_comer_score"]), "gem_theme": r["theme"], "gem_sleeve": r["sleeve"],
+    } for r in rows]
+    return {"sectors": sectors, "rows": out, "count": len(out),
+            "total": sum(s["n"] for s in sectors)}
+
+
 # ── Vantage: fundamentals map ──────────────────────────────────────────────
 # A sector/index ranked into color-graded tiles by ONE fundamental. Each metric
 # maps to a COLUMN in the vantage_snapshot materialized view (precomputed daily —
@@ -655,6 +717,19 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"as_of": None, "narrative": None, "rotating_in": [],
                                  "rotating_out": [], "sectors": [], "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/screener", methods=["GET"])
+    async def screener(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        sector = request.query_params.get("sector") or "ALL"
+        sort = (request.query_params.get("sort") or "score").lower()
+        gems_only = (request.query_params.get("gems_only") or "").lower() in ("1", "true", "yes")
+        try:
+            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only)
+        except Exception as e:
+            return JSONResponse({"sectors": [], "rows": [], "count": 0, "total": 0, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/vantage", methods=["GET"])
