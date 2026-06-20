@@ -202,6 +202,13 @@
   .vantage-map .v-tk { font-size: 12px; font-weight: 800; line-height: 1.05; }
   .vantage-map .v-val { font-size: 15px; font-weight: 800; margin-top: 2px; }
   .vantage-map .v-co { font-size: 9px; opacity: .72; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vantage-map .heat-tile.v-hit { outline: 3px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 2px #000, 0 0 16px rgba(255,255,255,.6); z-index: 3; }
+  .vantage-map.dimmed .heat-tile:not(.v-hit) { opacity: .22; }
+  #v-lookup { display: none; margin: 4px 0 14px; padding: 10px 14px; border-radius: 8px;
+    background: var(--panel2); border: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
+  #v-lookup b { color: var(--text); }
+  #v-lookup .lk-act { color: var(--blue); cursor: pointer; text-decoration: underline; white-space: nowrap; }
+  #v-lookup .lk-act:hover { color: var(--text); }
 
   .gem-list { display: flex; flex-direction: column; gap: 16px; }
   .gem-theme { }
@@ -429,8 +436,10 @@
         <button data-vcolor="abs" class="on">Absolute</button>
         <button data-vcolor="sector">Sector-relative</button>
       </div>
+      <input id="v-search" type="text" placeholder="Find ticker…" autocomplete="off" style="width:130px">
       <span id="v-count" style="font-size:12px;color:var(--muted)"></span>
     </div>
+    <div id="v-lookup"></div>
 
     <div class="heat-wrap">
       <div class="heat-head">
@@ -947,12 +956,13 @@ function renderVantage() {
   $("v-map").innerHTML = tiles.map(t => {
     const g = color === "sector" ? t.g_sector : t.g_abs;
     const capB = t.market_cap ? ` · $${(t.market_cap / 1e9).toFixed(1)}B` : "";
-    return `<div class="heat-tile" style="background:${heatColor(g)}" title="${esc(t.company)} · ${esc(t.sector)} · ${esc(d.metric_label)} ${esc(t.display)}${capB}" onclick="openDrawer('${esc(t.ticker)}')">
+    return `<div class="heat-tile" data-ticker="${esc(t.ticker)}" style="background:${heatColor(g)}" title="${esc(t.company)} · ${esc(t.sector)} · ${esc(d.metric_label)} ${esc(t.display)}${capB}" onclick="openDrawer('${esc(t.ticker)}')">
       <div class="v-tk">${esc(t.ticker)}</div>
       <div class="v-val">${esc(t.display)}</div>
       <div class="v-co">${esc(t.company || "")}</div>
     </div>`;
   }).join("");
+  applyVantageSearch();  // re-apply any active highlight after a re-render
 }
 $("v-metric").onchange = e => { state.vMetric = e.target.value; loadVantage(); };
 $("v-universe").onchange = e => { state.vUniverse = e.target.value; loadVantage(); };
@@ -960,6 +970,74 @@ document.querySelectorAll("#v-color button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#v-color button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.vColor = b.dataset.vcolor; renderVantage();  // recolor only — both modes are in the payload
 });
+
+/* ── Vantage ticker search / highlight ── */
+const V_METRICS = {
+  pe:{col:"pe",pos:true,label:"Trailing P/E"}, forward_pe:{col:"forward_pe",pos:true,label:"Forward P/E"},
+  ps:{col:"ps",pos:true,label:"P/S"}, ev_ebitda:{col:"ev_ebitda",pos:true,label:"EV/EBITDA"},
+  pb:{col:"pb",pos:true,label:"P/B"}, fcf_yield:{col:"fcf_yield",pos:false,label:"FCF Yield"},
+  roe:{col:"roe",pos:false,label:"ROE"}, roic:{col:"roic",pos:false,label:"ROIC"},
+  gross_margin:{col:"gross_margin",pos:false,label:"Gross Margin"}, operating_margin:{col:"operating_margin",pos:false,label:"Operating Margin"},
+  rev_growth:{col:"rev_yoy",pos:false,label:"Revenue Growth"}, piotroski:{col:"piotroski_score",pos:false,label:"Piotroski"},
+  altman_z:{col:"altman_z_score",pos:false,label:"Altman Z"},
+};
+let _vLookupSeq = 0, _vLookupTimer = null;
+function _clearVantageHighlight() {
+  $("v-map").classList.remove("dimmed");
+  $("v-map").querySelectorAll(".heat-tile.v-hit").forEach(el => el.classList.remove("v-hit"));
+}
+function applyVantageSearch() {
+  const q = (state.vSearch || "").toUpperCase().trim();
+  _clearVantageHighlight();
+  clearTimeout(_vLookupTimer);
+  if (!q) { $("v-lookup").style.display = "none"; return; }
+  // 1) in the current view → highlight + scroll to it (instant)
+  const tile = $("v-map").querySelector(`.heat-tile[data-ticker="${CSS.escape(q)}"]`);
+  if (tile) {
+    $("v-lookup").style.display = "none";
+    $("v-map").classList.add("dimmed");
+    tile.classList.add("v-hit");
+    tile.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  // 2) not in view → debounced lookup that explains where it is / why it's hidden
+  _vLookupTimer = setTimeout(() => _vantageLookup(q), 300);
+}
+async function _vantageLookup(q) {
+  const seq = ++_vLookupSeq;
+  let r;
+  try { r = await api(`/api/vantage/lookup?ticker=${encodeURIComponent(q)}`); } catch { return; }
+  if (seq !== _vLookupSeq || (state.vSearch || "").toUpperCase().trim() !== q) return;
+  const box = $("v-lookup");
+  if (!r || !r.found) {
+    box.innerHTML = `<b>${esc(q)}</b> isn't in the valued universe — no fundamentals, or not US-listed / too illiquid.`;
+    box.style.display = "block";
+    return;
+  }
+  const m = V_METRICS[state.vMetric] || V_METRICS.pe;
+  const val = (r.metrics || {})[m.col];
+  const curUni = state.vUniverse || "Technology";
+  const parts = [`<b>${esc(r.ticker)}</b> — ${esc(r.company || "")} · <b>${esc(r.sector)}</b>`];
+  const acts = [];
+  if (r.sector && r.sector !== curUni) {
+    if (curUni !== "ALL") parts.push(`It's in <b>${esc(r.sector)}</b>, not ${esc(curUni)}.`);
+    acts.push(`<span class="lk-act" onclick="vJump('uni','${esc(r.sector)}')">Show ${esc(r.sector)}</span>`);
+  }
+  const hidden = (val == null) || (m.pos && val <= 0);
+  if (hidden) {
+    parts.push(`No ${m.pos ? "positive " : ""}${m.label} (likely unprofitable), so it's hidden on this metric.`);
+    acts.push(`<span class="lk-act" onclick="vJump('metric','ps')">View on P/S</span>`);
+  }
+  if (!acts.length) acts.push(`<span class="lk-act" onclick="vJump('uni','ALL')">Show all sectors</span>`);
+  box.innerHTML = parts.join(" ") + ` &nbsp;→&nbsp; ` + acts.join(" · ");
+  box.style.display = "block";
+}
+function vJump(kind, value) {
+  if (kind === "uni") { state.vUniverse = value; $("v-universe").value = value; }
+  if (kind === "metric") { state.vMetric = value; $("v-metric").value = value; }
+  loadVantage();  // re-render; applyVantageSearch() runs at the end and re-highlights
+}
+$("v-search").addEventListener("input", e => { state.vSearch = e.target.value; applyVantageSearch(); });
 function renderGems() {
   const data = state.gems || {};
   renderHeatMap(data.heat);

@@ -346,6 +346,33 @@ def _vantage_rows(metric: str, universe: str, color: str,
     }
 
 
+_VANTAGE_COLS = ["pe", "forward_pe", "ps", "ev_ebitda", "pb", "fcf_yield", "roe",
+                 "roic", "gross_margin", "operating_margin", "rev_yoy",
+                 "piotroski_score", "altman_z_score"]
+
+
+def _vantage_lookup(ticker: str) -> dict:
+    """A single ticker's row from the snapshot — so the search box can locate it
+    even when it's filtered out of the current view (wrong sector / no positive
+    earnings) and explain why."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT company_name, sector, market_cap, " + ", ".join(_VANTAGE_COLS)
+                + " FROM vantage_snapshot WHERE ticker = %s", (ticker,))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        return {"found": False, "ticker": ticker}
+    metrics = {c: (float(r[3 + i]) if r[3 + i] is not None else None)
+               for i, c in enumerate(_VANTAGE_COLS)}
+    return {"found": True, "ticker": ticker, "company": r[0], "sector": r[1],
+            "market_cap": float(r[2]) if r[2] is not None else None, "metrics": metrics}
+
+
 def register_routes(mcp) -> None:
     """Attach all dashboard routes to the FastMCP instance. Must be called
     before mcp.streamable_http_app() builds the Starlette app."""
@@ -517,6 +544,19 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_vantage_rows, metric, universe, color)
         except Exception as e:
             return JSONResponse({"tiles": [], "count": 0, "error": str(e)[:160]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/vantage/lookup", methods=["GET"])
+    async def vantage_lookup(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        ticker = (request.query_params.get("ticker") or "").upper().strip()
+        if not ticker:
+            return JSONResponse({"found": False})
+        try:
+            data = await asyncio.to_thread(_vantage_lookup, ticker)
+        except Exception as e:
+            return JSONResponse({"found": False, "ticker": ticker, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/watchlist", methods=["GET", "POST"])
