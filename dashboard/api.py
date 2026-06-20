@@ -661,6 +661,66 @@ def _vantage_lookup(ticker: str) -> dict:
             "market_cap": float(r[2]) if r[2] is not None else None, "metrics": metrics}
 
 
+_FMP_BASE = "https://financialmodelingprep.com/stable"
+
+
+def _company_profile(ticker: str) -> dict:
+    """Company reference + a plain-English description of what the business does,
+    for the bottom of the ticker drawer.
+
+    Reads tickers.description from the DB (populated by the weekly profile ingest).
+    If it's missing — a name we haven't profiled yet, or one added before the
+    description column existed — fetch it from FMP once and persist it, so every
+    subsequent open is an instant DB read.
+    """
+    from screen.reversal_screen import _conn
+    out = {"company_name": None, "sector": None, "industry": None,
+           "country": None, "market_cap": None, "description": None}
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT company_name, sector, industry, country, market_cap, description "
+                "FROM tickers WHERE ticker = %s", (ticker,))
+            r = cur.fetchone()
+        if r:
+            out.update(company_name=r[0], sector=r[1], industry=r[2], country=r[3],
+                       market_cap=float(r[4]) if r[4] is not None else None,
+                       description=(r[5] or None))
+        # Lazily backfill the description from FMP the first time we need it.
+        if not out["description"]:
+            desc = _fmp_description(ticker)
+            if desc:
+                out["description"] = desc
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE tickers SET description = %s WHERE ticker = %s",
+                                (desc, ticker))
+                conn.commit()
+    except Exception as e:
+        log.warning(f"[dashboard.api] _company_profile({ticker}) failed: {e}")
+    finally:
+        conn.close()
+    return out
+
+
+def _fmp_description(ticker: str) -> str:
+    """One-shot FMP /profile fetch for a company's business description."""
+    api_key = os.environ.get("FMP_API_KEY", "").strip()
+    if not api_key:
+        return ""
+    try:
+        import requests
+        resp = requests.get(f"{_FMP_BASE}/profile",
+                            params={"symbol": ticker, "apikey": api_key}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and data:
+            return (data[0].get("description") or "").strip()
+    except Exception as e:
+        log.warning(f"[dashboard.api] _fmp_description({ticker}) failed: {e}")
+    return ""
+
+
 def register_routes(mcp) -> None:
     """Attach all dashboard routes to the FastMCP instance. Must be called
     before mcp.streamable_http_app() builds the Starlette app."""
@@ -768,6 +828,10 @@ def register_routes(mcp) -> None:
                 out["social"] = query_ticker_sentiment(ticker)
             except Exception as e:
                 out["social_error"] = str(e)[:120]
+            try:
+                out["profile"] = _company_profile(ticker)
+            except Exception as e:
+                out["profile_error"] = str(e)[:120]
             return out
 
         return JSONResponse(await asyncio.to_thread(_fetch))

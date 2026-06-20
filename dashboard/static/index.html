@@ -1473,6 +1473,17 @@ async function openDrawer(ticker) {
       ${s.notable ? `<div style="margin-top:6px;color:var(--muted)"><b>Narrative:</b> ${esc(s.notable)}</div>` : ""}
     </div>`;
   }
+  const p = d.profile;
+  if (p && (p.description || p.company_name)) {
+    const meta = [p.sector, p.industry, p.country].filter(Boolean).map(esc).join(" · ");
+    html += `<div class="social-box">
+      <b>About${p.company_name ? " " + esc(p.company_name) : ""}</b>
+      ${meta ? `<div style="color:var(--muted);font-size:11.5px;margin-top:3px">${meta}</div>` : ""}
+      ${p.description
+        ? `<div style="margin-top:8px;line-height:1.5">${esc(p.description)}</div>`
+        : `<div style="margin-top:8px;color:var(--muted)">No company description available.</div>`}
+    </div>`;
+  }
   html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
   $("d-body").innerHTML = html;
 }
