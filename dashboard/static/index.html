@@ -238,6 +238,9 @@
   .theme-tile .tt-cell { font-family: var(--mono); font-size: 9.5px; line-height: 1.35; border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
   .theme-tile .tt-cell .l { color: var(--muted); margin-right: 3px; }
   .theme-tile .tt-cell.on { border-color: var(--text); background: rgba(255,255,255,.04); }
+  .tt-vol { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .tt-vol.v2 { color: var(--green); }
+  .tt-vol.v3 { color: #08110b; background: var(--green); border-radius: 4px; padding: 0 4px; font-weight: 700; }
   /* Theme drill-down modal — every stock in the basket */
   .tm-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
   .tm-bg.open { display: flex; align-items: flex-start; justify-content: center; }
@@ -433,7 +436,7 @@
       </div>
       <div class="tblwrap">
         <table id="et-table">
-          <thead><tr><th class="left">Industry</th><th class="left">Sector</th><th>2-Wk</th><th>1-Mo</th><th>3-Mo</th><th title="% of names up over 2 weeks">Breadth</th><th title="recent vs prior volume">Vol</th><th class="left">Turning up</th></tr></thead>
+          <thead><tr><th class="left">Industry</th><th class="left">Sector</th><th title="1-week median — is the coil tightening or fading this week?">1-Wk</th><th>2-Wk</th><th>1-Mo</th><th>3-Mo</th><th title="% of names up over 2 weeks">Breadth</th><th title="recent vs prior volume">Vol</th><th class="left">Turning up</th></tr></thead>
           <tbody id="et-body"></tbody>
         </table>
       </div>
@@ -1211,6 +1214,7 @@ async function loadEarlyTurn() {
   etb.innerHTML = rows.map(r => `<tr>
       <td class="left"><b class="et-ind" data-industry="${esc(r.industry)}" style="cursor:pointer;text-decoration:underline dotted" title="See every stock in this industry">${esc(r.industry)}</b></td>
       <td class="left" style="color:var(--muted)">${esc(r.sector)}</td>
+      <td class="num">${pct(r.r1w)}</td>
       <td class="num">${pct(r.r2w)}</td>
       <td class="num">${pct(r.r1m)}</td>
       <td class="num">${pct(r.r3m)}</td>
@@ -1231,6 +1235,11 @@ function themeTint(ret) {
 }
 function pct(v, dp = 1) { return v == null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(dp)}%`; }
 function retCls(v) { return v == null ? "" : (v >= 0 ? "pos" : "neg"); }
+function volCls(v) { return v == null ? "" : (v >= 1.5 ? "v3" : v >= 1.2 ? "v2" : ""); }
+function volBadge(v) {  // median member volume vs prior month — a basket-level uptick read
+  if (v == null) return "";
+  return `<span class="tt-vol ${volCls(v)}" title="median volume vs prior month — rising = money moving in">vol ${v.toFixed(1)}×</span>`;
+}
 async function loadThemes() {
   const t = state.themes;
   let d;
@@ -1254,7 +1263,7 @@ async function loadThemes() {
       ${badge}
       <div class="tt-name">${esc(r.theme)}</div>
       <div class="tt-ret ${retCls(ret)}">${pct(ret)}</div>
-      <div class="tt-n">${r.n} names</div>
+      <div class="tt-n">${r.n} names ${volBadge(r.vol)}</div>
       <div class="tt-ladder">${ladder}</div>
       <div class="tt-leaders">${leaders}</div>
     </div>`;
@@ -1284,16 +1293,18 @@ async function openThemeMembers(theme) {
   const rows = (d && d.rows) || [];
   $("tm-sub").textContent = `${rows.length} names · sorted by ${THEME_WIN_LBL[win] || win} return · click a row to chart`;
   const head = `<tr><th class="left">Ticker</th><th class="left">Company</th><th>Mkt Cap</th>` +
-    THEME_WINS.map(([k, lbl]) => `<th class="${k === win ? "on" : ""}">${lbl}</th>`).join("") + `</tr>`;
+    THEME_WINS.map(([k, lbl]) => `<th class="${k === win ? "on" : ""}">${lbl}</th>`).join("") +
+    `<th title="last-week volume vs prior month">Vol</th></tr>`;
   const body = rows.map(r => {
     const mc = r.market_cap == null ? "—"
       : (r.market_cap >= 1e9 ? `$${(r.market_cap / 1e9).toFixed(1)}B` : `$${(r.market_cap / 1e6).toFixed(0)}M`);
     const cells = THEME_WINS.map(([k]) =>
       `<td class="${k === win ? "on " : ""}${retCls(r[k])}">${pct(r[k])}</td>`).join("");
+    const vol = r.vol == null ? "—" : `<span class="tt-vol ${volCls(r.vol)}">${r.vol.toFixed(1)}×</span>`;
     return `<tr onclick="openDrawer('${esc(r.ticker)}')">
       <td class="left" style="font-weight:700">${esc(r.ticker)}</td>
       <td class="left co" title="${esc(r.industry || "")}">${esc(r.company || "")}</td>
-      <td>${mc}</td>${cells}</tr>`;
+      <td>${mc}</td>${cells}<td>${vol}</td></tr>`;
   }).join("");
   $("tm-body").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }

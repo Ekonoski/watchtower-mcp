@@ -503,8 +503,8 @@ def _early_turn_rows(limit: int = 18) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT industry, sector, n, r2w_med, r1m_med, r3m_med, breadth_2w,
-                       vol_surge, leaders, early_score
+                SELECT industry, sector, n, r1w_med, r2w_med, r1m_med, r3m_med,
+                       breadth_2w, vol_surge, leaders, early_score
                 FROM industry_pulse WHERE state='early_turn'
                 ORDER BY early_score DESC LIMIT %s
                 """, (limit,),
@@ -521,9 +521,9 @@ def _early_turn_rows(limit: int = 18) -> dict:
         return float(v) if v is not None else None
     out = [{
         "industry": r[0], "sector": r[1], "n": int(r[2]),
-        "r2w": _f(r[3]), "r1m": _f(r[4]), "r3m": _f(r[5]),
-        "breadth": _f(r[6]), "vol_surge": _f(r[7]),
-        "leaders": list(r[8] or []), "score": _f(r[9]),
+        "r1w": _f(r[3]), "r2w": _f(r[4]), "r1m": _f(r[5]), "r3m": _f(r[6]),
+        "breadth": _f(r[7]), "vol_surge": _f(r[8]),
+        "leaders": list(r[9] or []), "score": _f(r[10]),
     } for r in rows]
     return {"as_of": str(as_of) if as_of else None, "rows": out, "count": len(out)}
 
@@ -550,7 +550,7 @@ def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
             ladder = ", ".join(f"tp.{s}_{suffix}" for s in stems)
             cur.execute(
                 f"""
-                SELECT tp.theme, tp.n, tp.{col} AS ret, {ladder},
+                SELECT tp.theme, tp.n, tp.{col} AS ret, {ladder}, tp.vol_med,
                        tp.leaders, COALESCE(td.sort_order, 100) AS so
                 FROM theme_performance tp
                 LEFT JOIN theme_defs td ON td.theme = tp.theme
@@ -572,7 +572,7 @@ def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
         "theme": r[0], "n": int(r[1]), "ret": _f(r[2]),
         "1w": _f(r[3]), "2w": _f(r[4]), "1m": _f(r[5]),
         "3m": _f(r[6]), "6m": _f(r[7]), "ytd": _f(r[8]),
-        "leaders": list(r[9] or []),
+        "vol": _f(r[9]), "leaders": list(r[10] or []),
     } for r in rows]
     return {"as_of": str(as_of) if as_of else None, "window": window,
             "weight": ("cap" if suffix == "cap" else "median"),
@@ -590,7 +590,7 @@ def _theme_members(theme: str, window: str = "ytd") -> dict:
             cur.execute(
                 f"""
                 SELECT ticker, company_name, sector, industry, market_cap,
-                       r1w, r2w, r1m, r3m, r6m, rytd
+                       r1w, r2w, r1m, r3m, r6m, rytd, vol_surge
                 FROM theme_member_perf
                 WHERE theme = %s
                 ORDER BY {sort_col} DESC NULLS LAST
@@ -609,7 +609,7 @@ def _theme_members(theme: str, window: str = "ytd") -> dict:
         "ticker": r[0], "company": r[1], "sector": r[2], "industry": r[3],
         "market_cap": _f(r[4]),
         "1w": _f(r[5]), "2w": _f(r[6]), "1m": _f(r[7]),
-        "3m": _f(r[8]), "6m": _f(r[9]), "ytd": _f(r[10]),
+        "3m": _f(r[8]), "6m": _f(r[9]), "ytd": _f(r[10]), "vol": _f(r[11]),
     } for r in rows]
     return {"theme": theme, "window": window, "rows": out, "count": len(out)}
 
