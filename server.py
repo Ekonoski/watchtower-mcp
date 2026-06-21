@@ -1042,6 +1042,115 @@ def watchtower_get_gem_performance() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def watchtower_get_vantage(metric: str = "pe", universe: str = "ALL",
+                           mincap: str = "2b", top_n: int = 15) -> str:
+    """
+    Vantage — the fundamentals / valuation map. Ranks stocks by a single
+    fundamental metric and returns the best and worst names on it. The SAME data
+    as the dashboard Vantage tab. Use for "cheapest semis by P/E", "highest ROE
+    in energy", "best Piotroski scores", etc.
+
+    Metrics:
+      valuation (lower = cheaper): pe, forward_pe, ps, ev_ebitda, pb
+      quality/growth (higher = better): fcf_yield, roe, roic, gross_margin,
+        operating_margin, rev_growth
+      health: piotroski (0–9 F-score), altman_z (bankruptcy distance)
+
+    Args:
+        metric: one of the above (default pe).
+        universe: 'ALL' or a GICS sector (e.g. 'Technology', 'Energy').
+        mincap: market-cap floor — '2b' | '500m' | '250m' | 'all' (default 2b).
+        top_n: names per end of the ranking (default 15).
+    """
+    from dashboard.api import _vantage_rows, _VANTAGE_METRICS, _VANTAGE_MINCAPS
+    m = (metric or "pe").lower()
+    if m not in _VANTAGE_METRICS:
+        return "Unknown metric. Available: " + ", ".join(sorted(_VANTAGE_METRICS))
+    cap = _VANTAGE_MINCAPS.get((mincap or "2b").lower(), 2e9)
+    uni = (universe or "ALL").strip() or "ALL"
+    limit = 400 if uni == "ALL" else 1500
+    d = _vantage_rows(m, uni, "abs", cap, limit)
+    tiles = d.get("tiles") or []
+    if not tiles:
+        err = f" ({d['error']})" if d.get("error") else ""
+        return f"No Vantage data for {d.get('metric_label', m)}" + (f" / {uni}" if uni != "ALL" else "") + err
+    lower = d.get("lower_is_better")
+    n = max(1, top_n)
+
+    def line(t):
+        return (f"- **{t['ticker']}** ({(t.get('company') or '')[:22]}, "
+                f"{t.get('sector', '')}, {_fmt_cap(t.get('market_cap'))}) {t.get('display')}")
+    lines = [
+        f"**VANTAGE — {d.get('metric_label')} | {uni} | cap≥{(mincap or '2b').upper()} | "
+        f"as of {d.get('as_of')}** ({d.get('count')} names ranked)",
+        f"\n{'Cheapest' if lower else 'Highest'} (best):",
+    ]
+    lines += [line(t) for t in tiles[:n]]
+    lines.append(f"\n{'Priciest' if lower else 'Lowest'}:")
+    lines += [line(t) for t in tiles[-n:][::-1]]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str = "gem",
+                            gems_only: bool = False, industry: str = "", top_n: int = 25) -> str:
+    """
+    Screener — the full gem-gate stock pool, filterable. The SAME data as the
+    dashboard Screener tab: every name that clears the gem gates, with returns,
+    fundamentals, and (when present) its live gem score / theme / sleeve.
+
+    Args:
+        sector: 'ALL' or a GICS sector (e.g. 'Technology', 'Energy', 'Industrials').
+        sort: score | 1m | 3m | 6m | rev | mktcap | ticker (default score).
+        cap: market-cap band — 'gem' (<$10B, default), 'large' (<$50B), 'all'.
+        gems_only: True = only names currently flagged as hidden gems.
+        industry: optional exact GICS industry filter (e.g. 'Uranium', 'Biotechnology').
+        top_n: rows to return (default 25).
+    """
+    from dashboard.api import _screener_rows, _SCREENER_SORTS, _SCREENER_CAPS
+    s = (sort or "score").lower()
+    if s not in _SCREENER_SORTS:
+        s = "score"
+    c = (cap or "gem").lower()
+    if c not in _SCREENER_CAPS:
+        c = "gem"
+    d = _screener_rows(sector or "ALL", s, bool(gems_only), c, industry or "")
+    rows = d.get("rows") or []
+    if not rows:
+        return "No names match that screen."
+    shown = rows[:max(1, top_n)]
+    lines = [
+        f"**SCREENER — sector={sector or 'ALL'}, cap={c}, sort={s}"
+        + (f", industry={industry}" if industry else "")
+        + (", gems only" if gems_only else "")
+        + f"** ({d.get('total')} in pool, showing {len(shown)})",
+        "*per name: 1M·3M·6M return | rev YoY, gross margin, Piotroski, Altman-Z | gem score*\n",
+    ]
+    for r in shown:
+        rets = (f"1M {_fmt_pct(r.get('ret_1m'))} · 3M {_fmt_pct(r.get('ret_3m'))} · "
+                f"6M {_fmt_pct(r.get('ret_6m'))}")
+        fund = []
+        if r.get("rev_yoy") is not None:
+            fund.append(f"rev {_fmt_pct(r['rev_yoy'])}")
+        if r.get("gross_margin") is not None:
+            fund.append(f"GM {_fmt_pct(r['gross_margin'])}")
+        if r.get("piotroski") is not None:
+            fund.append(f"Piotroski {r['piotroski']}/9")
+        if r.get("altman_z") is not None:
+            fund.append(f"Z {float(r['altman_z']):.1f}")
+        gem = ""
+        if r.get("gem_score") is not None:
+            theme = f" · {r['gem_theme']}" if r.get("gem_theme") else ""
+            gem = f" | GEM {float(r['gem_score']):.0f} ({r.get('gem_sleeve') or ''}{theme})"
+        lines.append(
+            f"- **{r['ticker']}** ({(r.get('company_name') or '')[:22]}, "
+            f"{r.get('sector', '')}, {_fmt_cap(r.get('market_cap'))}) {rets} | "
+            f"{', '.join(fund)}{gem}"
+        )
+    return "\n".join(lines)
+
+
 # NOTE: /.well-known endpoints intentionally omitted.
 # When they exist, Grok auto-discovers OAuth and tries to run the flow via its
 # server-side connector manager (not a browser), which can't do the redirect.
