@@ -747,6 +747,193 @@ def watchtower_alert_performance(
         return f"Error: {e}"
 
 
+# ============================================================
+# Market Themes board + Early-Turn radar — the SAME snapshots the dashboard
+# Themes tab and Hidden-Gems radar read, so Grok tells the same story the UI does.
+# ============================================================
+_THEME_WIN = {"1w": "r1w", "2w": "r2w", "1m": "r1m", "3m": "r3m", "6m": "r6m", "ytd": "rytd"}
+_WIN_ORDER = [("1w", "1W"), ("2w", "2W"), ("1m", "1M"), ("3m", "3M"), ("6m", "6M"), ("ytd", "YTD")]
+
+
+def _fmt_pct(v) -> str:
+    if v is None:
+        return "—"
+    v = float(v)
+    return f"{'+' if v >= 0 else ''}{v * 100:.1f}%"
+
+
+def _fmt_vol(v) -> str:
+    return f"{float(v):.1f}×" if v is not None else "—"
+
+
+def _fmt_cap(mc) -> str:
+    if not mc:
+        return "—"
+    mc = float(mc)
+    return f"${mc / 1e9:.1f}B" if mc >= 1e9 else f"${mc / 1e6:.0f}M"
+
+
+@mcp.tool()
+def watchtower_get_themes(window: str = "1w", weight: str = "median") -> str:
+    """
+    Market Themes board — thematic baskets (Nuclear, Quantum, Semiconductors, AI,
+    Data Centers, Fintech, Healthcare, Space, Drones, etc.) ranked by basket
+    performance. The SAME data shown on the dashboard Themes tab.
+
+    Each theme shows the full window ladder (1W/2W/1M/3M/6M/YTD), a basket
+    volume-surge read (median member's last-week volume vs prior month; >1.0 =
+    volume picking up), member count, and the YTD leaders.
+
+    How to read it (trajectory across windows):
+    - 1W > 2W  → accelerating / fresh turn (emerging)
+    - 2W >> 1W → decelerating / front-loaded (late, cooling)
+    - 1W ≈ 2W, both strong → durable trend (highest conviction)
+    Then pair with volume: a turn on rising volume is real; on light volume it's
+    unconfirmed. Use watchtower_get_theme_members to see what's driving a theme.
+
+    Args:
+        window: window that ranks the board — 1w | 2w | 1m | 3m | 6m | ytd (default 1w).
+        weight: 'median' (typical member / breadth) or 'cap' (cap-weighted index).
+    """
+    from screen.reversal_screen import _conn
+    win = _THEME_WIN.get((window or "1w").lower(), "r1w")
+    wkey = (window or "1w").lower() if (window or "1w").lower() in _THEME_WIN else "1w"
+    suffix = "cap" if (weight or "median").lower() == "cap" else "med"
+    stems = ["r1w", "r2w", "r1m", "r3m", "r6m", "rytd"]
+    cols = ", ".join(f"{s}_{suffix}" for s in stems)
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT theme, n, {cols}, vol_med, leaders, max(as_of) OVER () "
+                f"FROM theme_performance ORDER BY {win}_{suffix} DESC NULLS LAST"
+            )
+            rows = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not rows:
+        return "No theme data yet — the Themes snapshots refresh with the daily ingestion."
+    as_of = rows[0][9]
+    lines = [
+        f"**MARKET THEMES — ranked by {wkey.upper()} "
+        f"({'cap-weighted' if suffix == 'cap' else 'median'}), as of {as_of}**",
+        "*Trajectory: 1W>2W = accelerating (early turn); 2W>>1W = decelerating (late); "
+        "1W≈2W & strong = durable. vol >1.0 = volume picking up.*\n",
+    ]
+    for i, row in enumerate(rows, 1):
+        theme, n = row[0], row[1]
+        vals = row[2:8]
+        vol, leaders = row[8], row[9] or []
+        head = dict(zip([k for k, _ in _WIN_ORDER], vals)).get(wkey)
+        ladder = " · ".join(f"{lbl} {_fmt_pct(v)}" for (k, lbl), v in zip(_WIN_ORDER, vals))
+        lines.append(
+            f"{i}. **{theme}** {_fmt_pct(head)} ({wkey.upper()}) | vol {_fmt_vol(vol)} | {n} names\n"
+            f"   {ladder} | leaders: {', '.join(leaders[:5])}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_theme_members(theme: str, window: str = "1w", top_n: int = 30) -> str:
+    """
+    Drill into one theme — every stock in the basket with its per-window returns
+    (1W/2W/1M/3M/6M/YTD) and volume surge, sorted by the chosen window (best
+    first). Use this to see WHICH names are driving or dragging a theme.
+
+    Args:
+        theme:  theme name, fuzzy — 'nuclear' matches 'Nuclear & SMR'.
+        window: sort window — 1w | 2w | 1m | 3m | 6m | ytd (default 1w).
+        top_n:  how many names to show (default 30).
+    """
+    from screen.reversal_screen import _conn
+    win = _THEME_WIN.get((window or "1w").lower(), "r1w")
+    wkey = (window or "1w").lower() if (window or "1w").lower() in _THEME_WIN else "1w"
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT theme FROM theme_performance")
+            themes = [r[0] for r in cur.fetchall()]
+            t = (theme or "").strip().lower()
+            match = next((x for x in themes if x.lower() == t), None) \
+                or next((x for x in themes if t and t in x.lower()), None)
+            if not match:
+                return "Theme not found. Available themes: " + ", ".join(sorted(themes))
+            cur.execute(
+                f"SELECT ticker, company_name, market_cap, r1w, r2w, r1m, r3m, r6m, rytd, vol_surge "
+                f"FROM theme_member_perf WHERE theme=%s ORDER BY {win} DESC NULLS LAST",
+                (match,),
+            )
+            rows = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not rows:
+        return f"No members with price data for {match}."
+    shown = rows[:max(1, top_n)]
+    lines = [
+        f"**{match} — {len(rows)} names, sorted by {wkey.upper()} "
+        f"(showing top {len(shown)})**",
+        "*ladder: 1W · 2W · 1M · 3M · 6M · YTD | vol = last-week volume vs prior month*\n",
+    ]
+    for r in shown:
+        tk, co = r[0], (r[1] or "")[:26]
+        ladder = " · ".join(_fmt_pct(v) for v in r[3:9])
+        lines.append(f"- **{tk}** ({co}, {_fmt_cap(r[2])}) {ladder} | vol {_fmt_vol(r[9])}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_early_turn() -> str:
+    """
+    Early-Turn radar — INDUSTRIES coiling / turning up on the SHORT window
+    (1–2 week strength + breadth + rising volume) BEFORE they're '3-month hot'.
+    The same data as the dashboard radar. Lower-conviction by design (early =
+    more head-fakes) — a watch, not a trigger.
+
+    Each row: 1W/2W/1M/3M median returns, 2-week breadth (% of names up), volume
+    surge (recent vs prior), and the names leading the turn. A fresh 2-week move
+    that is broad and on rising volume, in an industry not yet 3-month hot.
+    """
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT industry, sector, n, r1w_med, r2w_med, r1m_med, r3m_med, "
+                "breadth_2w, vol_surge, leaders, max(as_of) OVER () "
+                "FROM industry_pulse WHERE state='early_turn' "
+                "ORDER BY early_score DESC LIMIT 20"
+            )
+            rows = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if not rows:
+        return "No industries are flagged as early-turn in the latest snapshot."
+    as_of = rows[0][10]
+    lines = [
+        f"**EARLY-TURN RADAR — {len(rows)} industries coiling, as of {as_of}** (a watch, not a trigger)",
+        "*Fresh 1–2 week strength + broad breadth + rising volume, not yet 3-month hot.*\n",
+    ]
+    for r in rows:
+        ind, sec, n = r[0], r[1], r[2]
+        breadth = f"{float(r[7]) * 100:.0f}%" if r[7] is not None else "—"
+        leaders = r[9] or []
+        lines.append(
+            f"- **{ind}** ({sec}, n={n}) — 1W {_fmt_pct(r[3])} · 2W {_fmt_pct(r[4])} · "
+            f"1M {_fmt_pct(r[5])} · 3M {_fmt_pct(r[6])} | breadth {breadth} | "
+            f"vol {_fmt_vol(r[8])} | turning: {', '.join(leaders[:4])}"
+        )
+    return "\n".join(lines)
+
+
 # NOTE: /.well-known endpoints intentionally omitted.
 # When they exist, Grok auto-discovers OAuth and tries to run the flow via its
 # server-side connector manager (not a browser), which can't do the redirect.
