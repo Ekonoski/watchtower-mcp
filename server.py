@@ -934,6 +934,114 @@ def watchtower_get_early_turn() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def watchtower_get_sector_heatmap(timeframe: str = "quarterly", weight: str = "median") -> str:
+    """
+    Sector Heat Map — all 11 GICS sectors ranked hottest→coldest by price
+    momentum over a timeframe. The SAME map shown on the dashboard (Hidden Gems
+    tab). Use this for "how are the sectors doing" / "sector heat map" questions.
+
+    Each sector shows the MEDIAN stock return (breadth — the typical name) and
+    the CAP-WEIGHTED return (the sector-index / ETF view, mega-cap driven). The
+    gap between them is a breadth signal: median > cap = broad rally beyond the
+    giants; cap > median = a few mega-caps carrying the sector.
+
+    Args:
+        timeframe: daily | weekly | monthly | quarterly (default quarterly).
+                   monthly ≈ last ~30 days rolling, quarterly ≈ ~91 days.
+        weight: which number ranks/labels — 'median' (breadth) or 'cap' (index).
+    """
+    from dashboard.api import _sector_heat_live, _HEAT_WINDOWS
+    tf = (timeframe or "quarterly").lower()
+    if tf not in _HEAT_WINDOWS:
+        tf = "quarterly"
+    wt = "cap" if (weight or "median").lower() == "cap" else "median"
+    rows = _sector_heat_live(tf, wt)
+    if not rows:
+        return "No sector heat data available."
+    lines = [
+        f"**SECTOR HEAT MAP — {tf}, ranked by {wt} (hottest→coldest)**",
+        "*median = the typical stock (breadth); cap = cap-weighted index (mega-cap "
+        "driven). median > cap = broad participation.*\n",
+    ]
+    for r in rows:
+        lines.append(
+            f"{r['rank']}. **{r['sector']}** {_fmt_pct(r.get('ret'))} ({wt}) | "
+            f"median {_fmt_pct(r.get('median_ret'))} · cap {_fmt_pct(r.get('capwtd_ret'))} | "
+            f"{r['n']} names"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_sector_rotation() -> str:
+    """
+    Sector Rotation read — which GICS sectors are seeing early money inflow vs
+    outflow, with the market regime and a narrative. The SAME data as the
+    dashboard Sector Rotation card. Median (breadth) is the primary signal;
+    a 'breadth-led' (★) move is the earliest kind — many names participating,
+    not just the cap-weighted index.
+    """
+    from dashboard.api import _rotation_rows
+    d = _rotation_rows()
+    if not d or not d.get("sectors"):
+        return "No sector-rotation read available yet."
+    lines = [
+        f"**SECTOR ROTATION — as of {d.get('as_of')}**"
+        + (f" (regime: {d['regime']})" if d.get("regime") else "")
+    ]
+    if d.get("rotating_in"):
+        lines.append(f"Rotating IN:  {', '.join(d['rotating_in'])}")
+    if d.get("rotating_out"):
+        lines.append(f"Rotating OUT: {', '.join(d['rotating_out'])}")
+    if d.get("narrative"):
+        lines.append(f"\n{d['narrative']}\n")
+    lines.append("Per sector (★ = breadth-led, the earliest signal):")
+    for s in d["sectors"]:
+        star = " ★" if s.get("breadth_led") else ""
+        lines.append(
+            f"- **{s['sector']}** [{s.get('state', '')}{star}] — "
+            f"1W {_fmt_pct(s.get('week_ret'))} · 1M {_fmt_pct(s.get('month_ret'))} · "
+            f"3M {_fmt_pct(s.get('qtr_ret'))}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watchtower_get_gem_performance() -> str:
+    """
+    Track record of the Hidden-Gem picks — forward returns of every gem pick at
+    7 / 30 / 90 days, overall and by sleeve (momentum vs reversal), with average
+    return, win rate, and sample size. The SAME data as the dashboard Performance
+    tab gem panel. Horizons that haven't fully elapsed show n=0 (still maturing).
+    """
+    from dashboard.api import _gem_performance
+    d = _gem_performance()
+    n = d.get("total_picks", 0)
+    if not n:
+        return "No gem picks tracked yet."
+
+    def fmt_row(label, g):
+        def cell(h):
+            c = g.get(h, {}) or {}
+            if not c.get("n"):
+                return f"{h[1:].upper()}d: — (maturing)"
+            return (f"{h[1:].upper()}d: avg {_fmt_pct(c.get('avg'))}, "
+                    f"win {(c.get('win') or 0) * 100:.0f}% (n={c['n']})")
+        return f"{label}: " + " | ".join(cell(h) for h in ("d7", "d30", "d90"))
+
+    lines = [
+        f"**HIDDEN-GEM PICK PERFORMANCE — {n} picks "
+        f"({d.get('first_day')} → {d.get('last_day')})**",
+        "*forward return from each pick's entry price; win = % of picks positive.*\n",
+    ]
+    for o in d.get("overall", []):
+        lines.append(fmt_row("Overall", o))
+    for s in d.get("by_sleeve", []):
+        lines.append(fmt_row((s.get("group") or "?").capitalize(), s))
+    return "\n".join(lines)
+
+
 # NOTE: /.well-known endpoints intentionally omitted.
 # When they exist, Grok auto-discovers OAuth and tries to run the flow via its
 # server-side connector manager (not a browser), which can't do the redirect.
