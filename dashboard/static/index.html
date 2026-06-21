@@ -232,6 +232,30 @@
   .theme-tile .tt-tk:hover { color: var(--text); border-color: var(--muted); }
   .theme-tile .tt-hot { position: absolute; top: 10px; right: 11px; font-size: 9.5px; font-weight: 800; letter-spacing: .5px; color: #08110b; background: var(--green); border-radius: 4px; padding: 1px 5px; }
   .theme-tile .tt-cold { position: absolute; top: 10px; right: 11px; font-size: 9.5px; font-weight: 800; letter-spacing: .5px; color: #fff; background: var(--red); border-radius: 4px; padding: 1px 5px; }
+  .theme-tile { cursor: pointer; transition: transform .06s, border-color .1s; }
+  .theme-tile:hover { transform: translateY(-1px); border-color: var(--muted); }
+  .theme-tile .tt-ladder { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 3px; }
+  .theme-tile .tt-cell { font-family: var(--mono); font-size: 9.5px; line-height: 1.35; border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
+  .theme-tile .tt-cell .l { color: var(--muted); margin-right: 3px; }
+  .theme-tile .tt-cell.on { border-color: var(--text); background: rgba(255,255,255,.04); }
+  /* Theme drill-down modal — every stock in the basket */
+  .tm-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 90; display: none; }
+  .tm-bg.open { display: flex; align-items: flex-start; justify-content: center; }
+  .tm-modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin-top: 5vh; width: 820px; max-width: 95vw; max-height: 88vh; display: flex; flex-direction: column; }
+  .tm-head { display: flex; align-items: baseline; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .tm-head h3 { margin: 0; font-size: 15px; }
+  .tm-head .tm-sub { color: var(--muted); font-size: 12px; }
+  .tm-head .tm-close { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 18px; background: none; border: none; }
+  .tm-head .tm-close:hover { color: var(--text); }
+  .tm-body { overflow-y: auto; }
+  .tm-body table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .tm-body th { position: sticky; top: 0; background: var(--panel); text-align: right; padding: 7px 10px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .tm-body th.left, .tm-body td.left { text-align: left; }
+  .tm-body td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; font-family: var(--mono); }
+  .tm-body tr { cursor: pointer; }
+  .tm-body tbody tr:hover { background: rgba(255,255,255,.03); }
+  .tm-body td.co { font-family: inherit; color: var(--muted); max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+  .tm-body th.on, .tm-body td.on { background: rgba(255,255,255,.05); }
   .vantage-map .heat-tile.v-hit { outline: 3px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 2px #000, 0 0 16px rgba(255,255,255,.6); z-index: 3; }
   .vantage-map.dimmed .heat-tile:not(.v-hit) { opacity: .22; }
   #v-lookup { display: none; margin: 4px 0 14px; padding: 10px 14px; border-radius: 8px;
@@ -461,8 +485,11 @@
       <div class="heat-head">
         <span class="heat-title">Theme Performance <span class="heat-sub" id="theme-sub">— year-to-date, median</span></span>
         <div class="seg" id="theme-win">
+          <button data-win="1w">1W</button>
+          <button data-win="2w">2W</button>
           <button data-win="1m">1M</button>
           <button data-win="3m">3M</button>
+          <button data-win="6m">6M</button>
           <button data-win="ytd" class="on">YTD</button>
         </div>
         <div class="seg" id="theme-wt" title="Median = the typical stock in the basket (breadth). Cap-weighted = basket index, mega-cap driven.">
@@ -661,6 +688,18 @@
     </div>
   </section>
 </main>
+
+<!-- ── THEME DRILL-DOWN MODAL ── -->
+<div id="tm-bg" class="tm-bg" onclick="if(event.target===this)closeThemeMembers()">
+  <div class="tm-modal">
+    <div class="tm-head">
+      <h3 id="tm-title">—</h3>
+      <span class="tm-sub" id="tm-sub"></span>
+      <button class="tm-close" onclick="closeThemeMembers()">✕</button>
+    </div>
+    <div class="tm-body" id="tm-body"></div>
+  </div>
+</div>
 
 <!-- ── TICKER DRAWER ── -->
 <aside id="drawer">
@@ -1183,47 +1222,83 @@ async function loadEarlyTurn() {
 }
 /* ── Market Themes board ── */
 state.themes = { window: "ytd", weight: "median" };
+const THEME_WINS = [["1w","1W"],["2w","2W"],["1m","1M"],["3m","3M"],["6m","6M"],["ytd","YTD"]];
+const THEME_WIN_LBL = { "1w":"1-week","2w":"2-week","1m":"1-month","3m":"3-month","6m":"6-month","ytd":"year-to-date" };
 function themeTint(ret) {
   if (ret == null) return "transparent";
   const a = Math.min(0.20, 0.04 + Math.abs(ret) * 0.22);
   return ret >= 0 ? `rgba(43,213,118,${a})` : `rgba(255,92,92,${a})`;
 }
+function pct(v, dp = 1) { return v == null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(dp)}%`; }
+function retCls(v) { return v == null ? "" : (v >= 0 ? "pos" : "neg"); }
 async function loadThemes() {
   const t = state.themes;
   let d;
   try { d = await api(`/api/themes?window=${t.window}&weight=${t.weight}`); } catch { return; }
-  const winLbl = { "1m": "1-month", "3m": "3-month", "ytd": "year-to-date" }[t.window] || t.window;
-  $("theme-sub").textContent = `— ${winLbl}, ${t.weight === "cap" ? "cap-weighted" : "median"}`;
+  const winLbl = THEME_WIN_LBL[t.window] || t.window;
+  $("theme-sub").textContent = `— ${winLbl}, ${t.weight === "cap" ? "cap-weighted" : "median"} · click a tile for all names`;
   const rows = (d && d.rows) || [];
   $("themes-empty").style.display = rows.length ? "none" : "";
   const grid = $("themes-grid");
-  // rows arrive ranked best→worst; flag the single hottest and coldest.
+  // rows arrive ranked best→worst for the active window; flag hottest & coldest.
   grid.innerHTML = rows.map((r, idx) => {
     const ret = r.ret;
-    const pctTxt = ret == null ? "—"
-      : `${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%`;
-    const cls = ret == null ? "" : (ret >= 0 ? "pos" : "neg");
     const badge = idx === 0 && ret != null && ret > 0 ? `<span class="tt-hot">HOT</span>`
       : (idx === rows.length - 1 && ret != null && ret < 0 ? `<span class="tt-cold">COLD</span>` : "");
     const leaders = (r.leaders || []).slice(0, 5).map(tk =>
-      `<span class="tt-tk" onclick="openDrawer('${esc(tk)}')">${esc(tk)}</span>`).join("");
-    return `<div class="theme-tile" style="background:${themeTint(ret)}">
+      `<span class="tt-tk" onclick="event.stopPropagation();openDrawer('${esc(tk)}')">${esc(tk)}</span>`).join("");
+    // compact window ladder so trends across timeframes read at a glance
+    const ladder = THEME_WINS.map(([k, lbl]) =>
+      `<span class="tt-cell ${k === t.window ? "on" : ""}"><span class="l">${lbl}</span><span class="${retCls(r[k])}">${pct(r[k], 0)}</span></span>`).join("");
+    return `<div class="theme-tile" style="background:${themeTint(ret)}" onclick="openThemeMembers('${esc(r.theme)}')">
       ${badge}
       <div class="tt-name">${esc(r.theme)}</div>
-      <div class="tt-ret ${cls}">${pctTxt}</div>
+      <div class="tt-ret ${retCls(ret)}">${pct(ret)}</div>
       <div class="tt-n">${r.n} names</div>
+      <div class="tt-ladder">${ladder}</div>
       <div class="tt-leaders">${leaders}</div>
     </div>`;
   }).join("");
 }
 document.querySelectorAll("#theme-win button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#theme-win button").forEach(x => x.classList.remove("on"));
-  b.classList.add("on"); state.themes.window = b.dataset.win; loadThemes();
+  b.classList.add("on"); state.themes.window = b.dataset.win;
+  loadThemes();
+  if (state.themeOpen) openThemeMembers(state.themeOpen);  // keep drill-down in sync
 });
 document.querySelectorAll("#theme-wt button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#theme-wt button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.themes.weight = b.dataset.wt; loadThemes();
 });
+/* ── Theme drill-down: every stock in the basket ── */
+async function openThemeMembers(theme) {
+  state.themeOpen = theme;
+  const win = state.themes.window;
+  $("tm-title").textContent = theme;
+  $("tm-sub").textContent = `sorted by ${THEME_WIN_LBL[win] || win} return`;
+  $("tm-bg").classList.add("open");
+  $("tm-body").innerHTML = `<div class="empty" style="padding:24px">Loading…</div>`;
+  let d;
+  try { d = await api(`/api/themes/members?theme=${encodeURIComponent(theme)}&window=${win}`); }
+  catch { $("tm-body").innerHTML = `<div class="empty" style="padding:24px">Couldn't load names.</div>`; return; }
+  const rows = (d && d.rows) || [];
+  $("tm-sub").textContent = `${rows.length} names · sorted by ${THEME_WIN_LBL[win] || win} return · click a row to chart`;
+  const head = `<tr><th class="left">Ticker</th><th class="left">Company</th><th>Mkt Cap</th>` +
+    THEME_WINS.map(([k, lbl]) => `<th class="${k === win ? "on" : ""}">${lbl}</th>`).join("") + `</tr>`;
+  const body = rows.map(r => {
+    const mc = r.market_cap == null ? "—"
+      : (r.market_cap >= 1e9 ? `$${(r.market_cap / 1e9).toFixed(1)}B` : `$${(r.market_cap / 1e6).toFixed(0)}M`);
+    const cells = THEME_WINS.map(([k]) =>
+      `<td class="${k === win ? "on " : ""}${retCls(r[k])}">${pct(r[k])}</td>`).join("");
+    return `<tr onclick="openDrawer('${esc(r.ticker)}')">
+      <td class="left" style="font-weight:700">${esc(r.ticker)}</td>
+      <td class="left co" title="${esc(r.industry || "")}">${esc(r.company || "")}</td>
+      <td>${mc}</td>${cells}</tr>`;
+  }).join("");
+  $("tm-body").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+function closeThemeMembers() { state.themeOpen = null; $("tm-bg").classList.remove("open"); }
+document.addEventListener("keydown", e => { if (e.key === "Escape" && state.themeOpen) closeThemeMembers(); });
 async function loadRotation() {
   let d;
   try { d = await api("/api/rotation"); } catch { return; }

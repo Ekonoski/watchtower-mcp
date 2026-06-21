@@ -528,13 +528,15 @@ def _early_turn_rows(limit: int = 18) -> dict:
     return {"as_of": str(as_of) if as_of else None, "rows": out, "count": len(out)}
 
 
-_THEME_WINDOWS = {"1m": "r1m", "3m": "r3m", "ytd": "rytd"}
+# Window key -> materialized-view column stem. Ladder: 1w 2w 1m 3m 6m ytd.
+_THEME_WINDOWS = {"1w": "r1w", "2w": "r2w", "1m": "r1m",
+                  "3m": "r3m", "6m": "r6m", "ytd": "rytd"}
 
 
 def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
-    """Market Themes board (migration 0040): thematic-basket returns over a
-    window (1m|3m|ytd), ranked best-first. weight=median is the breadth read
-    (typical member); weight=cap is the index read (cap-weighted)."""
+    """Market Themes board (migrations 0040/0041): thematic-basket returns over a
+    window (1w|2w|1m|3m|6m|ytd), ranked best-first. weight=median is the breadth
+    read (typical member); weight=cap is the index read (cap-weighted)."""
     from screen.reversal_screen import _conn
     win = _THEME_WINDOWS.get((window or "ytd").lower(), "rytd")
     suffix = "cap" if (weight or "median").lower() == "cap" else "med"
@@ -542,11 +544,13 @@ def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
     conn = _conn()
     try:
         with conn.cursor() as cur:
+            # Carry the whole ladder for the active weighting so the tile can
+            # show a mini multi-window read alongside the selected window.
+            stems = ["r1w", "r2w", "r1m", "r3m", "r6m", "rytd"]
+            ladder = ", ".join(f"tp.{s}_{suffix}" for s in stems)
             cur.execute(
                 f"""
-                SELECT tp.theme, tp.n, tp.{col} AS ret,
-                       tp.r1m_med, tp.r3m_med, tp.rytd_med,
-                       tp.r1m_cap, tp.r3m_cap, tp.rytd_cap,
+                SELECT tp.theme, tp.n, tp.{col} AS ret, {ladder},
                        tp.leaders, COALESCE(td.sort_order, 100) AS so
                 FROM theme_performance tp
                 LEFT JOIN theme_defs td ON td.theme = tp.theme
@@ -566,13 +570,48 @@ def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
         return float(v) if v is not None else None
     out = [{
         "theme": r[0], "n": int(r[1]), "ret": _f(r[2]),
-        "r1m_med": _f(r[3]), "r3m_med": _f(r[4]), "ytd_med": _f(r[5]),
-        "r1m_cap": _f(r[6]), "r3m_cap": _f(r[7]), "ytd_cap": _f(r[8]),
+        "r1w": _f(r[3]), "r2w": _f(r[4]), "r1m": _f(r[5]),
+        "r3m": _f(r[6]), "r6m": _f(r[7]), "ytd": _f(r[8]),
         "leaders": list(r[9] or []),
     } for r in rows]
     return {"as_of": str(as_of) if as_of else None, "window": window,
             "weight": ("cap" if suffix == "cap" else "median"),
             "rows": out, "count": len(out)}
+
+
+def _theme_members(theme: str, window: str = "ytd") -> dict:
+    """Drill-down for one theme tile: every stock in the basket with its return
+    across the full window ladder, sorted by the selected window (best first)."""
+    from screen.reversal_screen import _conn
+    sort_col = _THEME_WINDOWS.get((window or "ytd").lower(), "rytd")
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ticker, company_name, sector, industry, market_cap,
+                       r1w, r2w, r1m, r3m, r6m, rytd
+                FROM theme_member_perf
+                WHERE theme = %s
+                ORDER BY {sort_col} DESC NULLS LAST
+                """, (theme,),
+            )
+            rows = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _f(v):
+        return float(v) if v is not None else None
+    out = [{
+        "ticker": r[0], "company": r[1], "sector": r[2], "industry": r[3],
+        "market_cap": _f(r[4]),
+        "r1w": _f(r[5]), "r2w": _f(r[6]), "r1m": _f(r[7]),
+        "r3m": _f(r[8]), "r6m": _f(r[9]), "ytd": _f(r[10]),
+    } for r in rows]
+    return {"theme": theme, "window": window, "rows": out, "count": len(out)}
 
 
 # ── Vantage: fundamentals map ──────────────────────────────────────────────
@@ -968,6 +1007,20 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_theme_rows, window, weight)
         except Exception as e:
             return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/themes/members", methods=["GET"])
+    async def theme_members_route(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        theme = request.query_params.get("theme") or ""
+        window = request.query_params.get("window") or "ytd"
+        if not theme:
+            return JSONResponse({"rows": [], "count": 0, "error": "theme required"})
+        try:
+            data = await asyncio.to_thread(_theme_members, theme, window)
+        except Exception as e:
+            return JSONResponse({"theme": theme, "rows": [], "count": 0, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/screener", methods=["GET"])
