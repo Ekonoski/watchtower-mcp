@@ -570,8 +570,8 @@ def _theme_rows(window: str = "ytd", weight: str = "median") -> dict:
         return float(v) if v is not None else None
     out = [{
         "theme": r[0], "n": int(r[1]), "ret": _f(r[2]),
-        "r1w": _f(r[3]), "r2w": _f(r[4]), "r1m": _f(r[5]),
-        "r3m": _f(r[6]), "r6m": _f(r[7]), "ytd": _f(r[8]),
+        "1w": _f(r[3]), "2w": _f(r[4]), "1m": _f(r[5]),
+        "3m": _f(r[6]), "6m": _f(r[7]), "ytd": _f(r[8]),
         "leaders": list(r[9] or []),
     } for r in rows]
     return {"as_of": str(as_of) if as_of else None, "window": window,
@@ -608,8 +608,8 @@ def _theme_members(theme: str, window: str = "ytd") -> dict:
     out = [{
         "ticker": r[0], "company": r[1], "sector": r[2], "industry": r[3],
         "market_cap": _f(r[4]),
-        "r1w": _f(r[5]), "r2w": _f(r[6]), "r1m": _f(r[7]),
-        "r3m": _f(r[8]), "r6m": _f(r[9]), "ytd": _f(r[10]),
+        "1w": _f(r[5]), "2w": _f(r[6]), "1m": _f(r[7]),
+        "3m": _f(r[8]), "6m": _f(r[9]), "ytd": _f(r[10]),
     } for r in rows]
     return {"theme": theme, "window": window, "rows": out, "count": len(out)}
 
