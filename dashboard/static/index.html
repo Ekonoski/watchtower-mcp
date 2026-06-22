@@ -238,6 +238,15 @@
   .theme-tile .tt-cell { font-family: var(--mono); font-size: 9.5px; line-height: 1.35; border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
   .theme-tile .tt-cell .l { color: var(--muted); margin-right: 3px; }
   .theme-tile .tt-cell.on { border-color: var(--text); background: rgba(255,255,255,.04); }
+  /* Hidden-Gem departures ("Recently Dropped") */
+  .gemdrop-list { display: flex; flex-direction: column; gap: 2px; }
+  .gemdrop-row { display: grid; grid-template-columns: 64px 110px 1fr auto; align-items: baseline; gap: 10px; padding: 5px 8px; border-radius: 6px; }
+  .gemdrop-row:hover { background: rgba(255,255,255,.03); }
+  .gemdrop-row .gd-tk { font-family: var(--mono); font-weight: 700; }
+  .gemdrop-row .gd-why { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+  .gemdrop-row .gd-why.warn { color: #e8b339; } .gemdrop-row .gd-why.neg { color: var(--red); } .gemdrop-row .gd-why.muted { color: var(--muted); }
+  .gemdrop-row .gd-detail { color: var(--muted); font-size: 12.5px; }
+  .gemdrop-row .gd-score { color: var(--muted); font-family: var(--mono); font-size: 11px; }
   .tt-vol { font-family: var(--mono); font-size: 10px; color: var(--muted); }
   .tt-vol.v2 { color: var(--green); }
   .tt-vol.v3 { color: #08110b; background: var(--green); border-radius: 4px; padding: 0 4px; font-weight: 700; }
@@ -472,6 +481,13 @@
     </div>
     <div id="gem-list" class="gem-list"></div>
     <div id="gem-empty" class="empty" style="display:none">No hidden gems yet. The bottleneck scan runs pre-market at 6 AM ET, Mon–Fri.</div>
+
+    <div class="heat-wrap" id="gemdrop-wrap" style="display:none;margin-top:18px">
+      <div class="heat-head">
+        <span class="heat-title">Recently Dropped <span class="heat-sub">— names that left the list since the prior scan, and why. "Industry cooled" = sector rotation, not the stock weakening.</span></span>
+      </div>
+      <div id="gemdrop-list" class="gemdrop-list"></div>
+    </div>
   </section>
 
   <!-- ── MARKET THEMES ── -->
@@ -1182,10 +1198,32 @@ function heatColor(heat) {
   const light = 50 + Math.sin(h * Math.PI) * 6; // 50% at ends, ~56% in the middle
   return `hsl(${hue}, 90%, ${light}%)`;
 }
+const GEMDROP_LABEL = {
+  industry_cooled: ["industry cooled", "warn"], out_ranked: ["missed cutoff", "muted"],
+  too_extended: ["too extended", "warn"], broke_30w_base: ["broke base", "neg"],
+  blew_off: ["blew off", "warn"], size_out_of_band: ["size", "muted"], left_universe: ["left universe", "neg"],
+};
+async function loadGemDepartures() {
+  let d;
+  try { d = await api("/api/gem-departures"); } catch { return; }
+  const rows = (d && d.rows) || [];
+  $("gemdrop-wrap").style.display = rows.length ? "" : "none";
+  $("gemdrop-list").innerHTML = rows.map(r => {
+    const [lbl, cls] = GEMDROP_LABEL[r.reason] || [r.reason, "muted"];
+    return `<div class="gemdrop-row" data-ticker="${esc(r.ticker)}" style="cursor:pointer">
+      <span class="gd-tk">${esc(r.ticker)}</span>
+      <span class="gd-why ${cls}">${esc(lbl)}</span>
+      <span class="gd-detail">${esc(r.detail || "")}</span>
+      <span class="gd-score">was ${r.prev_score != null ? r.prev_score.toFixed(0) : "—"}</span>
+    </div>`;
+  }).join("");
+  $("gemdrop-list").querySelectorAll(".gemdrop-row").forEach(el => el.onclick = () => openDrawer(el.dataset.ticker));
+}
 async function loadGems() {
   let data;
   try { data = await api("/api/gems/latest"); } catch { return; }
   state.gems = data;
+  loadGemDepartures();
   // Build theme filter chips from the loaded gems.
   const themes = [...new Set((data.gems || []).map(g => g.theme).filter(Boolean))];
   const seg = $("gem-theme-filter");

@@ -1043,6 +1043,41 @@ def watchtower_get_gem_performance() -> str:
 
 
 @mcp.tool()
+def watchtower_get_gem_departures() -> str:
+    """
+    Why names dropped off the Hidden Gems list at the latest scan. A name can
+    leave for very different reasons, and this says which: its industry rotated
+    out of the hot-bottleneck set (e.g. AAL when airlines cool), the stock got
+    too extended or broke its 30-week base, it blew off (>100% in 6mo), its size
+    left the $100M-$10B band, or it simply missed the day's top-N cutoff
+    (out-ranked, still eligible). The SAME data as the dashboard "Recently
+    dropped" card — use it to answer "why did <ticker> fall off the gem list?".
+    """
+    from dashboard.api import _gem_departures
+    d = _gem_departures()
+    rows = d.get("rows") or []
+    if not rows:
+        return "No gem drop-offs recorded for the latest scan."
+    label = {
+        "industry_cooled": "industry cooled", "out_ranked": "out-ranked (missed cutoff)",
+        "too_extended": "too extended", "broke_30w_base": "broke its base",
+        "blew_off": "blew off", "size_out_of_band": "size out of band",
+        "left_universe": "left universe",
+    }
+    lines = [
+        f"**HIDDEN-GEM DROP-OFFS — {d.get('as_of')}** ({len(rows)} names left the list since the prior scan)",
+        "*A name leaving doesn't always mean it weakened — 'industry cooled' is sector rotation.*\n",
+    ]
+    for r in rows:
+        sc = f"{r['prev_score']:.0f}" if r.get("prev_score") is not None else "—"
+        lines.append(
+            f"- **{r['ticker']}** (was score {sc}, {r.get('sleeve') or ''}) — "
+            f"{label.get(r.get('reason'), r.get('reason'))}: {r.get('detail') or ''}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def watchtower_get_vantage(metric: str = "pe", universe: str = "ALL",
                            mincap: str = "2b", top_n: int = 15) -> str:
     """

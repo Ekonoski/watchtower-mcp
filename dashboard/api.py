@@ -412,6 +412,40 @@ def _gem_performance() -> dict:
     return out
 
 
+def _gem_departures() -> dict:
+    """Names that fell off the Hidden Gems list at the latest scan, each tagged
+    with WHY it left (migration 0048): industry_cooled (sector rotated out),
+    out_ranked (missed the cutoff), too_extended / broke_30w_base / blew_off /
+    size_out_of_band / left_universe."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT gd.ticker, t.company_name, gd.prev_score, gd.prev_sleeve,
+                       gd.reason, gd.detail, gd.scored_date
+                FROM gem_departures gd
+                LEFT JOIN tickers t ON t.ticker = gd.ticker
+                WHERE gd.scored_date = (SELECT max(scored_date) FROM gem_departures)
+                ORDER BY gd.prev_score DESC NULLS LAST
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    as_of = rows[0][6] if rows else None
+    out = [{
+        "ticker": r[0], "company": r[1],
+        "prev_score": float(r[2]) if r[2] is not None else None,
+        "sleeve": r[3], "reason": r[4], "detail": r[5],
+    } for r in rows]
+    return {"as_of": str(as_of) if as_of else None, "rows": out, "count": len(out)}
+
+
 # Whitelisted sort keys -> ORDER BY (keys are fixed, safe to inline)
 _SCREENER_SORTS = {
     "score":  "g.up_and_comer_score DESC NULLS LAST",
@@ -1054,6 +1088,16 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_gem_performance)
         except Exception as e:
             return JSONResponse({"total_picks": 0, "overall": [], "by_sleeve": [], "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/gem-departures", methods=["GET"])
+    async def gem_departures(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            data = await asyncio.to_thread(_gem_departures)
+        except Exception as e:
+            return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/vantage", methods=["GET"])
