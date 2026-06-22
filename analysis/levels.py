@@ -2,8 +2,9 @@
 Watchtower — Multi-timeframe Support / Resistance level engine.
 
 Data-derived horizontal levels, the way a discretionary trader marks them,
-across FIVE timeframes so you get both structure and intraday execution:
+across SIX timeframes so you get both major structure and intraday execution:
 
+  1W  (5y)    major structural / weekly swing — the levels that matter most
   1D  (8mo)   structural / swing levels
   4H  (4mo)   higher-timeframe swing
   1H  (2mo)   intraday swing
@@ -13,11 +14,12 @@ across FIVE timeframes so you get both structure and intraday execution:
 For each timeframe: find swing highs/lows (pivots), then cluster ALL pivots
 across timeframes into horizontal levels (volatility-scaled band). Each level
 is tagged with which timeframes produced it — a price that's a pivot on the
-daily AND the 5-minute is a high-conviction level. Star-rated 1-5 by
+weekly AND the daily is a high-conviction structural level. Star-rated 1-5 by
 touch count, multi-timeframe confluence, and recency.
 
-Intraday timeframes use SHORT lookbacks on purpose: a 5-minute pivot from
-months ago is noise, a daily pivot from months ago still matters.
+Lookback scales with timeframe: a 5-minute pivot from months ago is noise, but
+a weekly pivot from years ago still anchors price — so the higher the
+timeframe, the longer (and more heavily weighted) its lookback.
 
 Pure Python over Polygon agg bars. One call per timeframe, best-effort per
 timeframe (a failed/empty timeframe never breaks the others), computed on
@@ -31,6 +33,7 @@ log = logging.getLogger(__name__)
 # Per-timeframe: Polygon (multiplier, timespan), lookback days, and a weight
 # (higher timeframes carry more conviction). Ordered high→low.
 TIMEFRAMES: Dict[str, dict] = {
+    "1W":  {"mult": 1,  "span": "week",   "days": 1825, "weight": 1.30},
     "1D":  {"mult": 1,  "span": "day",    "days": 245, "weight": 1.00},
     "4H":  {"mult": 4,  "span": "hour",   "days": 120, "weight": 0.80},
     "1H":  {"mult": 1,  "span": "hour",   "days": 45,  "weight": 0.60},

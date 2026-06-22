@@ -1701,7 +1701,7 @@ async function openDrawer(ticker) {
   $("d-body").innerHTML = html;
 }
 function _stars(n) { n = Math.max(0, Math.min(5, n || 0)); return "★".repeat(n) + "☆".repeat(5 - n); }
-const TF_ORDER = ["1D", "4H", "1H", "15m", "5m"];
+const TF_ORDER = ["1W", "1D", "4H", "1H", "15m", "5m"];
 let _lvlData = null;          // cached level payload for the open ticker
 let _lvlFilter = "all";       // active timeframe filter
 function _lvlRow(l, kind) {
