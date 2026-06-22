@@ -165,6 +165,9 @@ def _swing_rows() -> dict:
 
 
 _HEAT_WINDOWS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
+# Trading-SESSION lookbacks (not calendar days) — robust to weekends/holidays so
+# the daily map never collapses to 0% over a gap. Mirrors migration 0049.
+_HEAT_SESSIONS = {"daily": 1, "weekly": 5, "monthly": 21, "quarterly": 63}
 
 
 def _sector_heat_snapshot(tf: str, weight: str) -> list:
@@ -214,13 +217,14 @@ def _sector_heat_live(tf: str = "quarterly", weight: str = "median") -> list:
     rows = _sector_heat_snapshot(tf, weight)
     if rows:
         return rows
-    return _sector_heat_compute(_HEAT_WINDOWS.get(tf, 91), weight)
+    return _sector_heat_compute(_HEAT_SESSIONS.get(tf, 63), weight)
 
 
-def _sector_heat_compute(window_days: int = 91, weight: str = "median") -> list:
+def _sector_heat_compute(sessions_back: int = 63, weight: str = "median") -> list:
     """Live sector heat map: rank every GICS sector hottest->coldest by price
-    momentum over `window_days`, across real common stocks. Colors relative to
-    the spread within the chosen window, so the map is readable at any horizon
+    momentum over `sessions_back` TRADING SESSIONS (last bar vs the bar N sessions
+    ago — robust to weekends/holidays), across real common stocks. Colors relative
+    to the spread within the chosen window, so the map is readable at any horizon
     (daily..quarterly).
 
     weight = "median" → the MEDIAN stock (breadth: how the typical stock did;
@@ -237,23 +241,20 @@ def _sector_heat_compute(window_days: int = 91, weight: str = "median") -> list:
             cur.execute(
                 """
                 WITH px AS (
-                    SELECT dp.ticker,
-                           (array_agg(dp.close ORDER BY dp.trade_date DESC))[1] AS last_close,
-                           (array_agg(dp.close ORDER BY dp.trade_date DESC)
-                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - %(w)s))[1] AS close_then
+                    SELECT dp.ticker, array_agg(dp.close ORDER BY dp.trade_date DESC) AS closes
                     FROM daily_prices dp
-                    WHERE dp.trade_date >= CURRENT_DATE - (%(w)s + 50)
+                    WHERE dp.trade_date >= CURRENT_DATE - 150
                     GROUP BY dp.ticker
                 ), ret AS (
                     SELECT t.sector, COALESCE(t.market_cap, 0) AS mcap,
-                           p.last_close / NULLIF(p.close_then, 0) - 1 AS r
+                           p.closes[1] / NULLIF(p.closes[%(nb)s], 0) - 1 AS r
                     FROM px p JOIN tickers t ON t.ticker = p.ticker
                     WHERE t.delisted = false AND t.sector IS NOT NULL
                       AND t.industry NOT ILIKE '%%Asset Management%%'
                       AND t.company_name NOT ILIKE '%% ETF%%'
                       AND t.company_name NOT ILIKE '%% Fund%%'
                       AND COALESCE(t.market_cap, 0) >= 50000000
-                      AND p.last_close >= 1.50 AND p.close_then > 0
+                      AND p.closes[1] >= 1.50 AND p.closes[%(nb)s] > 0
                 )
                 SELECT sector, COUNT(*) n, AVG(r) avg_ret,
                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r) median_ret,
@@ -261,7 +262,7 @@ def _sector_heat_compute(window_days: int = 91, weight: str = "median") -> list:
                 FROM ret WHERE r IS NOT NULL
                 GROUP BY sector HAVING COUNT(*) >= 5
                 """,
-                {"w": window_days},
+                {"nb": sessions_back + 1},
             )
             raw = [(s, int(n), float(a or 0.0), float(m or 0.0),
                     (float(c) if c is not None else float(m or 0.0)))
