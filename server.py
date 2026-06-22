@@ -1094,7 +1094,8 @@ def watchtower_get_vantage(metric: str = "pe", universe: str = "ALL",
 
 @mcp.tool()
 def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str = "gem",
-                            gems_only: bool = False, industry: str = "", top_n: int = 25) -> str:
+                            gems_only: bool = False, industry: str = "",
+                            search: str = "", top_n: int = 25) -> str:
     """
     Screener — the full gem-gate stock pool, filterable. The SAME data as the
     dashboard Screener tab: every name that clears the gem gates, with returns,
@@ -1106,6 +1107,8 @@ def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str =
         cap: market-cap band — 'gem' (<$10B, default), 'large' (<$50B), 'all'.
         gems_only: True = only names currently flagged as hidden gems.
         industry: optional exact GICS industry filter (e.g. 'Uranium', 'Biotechnology').
+        search: match a ticker or company name (e.g. 'HY', 'hyster') — finds a
+            name even if it ranks past the default row limit.
         top_n: rows to return (default 25).
     """
     from dashboard.api import _screener_rows, _SCREENER_SORTS, _SCREENER_CAPS
@@ -1115,7 +1118,7 @@ def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str =
     c = (cap or "gem").lower()
     if c not in _SCREENER_CAPS:
         c = "gem"
-    d = _screener_rows(sector or "ALL", s, bool(gems_only), c, industry or "")
+    d = _screener_rows(sector or "ALL", s, bool(gems_only), c, industry or "", search or "")
     rows = d.get("rows") or []
     if not rows:
         return "No names match that screen."

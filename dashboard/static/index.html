@@ -817,7 +817,7 @@ async function loadScreener() {
   const s = state.scr;
   let d;
   try {
-    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}&cap=${encodeURIComponent(s.cap)}&industry=${encodeURIComponent(s.industry || "")}`);
+    d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}&cap=${encodeURIComponent(s.cap)}&industry=${encodeURIComponent(s.industry || "")}&search=${encodeURIComponent(s.search || "")}`);
   } catch { return; }
   if (d.sectors) {
     // Refresh sector counts each load — they change with the cap band.
@@ -830,8 +830,9 @@ async function loadScreener() {
   renderScreener();
 }
 function renderScreener() {
-  const rows = (state.scrRows || []).filter(r =>
-    !state.scr.search || (r.ticker || "").includes(state.scr.search.toUpperCase()));
+  // Search is applied server-side now (so names past the row limit are findable),
+  // and matches company name too — no client-side ticker filter here.
+  const rows = state.scrRows || [];
   const body = $("scr-body");
   $("scr-empty").style.display = rows.length ? "none" : "";
   $("scr-count").innerHTML = (state.scr.industry
@@ -860,7 +861,11 @@ function renderScreener() {
 }
 $("scr-sector").addEventListener("change", e => { state.scr.sector = e.target.value; loadScreener(); });
 $("scr-sort").addEventListener("change", e => { state.scr.sort = e.target.value; loadScreener(); });
-$("scr-search").addEventListener("input", e => { state.scr.search = e.target.value; renderScreener(); });
+$("scr-search").addEventListener("input", e => {
+  state.scr.search = e.target.value;
+  clearTimeout(state.scrSearchTimer);            // debounce → 1 request after typing stops
+  state.scrSearchTimer = setTimeout(loadScreener, 250);
+});
 document.querySelectorAll("#scr-gemsonly button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#scr-gemsonly button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.scr.gemsOnly = b.dataset.go; loadScreener();

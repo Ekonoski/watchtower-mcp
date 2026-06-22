@@ -434,13 +434,16 @@ _SCREENER_CAPS = {
 
 
 def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = False,
-                   cap: str = "gem", industry: str = "") -> dict:
+                   cap: str = "gem", industry: str = "", search: str = "") -> dict:
     """Full gem-screener pool (migrations 0035/0036): every name that clears the
     gem gates, filterable by sector, market-cap band, and (for radar drill-down)
-    a specific industry, with the live gem score joined in."""
+    a specific industry, with the live gem score joined in. `search` matches
+    ticker or company name server-side, so a name past the row limit is still
+    findable."""
     order = _SCREENER_SORTS.get(sort, _SCREENER_SORTS["score"])
     cap_ceiling = _SCREENER_CAPS.get(cap, _SCREENER_CAPS["gem"])
     industry = (industry or "").strip()
+    qpat = "%" + (search or "").strip() + "%"   # '%%' when blank → matches all
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
@@ -466,10 +469,12 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
                   AND (%(ind)s = '' OR s.industry = %(ind)s)
                   AND (%(go)s = false OR g.up_and_comer_score IS NOT NULL)
                   AND (%(capc)s IS NULL OR s.market_cap < %(capc)s)
+                  AND (s.ticker ILIKE %(qpat)s OR s.company_name ILIKE %(qpat)s)
                 ORDER BY {order}, s.market_cap DESC NULLS LAST
                 LIMIT 1200
                 """,
-                {"sec": sector, "go": gems_only, "capc": cap_ceiling, "ind": industry},
+                {"sec": sector, "go": gems_only, "capc": cap_ceiling,
+                 "ind": industry, "qpat": qpat},
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -1034,8 +1039,9 @@ def register_routes(mcp) -> None:
         if cap not in _SCREENER_CAPS:
             cap = "gem"
         industry = request.query_params.get("industry") or ""
+        search = request.query_params.get("search") or ""
         try:
-            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only, cap, industry)
+            data = await asyncio.to_thread(_screener_rows, sector, sort, gems_only, cap, industry, search)
         except Exception as e:
             return JSONResponse({"sectors": [], "rows": [], "count": 0, "total": 0, "error": str(e)[:120]})
         return JSONResponse(data)
