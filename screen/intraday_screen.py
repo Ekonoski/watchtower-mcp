@@ -107,6 +107,28 @@ def _load_watchlist(conn) -> list:
         return []
 
 
+def _load_ticker_meta(conn, tickers: list) -> dict:
+    """company_name + sector from the broad `tickers` universe. Fallback so the
+    scanner can label names that pass the gap/volume filters but aren't in the
+    curated quality set (most live gappers). Tickers not in our universe at all
+    (obscure micro-caps, fresh listings) still come back blank — we have no
+    sector for them without a live profile fetch."""
+    if conn is None or not tickers:
+        return {}
+    out: dict = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT ticker, company_name, sector FROM tickers WHERE ticker = ANY(%s)",
+                (list(tickers),),
+            )
+            for tk, cn, sec in cur.fetchall():
+                out[tk] = {"company_name": cn, "sector": sec}
+    except Exception:
+        pass
+    return out
+
+
 # ── Market time helpers ───────────────────────────────────────────────────────
 
 def _get_et_now():
@@ -420,6 +442,9 @@ def run_screen(
     if not universe:
         return []
 
+    # Sector/name for any scanned ticker that isn't in the curated quality set.
+    ticker_meta = _load_ticker_meta(conn, universe)
+
     # ── Score each ticker ─────────────────────────────────────────────────────
     results = []
 
@@ -519,8 +544,10 @@ def run_screen(
             if single_ticker and score < min_score:
                 continue
 
-            # Pull quality fundamentals if available
+            # Pull quality fundamentals if available; fall back to the broad
+            # tickers table for name/sector so non-quality gappers aren't blank.
             q = quality_map.get(ticker, {})
+            meta = ticker_meta.get(ticker, {})
 
             result = {
                 "ticker": ticker,
@@ -540,8 +567,8 @@ def run_screen(
                 "minutes_elapsed": minutes_elapsed,
                 "is_market_hours": is_market_hours,
                 # Fundamentals (may be empty for non-universe tickers)
-                "company_name": q.get("company_name", ""),
-                "sector": q.get("sector", ""),
+                "company_name": q.get("company_name") or meta.get("company_name") or "",
+                "sector": q.get("sector") or meta.get("sector") or "",
             }
             results.append(result)
 
