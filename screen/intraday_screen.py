@@ -129,6 +129,82 @@ def _load_ticker_meta(conn, tickers: list) -> dict:
     return out
 
 
+_FMP_BASE = "https://financialmodelingprep.com/stable"
+
+
+def _fetch_profile(ticker: str) -> dict:
+    """One-shot FMP /profile → name/sector/industry for an off-universe gapper."""
+    import logging
+    api_key = os.environ.get("FMP_API_KEY", "").strip()
+    if not api_key:
+        return {}
+    try:
+        import requests
+        resp = requests.get(f"{_FMP_BASE}/profile",
+                            params={"symbol": ticker, "apikey": api_key}, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and data:
+            p = data[0]
+            return {"company_name": (p.get("companyName") or "").strip() or None,
+                    "sector": (p.get("sector") or "").strip() or None,
+                    "industry": (p.get("industry") or "").strip() or None}
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[intraday_screen] profile fetch {ticker} failed: {e}")
+    return {}
+
+
+def _enrich_missing_sectors(conn, results: list, max_fetch: int = 25) -> None:
+    """Fill sector/name for result rows still blank after the tickers fallback.
+    Uses a persistent cache (gapper_profile_cache) and a capped number of live
+    FMP /profile fetches — most live gappers are off-universe, so we label them
+    once and remember them. In-place mutation of `results`."""
+    import logging
+    log = logging.getLogger(__name__)
+    missing = [r for r in results if not r.get("sector")]
+    if not missing or conn is None:
+        return
+    tks = list({r["ticker"] for r in missing})
+    cache: dict = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS gapper_profile_cache ("
+                "ticker text PRIMARY KEY, company_name text, sector text, "
+                "industry text, fetched_at timestamptz DEFAULT now())")
+            conn.commit()
+            cur.execute("SELECT ticker, company_name, sector FROM gapper_profile_cache "
+                        "WHERE ticker = ANY(%s)", (tks,))
+            for tk, cn, sec in cur.fetchall():
+                cache[tk] = {"company_name": cn, "sector": sec}
+    except Exception as e:
+        log.warning(f"[intraday_screen] gapper cache read failed: {e}")
+    fetched = 0
+    for r in missing:
+        tk = r["ticker"]
+        meta = cache.get(tk)
+        if meta is None and fetched < max_fetch:
+            meta = _fetch_profile(tk)
+            fetched += 1
+            if meta.get("sector"):   # only cache real hits, so misses can retry
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO gapper_profile_cache (ticker, company_name, sector, industry) "
+                            "VALUES (%s,%s,%s,%s) ON CONFLICT (ticker) DO UPDATE SET "
+                            "company_name=EXCLUDED.company_name, sector=EXCLUDED.sector, "
+                            "industry=EXCLUDED.industry, fetched_at=now()",
+                            (tk, meta.get("company_name"), meta.get("sector"), meta.get("industry")))
+                    conn.commit()
+                except Exception:
+                    pass
+        if meta:
+            if meta.get("sector"):
+                r["sector"] = meta["sector"]
+            if not r.get("company_name") and meta.get("company_name"):
+                r["company_name"] = meta["company_name"]
+
+
 # ── Market time helpers ───────────────────────────────────────────────────────
 
 def _get_et_now():
@@ -574,6 +650,9 @@ def run_screen(
 
         except Exception:
             continue
+
+    # Label off-universe gappers (cached + capped live FMP /profile fetches).
+    _enrich_missing_sectors(conn, results)
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results
