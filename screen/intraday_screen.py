@@ -154,12 +154,15 @@ def _fetch_profile(ticker: str) -> dict:
     return {}
 
 
-def _enrich_missing_sectors(conn, results: list, max_fetch: int = 25) -> None:
+def _enrich_missing_sectors(conn, results: list, max_fetch: int = 80,
+                            workers: int = 8, retry_after_hours: int = 12) -> None:
     """Fill sector/name for result rows still blank after the tickers fallback.
-    Uses a persistent cache (gapper_profile_cache) and a capped number of live
-    FMP /profile fetches — most live gappers are off-universe, so we label them
-    once and remember them. In-place mutation of `results`."""
+    Cache hits (gapper_profile_cache) are used first; the rest are fetched live
+    from FMP in parallel (capped), then upserted. FMP misses are cached too so a
+    persistently-unknown symbol doesn't burn the per-scan budget every scan — but
+    they're retried after retry_after_hours. In-place mutation of `results`."""
     import logging
+    from concurrent.futures import ThreadPoolExecutor
     log = logging.getLogger(__name__)
     missing = [r for r in results if not r.get("sector")]
     if not missing or conn is None:
@@ -173,34 +176,64 @@ def _enrich_missing_sectors(conn, results: list, max_fetch: int = 25) -> None:
                 "ticker text PRIMARY KEY, company_name text, sector text, "
                 "industry text, fetched_at timestamptz DEFAULT now())")
             conn.commit()
-            cur.execute("SELECT ticker, company_name, sector FROM gapper_profile_cache "
-                        "WHERE ticker = ANY(%s)", (tks,))
-            for tk, cn, sec in cur.fetchall():
-                cache[tk] = {"company_name": cn, "sector": sec}
+            cur.execute(
+                "SELECT ticker, company_name, sector, "
+                "(fetched_at < now() - %s * interval '1 hour') AS stale "
+                "FROM gapper_profile_cache WHERE ticker = ANY(%s)",
+                (retry_after_hours, tks))
+            for tk, cn, sec, stale in cur.fetchall():
+                cache[tk] = {"company_name": cn, "sector": sec, "stale": stale}
     except Exception as e:
         log.warning(f"[intraday_screen] gapper cache read failed: {e}")
-    fetched = 0
+
+    # Fill from cache hits first.
     for r in missing:
-        tk = r["ticker"]
-        meta = cache.get(tk)
-        if meta is None and fetched < max_fetch:
-            meta = _fetch_profile(tk)
-            fetched += 1
-            if meta.get("sector"):   # only cache real hits, so misses can retry
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "INSERT INTO gapper_profile_cache (ticker, company_name, sector, industry) "
-                            "VALUES (%s,%s,%s,%s) ON CONFLICT (ticker) DO UPDATE SET "
-                            "company_name=EXCLUDED.company_name, sector=EXCLUDED.sector, "
-                            "industry=EXCLUDED.industry, fetched_at=now()",
-                            (tk, meta.get("company_name"), meta.get("sector"), meta.get("industry")))
-                    conn.commit()
-                except Exception:
-                    pass
-        if meta:
-            if meta.get("sector"):
-                r["sector"] = meta["sector"]
+        m = cache.get(r["ticker"])
+        if m and m.get("sector"):
+            r["sector"] = m["sector"]
+            if not r.get("company_name") and m.get("company_name"):
+                r["company_name"] = m["company_name"]
+
+    # Still blank → live fetch if never cached, or a stale miss.
+    to_fetch = []
+    for r in missing:
+        if r.get("sector"):
+            continue
+        m = cache.get(r["ticker"])
+        if m is None or (m.get("sector") is None and m.get("stale")):
+            to_fetch.append(r["ticker"])
+    to_fetch = list(dict.fromkeys(to_fetch))[:max_fetch]
+    if not to_fetch:
+        return
+
+    # Network-bound → fetch concurrently, then upsert serially (psycopg2 conn is
+    # not thread-safe). Cache every attempt, hits and misses alike.
+    fetched: dict = {}
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for tk, meta in zip(to_fetch, ex.map(_fetch_profile, to_fetch)):
+                fetched[tk] = meta or {}
+    except Exception as e:
+        log.warning(f"[intraday_screen] parallel profile fetch failed: {e}")
+    try:
+        with conn.cursor() as cur:
+            for tk, meta in fetched.items():
+                cur.execute(
+                    "INSERT INTO gapper_profile_cache (ticker, company_name, sector, industry) "
+                    "VALUES (%s,%s,%s,%s) ON CONFLICT (ticker) DO UPDATE SET "
+                    "company_name=EXCLUDED.company_name, sector=EXCLUDED.sector, "
+                    "industry=EXCLUDED.industry, fetched_at=now()",
+                    (tk, meta.get("company_name"), meta.get("sector"), meta.get("industry")))
+        conn.commit()
+    except Exception as e:
+        log.warning(f"[intraday_screen] gapper cache write failed: {e}")
+
+    for r in missing:
+        if r.get("sector"):
+            continue
+        meta = fetched.get(r["ticker"])
+        if meta and meta.get("sector"):
+            r["sector"] = meta["sector"]
             if not r.get("company_name") and meta.get("company_name"):
                 r["company_name"] = meta["company_name"]
 
