@@ -92,6 +92,13 @@ _synthesis_cache: Dict[str, tuple] = {}       # url -> (ts, signal dict)
 NEWS_RETENTION_SEC = int(os.environ.get("NEWS_RETENTION_MIN", "180")) * 60
 _recent_alerts: Dict[str, tuple] = {}         # url -> (first_seen_ts, alert)
 
+# How many catalysts the feed surfaces. Pre-market the classified set routinely
+# exceeds this, making it the binding cut — so keep it generous AND never let it
+# drop a name that's already MOVING on its news (a breaking catalyst pushing the
+# stock is the whole point of the feed).
+NEWS_MAX_ALERTS = int(os.environ.get("NEWS_MAX_ALERTS", "50"))
+NEWS_BIG_MOVE_PCT = float(os.environ.get("NEWS_BIG_MOVE_PCT", "5.0"))
+
 
 def _cache_prune(cache: Dict[str, tuple], ttl: float = 7200.0) -> None:
     import time as _time
@@ -224,7 +231,9 @@ def _fetch_fmp_news(cutoff_utc: datetime) -> List[dict]:
         try:
             resp = requests.get(
                 f"{_FMP_BASE}{endpoint}",
-                params={"page": 0, "limit": 250, "apikey": api_key},
+                params={"page": 0,
+                        "limit": int(os.environ.get("NEWS_FMP_LIMIT", "1000")),
+                        "apikey": api_key},
                 timeout=20,
             )
             resp.raise_for_status()
@@ -743,11 +752,25 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
         mag_score = {"high": 3, "medium": 2, "low": 1}.get(a["magnitude"], 0)
         off_radar_bonus = 1 if a["is_off_radar"] else 0
         vol_bonus = min(2, a.get("vol_ratio", 1.0) - 1.0)
-        return sig_score + mag_score + off_radar_bonus + vol_bonus
+        # The price reaction IS the catalyst — a name already moving hard on its
+        # news is the highest-signal item in the feed, so let it float to the top
+        # regardless of headline classification or whether we already follow it.
+        move_bonus = min(5.0, abs(a.get("change_pct", 0) or 0) / 2.0)
+        return sig_score + mag_score + off_radar_bonus + vol_bonus + move_bonus
 
     alerts.sort(key=_rank_key, reverse=True)
     _flush_pending_persist()
-    return alerts[:30]
+
+    # Keep the top N, but NEVER cut a name that's already making a real move on
+    # its news (>= NEWS_BIG_MOVE_PCT) — those are exactly the breaking catalysts
+    # the feed exists to surface, even on a busy pre-market when the cap binds.
+    top = alerts[:NEWS_MAX_ALERTS]
+    if len(alerts) > NEWS_MAX_ALERTS:
+        kept = set(map(id, top))
+        for a in alerts[NEWS_MAX_ALERTS:]:
+            if abs(a.get("change_pct", 0) or 0) >= NEWS_BIG_MOVE_PCT and id(a) not in kept:
+                top.append(a)
+    return top
 
 
 def _keyword_classify(article: dict) -> Optional[dict]:

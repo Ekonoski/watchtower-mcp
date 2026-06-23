@@ -441,10 +441,14 @@ def start_scheduler():
         },
     )
 
-    # Pre-market: every 15 min, 7:00–9:15 AM ET
+    # Pre-market: every 5 min, 7:00–9:15 AM ET. Tightened from */15 so breaking
+    # pre-market catalysts (partnerships, 8-Ks, guidance) surface hot off the
+    # press instead of sitting up to 15 min before the next scan. Grok cost stays
+    # bounded — classifications are URL-cached, so each 5-min pass only bills the
+    # genuinely-new headlines. Dial back via the cron minute if needed.
     scheduler.add_job(
         run_scheduled_scan,
-        CronTrigger(day_of_week="mon-fri", hour="7-8", minute="*/15", timezone=et),
+        CronTrigger(day_of_week="mon-fri", hour="7-8", minute="*/5", timezone=et),
         id="intraday_scan_premarket",
         replace_existing=True,
     )
