@@ -92,11 +92,11 @@ _synthesis_cache: Dict[str, tuple] = {}       # url -> (ts, signal dict)
 NEWS_RETENTION_SEC = int(os.environ.get("NEWS_RETENTION_MIN", "180")) * 60
 _recent_alerts: Dict[str, tuple] = {}         # url -> (first_seen_ts, alert)
 
-# How many catalysts the feed surfaces. Pre-market the classified set routinely
-# exceeds this, making it the binding cut — so keep it generous AND never let it
-# drop a name that's already MOVING on its news (a breaking catalyst pushing the
-# stock is the whole point of the feed).
-NEWS_MAX_ALERTS = int(os.environ.get("NEWS_MAX_ALERTS", "50"))
+# How many catalysts the feed surfaces. The smarter ranking (price move) and the
+# never-drop rule below do the real work, so the cap stays tight at 30 — a name
+# already MOVING on its news is kept even past the cap (that's the whole point of
+# the feed), so the cap no longer buries a breaking mover.
+NEWS_MAX_ALERTS = int(os.environ.get("NEWS_MAX_ALERTS", "30"))
 NEWS_BIG_MOVE_PCT = float(os.environ.get("NEWS_BIG_MOVE_PCT", "5.0"))
 
 
