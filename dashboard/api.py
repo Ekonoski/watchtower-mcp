@@ -261,6 +261,111 @@ def _etf_heat_snapshot(tf: str) -> list:
     } for tk, g, lbl, r, h, rk in rows]
 
 
+def _earnings_calendar_rows(days: int = 14, min_cap: float = 2e9) -> list:
+    """Upcoming earnings for the Calendar tab: every watchlist name plus
+    mid/large-caps (>= min_cap) reporting in the next `days`, enriched with
+    company name, market cap, and trailing-surprise context from
+    earnings_calendar (migration 0013). Ordered by date then size."""
+    from screen.reversal_screen import _conn
+    try:
+        conn = _conn()
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ec.ticker, ec.report_date, ec.fiscal_period,
+                       ec.eps_estimated, ec.revenue_estimated, ec.time_of_day,
+                       ec.last_year_eps, ec.last_quarter_eps, ec.last_4q_surprise_avg,
+                       t.company_name, t.sector, COALESCE(t.market_cap, 0) AS market_cap,
+                       (w.ticker IS NOT NULL) AS on_watchlist
+                FROM earnings_calendar ec
+                LEFT JOIN tickers t   ON t.ticker = ec.ticker
+                LEFT JOIN watchlist w ON w.ticker = ec.ticker
+                WHERE ec.report_date >= CURRENT_DATE
+                  AND ec.report_date <= CURRENT_DATE + (%(days)s || ' days')::interval
+                  AND (w.ticker IS NOT NULL OR COALESCE(t.market_cap, 0) >= %(cap)s)
+                ORDER BY ec.report_date ASC, COALESCE(t.market_cap, 0) DESC
+                """,
+                {"days": days, "cap": min_cap},
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    out = []
+    for (tk, rd, fp, eps, rev, tod, ly, lq, surp, co, sec, cap, wl) in rows:
+        out.append({
+            "ticker": tk,
+            "report_date": rd.isoformat() if rd else None,
+            "fiscal_period": fp,
+            "eps_estimated": float(eps) if eps is not None else None,
+            "revenue_estimated": float(rev) if rev is not None else None,
+            "time_of_day": (tod or "").lower() or None,   # 'bmo' | 'amc' | None
+            "last_year_eps": float(ly) if ly is not None else None,
+            "last_quarter_eps": float(lq) if lq is not None else None,
+            "surprise_avg": float(surp) if surp is not None else None,
+            "company_name": co,
+            "sector": sec,
+            "market_cap": float(cap) if cap is not None else 0.0,
+            "on_watchlist": bool(wl),
+        })
+    return out
+
+
+def _economic_calendar_rows(days: int = 14) -> list:
+    """Upcoming macro events for the Calendar tab (next `days`), US + major
+    global, from economic_calendar (migration 0052). Returns all impact levels
+    ordered by date/time; the frontend pins High-impact and mutes Low."""
+    from screen.reversal_screen import _conn
+    try:
+        conn = _conn()
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT event_date, event_time, country, event, currency, impact,
+                       actual, previous, estimate, change_pct, unit
+                FROM economic_calendar
+                WHERE event_date >= CURRENT_DATE
+                  AND event_date <= CURRENT_DATE + (%(days)s || ' days')::interval
+                ORDER BY event_date ASC, event_time ASC, event ASC
+                """,
+                {"days": days},
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    out = []
+    for (ed, et, ctry, ev, cur_, imp, act, prev, est, chg, unit) in rows:
+        out.append({
+            "event_date": ed.isoformat() if ed else None,
+            "event_time": et or "",
+            "country": ctry,
+            "event": ev,
+            "currency": cur_,
+            "impact": imp,                                  # High | Medium | Low | None
+            "actual": float(act) if act is not None else None,
+            "previous": float(prev) if prev is not None else None,
+            "estimate": float(est) if est is not None else None,
+            "change_pct": float(chg) if chg is not None else None,
+            "unit": unit,
+        })
+    return out
+
+
 def _sector_heat_compute(sessions_back: int = 63, weight: str = "median") -> list:
     """Live sector heat map: rank every GICS sector hottest->coldest by price
     momentum over `sessions_back` TRADING SESSIONS (last bar vs the bar N sessions
@@ -1070,6 +1175,36 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"tf": tf, "window_days": days, "etfs": [], "error": str(e)[:120]})
         return JSONResponse({"tf": tf, "window_days": days, "etfs": etfs})
+
+    @mcp.custom_route("/api/calendar/earnings", methods=["GET"])
+    async def calendar_earnings(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            days = int(request.query_params.get("days") or 14)
+        except ValueError:
+            days = 14
+        days = max(1, min(days, 30))
+        try:
+            rows = await asyncio.to_thread(_earnings_calendar_rows, days)
+        except Exception as e:
+            return JSONResponse({"days": days, "rows": [], "error": str(e)[:120]})
+        return JSONResponse({"days": days, "rows": rows})
+
+    @mcp.custom_route("/api/calendar/economic", methods=["GET"])
+    async def calendar_economic(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            days = int(request.query_params.get("days") or 14)
+        except ValueError:
+            days = 14
+        days = max(1, min(days, 30))
+        try:
+            rows = await asyncio.to_thread(_economic_calendar_rows, days)
+        except Exception as e:
+            return JSONResponse({"days": days, "rows": [], "error": str(e)[:120]})
+        return JSONResponse({"days": days, "rows": rows})
 
     @mcp.custom_route("/api/rotation", methods=["GET"])
     async def rotation(request: Request):

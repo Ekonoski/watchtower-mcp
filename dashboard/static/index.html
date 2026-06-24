@@ -219,6 +219,25 @@
   .etf-band-label { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
   .etf-band-label:first-child { margin-top: 4px; }
   #etf-heat .heat-map + .etf-band-label { margin-top: 16px; }
+  /* Calendar tab */
+  .cal-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+  .cal-title { font-weight: 700; font-size: 15px; }
+  .cal-sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  tr.cal-daysep td { background: var(--panel2); font-size: 11px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--muted); padding: 6px 10px; }
+  tr.cal-daysep.today td { color: var(--green); }
+  tr.cal-daysep .today-badge { background: var(--green); color: #08110b; border-radius: 4px;
+    padding: 1px 6px; font-size: 10px; margin-left: 8px; letter-spacing: 0; }
+  tr.cal-wl { background: rgba(43,213,118,.06); }
+  .cal-star { color: var(--green); margin-right: 4px; }
+  .tod-tag { font-size: 10px; font-weight: 800; border-radius: 4px; padding: 1px 6px; letter-spacing: .4px; }
+  .tod-bmo { background: rgba(90,130,255,.18); color: #9db8ff; }
+  .tod-amc { background: rgba(255,150,80,.18); color: #ffb27a; }
+  .imp-badge { font-size: 10px; font-weight: 800; border-radius: 4px; padding: 1px 7px; letter-spacing: .4px; }
+  .imp-high { background: rgba(255,90,90,.20); color: #ff8a8a; }
+  .imp-medium { background: rgba(255,200,80,.16); color: #ffce6a; }
+  .imp-low { background: var(--panel2); color: var(--muted); }
+  tr.cal-econ-low { opacity: .62; }
   /* Vantage — denser tiles (many names per sector), clickable */
   .vantage-map { grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 6px; }
   .vantage-map .heat-tile { min-height: 50px; padding: 7px 8px; cursor: pointer; transition: transform .06s; }
@@ -343,6 +362,7 @@
   <button data-tab="screener">Screener</button>
   <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
+  <button data-tab="calendar">Calendar</button>
   <button data-tab="performance">Performance</button>
   <button data-tab="watchlist">Watchlist</button>
 </nav>
@@ -725,6 +745,52 @@
       <div id="wl-empty" class="empty" style="display:none">Watchlist is empty. Click any ticker in the scanner and hit "+ Add to watchlist" to track a position here.</div>
     </div>
   </section>
+
+  <!-- ── CALENDAR ── -->
+  <section id="tab-calendar" class="tabpane">
+    <div class="cal-head">
+      <span class="cal-title">Earnings Calendar <span class="cal-sub" id="cal-earn-sub">— watchlist + mid/large-caps</span></span>
+      <div class="seg" id="cal-earn-win">
+        <button data-d="7">7d</button>
+        <button data-d="14" class="on">2wk</button>
+        <button data-d="30">30d</button>
+      </div>
+    </div>
+    <div class="tblwrap">
+      <table id="cal-earn-table">
+        <thead><tr>
+          <th class="left">Ticker</th><th class="left">Company</th><th>Mkt Cap</th>
+          <th title="Before market open / after market close">When</th>
+          <th>EPS Est</th><th title="Avg surprise over last 4 reports">4Q Surprise</th>
+        </tr></thead>
+        <tbody id="cal-earn-body"></tbody>
+      </table>
+      <div id="cal-earn-empty" class="empty" style="display:none"></div>
+    </div>
+
+    <div class="cal-head" style="margin-top:26px">
+      <span class="cal-title">Economic Calendar <span class="cal-sub" id="cal-econ-sub">— US + major global, high-impact pinned</span></span>
+      <div class="seg" id="cal-econ-win">
+        <button data-d="7">7d</button>
+        <button data-d="14" class="on">2wk</button>
+        <button data-d="30">30d</button>
+      </div>
+      <div class="seg" id="cal-econ-imp">
+        <button data-imp="high" class="on">High impact</button>
+        <button data-imp="all">All</button>
+      </div>
+    </div>
+    <div class="tblwrap">
+      <table id="cal-econ-table">
+        <thead><tr>
+          <th>Time</th><th class="left">Country</th><th class="left">Event</th>
+          <th>Impact</th><th>Previous</th><th>Estimate</th>
+        </tr></thead>
+        <tbody id="cal-econ-body"></tbody>
+      </table>
+      <div id="cal-econ-empty" class="empty" style="display:none"></div>
+    </div>
+  </section>
 </main>
 
 <!-- ── THEME DRILL-DOWN MODAL ── -->
@@ -788,6 +854,9 @@ let state = {
   gemSearch: "",
   heatTf: "quarterly",
   etfHeatTf: "monthly",
+  calEarnWin: 14,
+  calEconWin: 14,
+  calEconImpact: "high",
   heatWeight: "median",
 };
 
@@ -924,6 +993,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "themes") loadThemes();
   if (b.dataset.tab === "screener") loadScreener();
   if (b.dataset.tab === "vantage") loadVantage();
+  if (b.dataset.tab === "calendar") loadCalendar();
 });
 
 /* ── browser pop-up notifications ── */
@@ -1472,6 +1542,108 @@ async function loadEtfHeatmap(tf) {
   renderEtfHeat((data && data.etfs) || []);
 }
 document.querySelectorAll("#etfheat-tf button").forEach(b => b.onclick = () => loadEtfHeatmap(b.dataset.tf));
+
+/* ── Calendar tab (earnings + macro) ── */
+function fmtCap(v) {
+  if (!v || v <= 0) return "—";
+  if (v >= 1e12) return "$" + (v / 1e12).toFixed(2) + "T";
+  if (v >= 1e9) return "$" + (v / 1e9).toFixed(1) + "B";
+  if (v >= 1e6) return "$" + (v / 1e6).toFixed(0) + "M";
+  return "$" + v.toFixed(0);
+}
+const _DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function fmtDayLabel(iso) {
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return iso;
+  return `${_DOW[d.getDay()]} ${_MON[d.getMonth()]} ${d.getDate()}`;
+}
+function _todayISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function daySepRow(cols, iso) {
+  const today = iso === _todayISO();
+  const badge = today ? ` <span class="today-badge">TODAY</span>` : "";
+  return `<tr class="cal-daysep${today ? " today" : ""}"><td colspan="${cols}">${fmtDayLabel(iso)}${badge}</td></tr>`;
+}
+
+function renderEarnings(rows) {
+  const body = $("cal-earn-body"), empty = $("cal-earn-empty");
+  if (!rows || !rows.length) {
+    body.innerHTML = "";
+    empty.style.display = "block";
+    empty.textContent = `No watchlist or mid/large-cap earnings in the next ${state.calEarnWin} days` +
+      (state.calEarnWin < 30 ? " — try 30d to see the upcoming season." : ".");
+    return;
+  }
+  empty.style.display = "none";
+  let lastDay = null, html = "";
+  for (const r of rows) {
+    if (r.report_date !== lastDay) { html += daySepRow(6, r.report_date); lastDay = r.report_date; }
+    const tod = r.time_of_day === "bmo" ? `<span class="tod-tag tod-bmo">BMO</span>`
+      : r.time_of_day === "amc" ? `<span class="tod-tag tod-amc">AMC</span>` : "—";
+    const surp = r.surprise_avg != null
+      ? `<span class="${r.surprise_avg >= 0 ? "pos" : "neg"}">${r.surprise_avg >= 0 ? "+" : ""}${(r.surprise_avg * 100).toFixed(1)}%</span>` : "—";
+    const star = r.on_watchlist ? `<span class="cal-star" title="On your watchlist">★</span>` : "";
+    html += `<tr class="${r.on_watchlist ? "cal-wl" : ""}" data-ticker="${esc(r.ticker)}">
+      <td class="left">${star}<span class="tkr">${esc(r.ticker)}</span></td>
+      <td class="left">${esc((r.company_name || "").slice(0, 32))}</td>
+      <td class="num">${fmtCap(r.market_cap)}</td>
+      <td>${tod}</td>
+      <td class="num">${r.eps_estimated != null ? "$" + fmtNum(r.eps_estimated) : "—"}</td>
+      <td class="num">${surp}</td>
+    </tr>`;
+  }
+  body.innerHTML = html;
+  body.querySelectorAll("tr[data-ticker]").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
+}
+
+function renderEconomic(rows) {
+  const body = $("cal-econ-body"), empty = $("cal-econ-empty");
+  let filtered = rows || [];
+  if (state.calEconImpact === "high") filtered = filtered.filter(r => (r.impact || "").toLowerCase() === "high");
+  if (!filtered.length) {
+    body.innerHTML = "";
+    empty.style.display = "block";
+    empty.textContent = state.calEconImpact === "high"
+      ? `No high-impact macro events in the next ${state.calEconWin} days — switch to All.`
+      : `No macro events in the next ${state.calEconWin} days.`;
+    return;
+  }
+  empty.style.display = "none";
+  let lastDay = null, html = "";
+  for (const r of filtered) {
+    if (r.event_date !== lastDay) { html += daySepRow(6, r.event_date); lastDay = r.event_date; }
+    const imp = (r.impact || "").toLowerCase();
+    const impBadge = imp ? `<span class="imp-badge imp-${imp}">${esc(r.impact)}</span>` : "—";
+    html += `<tr class="${imp === "low" ? "cal-econ-low" : ""}">
+      <td class="num">${esc(r.event_time || "—")}</td>
+      <td class="left">${esc(r.country || "")}</td>
+      <td class="left">${esc(r.event || "")}</td>
+      <td>${impBadge}</td>
+      <td class="num">${r.previous != null ? fmtNum(r.previous) : "—"}${r.unit && r.previous != null ? esc(r.unit) : ""}</td>
+      <td class="num">${r.estimate != null ? fmtNum(r.estimate) : "—"}${r.unit && r.estimate != null ? esc(r.unit) : ""}</td>
+    </tr>`;
+  }
+  body.innerHTML = html;
+}
+
+async function loadCalEarnings() {
+  document.querySelectorAll("#cal-earn-win button").forEach(b => b.classList.toggle("on", +b.dataset.d === state.calEarnWin));
+  let data;
+  try { data = await api(`/api/calendar/earnings?days=${state.calEarnWin}`); } catch { return; }
+  renderEarnings((data && data.rows) || []);
+}
+async function loadCalEconomic() {
+  document.querySelectorAll("#cal-econ-win button").forEach(b => b.classList.toggle("on", +b.dataset.d === state.calEconWin));
+  document.querySelectorAll("#cal-econ-imp button").forEach(b => b.classList.toggle("on", b.dataset.imp === state.calEconImpact));
+  let data;
+  try { data = await api(`/api/calendar/economic?days=${state.calEconWin}`); } catch { return; }
+  state.calEconRows = (data && data.rows) || [];
+  renderEconomic(state.calEconRows);
+}
+function loadCalendar() { loadCalEarnings(); loadCalEconomic(); }
+document.querySelectorAll("#cal-earn-win button").forEach(b => b.onclick = () => { state.calEarnWin = +b.dataset.d; loadCalEarnings(); });
+document.querySelectorAll("#cal-econ-win button").forEach(b => b.onclick = () => { state.calEconWin = +b.dataset.d; loadCalEconomic(); });
+document.querySelectorAll("#cal-econ-imp button").forEach(b => b.onclick = () => { state.calEconImpact = b.dataset.imp; renderEconomic(state.calEconRows || []); document.querySelectorAll("#cal-econ-imp button").forEach(x => x.classList.toggle("on", x.dataset.imp === state.calEconImpact)); });
 
 /* ── Vantage: fundamentals map ── */
 async function loadVantage() {
