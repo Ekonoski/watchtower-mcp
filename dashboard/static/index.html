@@ -216,6 +216,20 @@
   .heat-tile .ht-n { position: absolute; top: 8px; right: 9px; font-size: 10px; opacity: 0.6; font-weight: 600; }
   /* ETF rotation map — tiles show theme label + ticker + move, under labeled bands */
   .heat-tile .ht-tk { font-family: var(--mono); font-size: 11px; font-weight: 800; opacity: .8; margin-top: 1px; }
+  .etf-tile { cursor: pointer; transition: transform .06s; }
+  .etf-tile:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0,0,0,.35); }
+  /* ETF holdings drill-down modal */
+  .etf-modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 200; display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; }
+  .etf-modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: min(740px, 96vw); max-height: 84vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 14px 44px rgba(0,0,0,.5); }
+  .etf-modal-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .etf-modal-title { font-weight: 800; font-size: 15px; }
+  .etf-modal-sub { color: var(--muted); font-size: 12px; }
+  .etf-modal-close { margin-left: auto; background: transparent; border: none; color: var(--muted); font-size: 17px; cursor: pointer; line-height: 1; }
+  .etf-modal-close:hover { color: var(--text); }
+  .etf-modal .tblwrap { overflow-y: auto; }
+  .etf-modal tbody tr { cursor: pointer; }
+  .etf-modal tbody tr:hover { background: var(--panel2); }
+  .etf-modal td .pos { color: #2bd576; } .etf-modal td .neg { color: #ff7a7a; }
   .etf-band-label { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
   .etf-band-label:first-child { margin-top: 4px; }
   #etf-heat .heat-map + .etf-band-label { margin-top: 16px; }
@@ -812,6 +826,28 @@
   <div id="d-sub" class="count-note"></div>
   <div id="d-body"></div>
 </aside>
+
+<!-- ── ETF HOLDINGS MODAL ── -->
+<div id="etf-modal" class="etf-modal" style="display:none">
+  <div class="etf-modal-box">
+    <div class="etf-modal-head">
+      <span id="etf-modal-title" class="etf-modal-title"></span>
+      <span id="etf-modal-sub" class="etf-modal-sub"></span>
+      <div class="seg" id="etf-modal-sort">
+        <button data-sort="weight" class="on">Weight</button>
+        <button data-sort="ret">Move</button>
+      </div>
+      <button id="etf-modal-close" class="etf-modal-close" title="Close">✕</button>
+    </div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th class="left">Ticker</th><th class="left">Company</th><th>Weight</th><th>Move</th></tr></thead>
+        <tbody id="etf-modal-body"></tbody>
+      </table>
+      <div id="etf-modal-empty" class="empty" style="display:none"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ── LOGIN ── -->
 <div id="login-overlay">
@@ -1522,8 +1558,9 @@ function renderEtfHeat(etfs) {
     html += rows.map(e => {
       const val = (e.ret || 0) * 100;
       const sign = val >= 0 ? "+" : "";
-      const tip = `${esc(e.label)} (${esc(e.ticker)}) · ${sign}${val.toFixed(1)}%`;
-      return `<div class="heat-tile" style="background:${heatColor(e.heat)}" title="${tip}">
+      const tip = `${esc(e.label)} (${esc(e.ticker)}) · ${sign}${val.toFixed(1)}% · click for holdings`;
+      return `<div class="heat-tile etf-tile" style="background:${heatColor(e.heat)}" title="${tip}"
+        data-etf="${esc(e.ticker)}" data-label="${esc(e.label)}">
         <div class="ht-sec">${esc(e.label)}</div>
         <div class="ht-tk">${esc(e.ticker)}</div>
         <div class="ht-ret">${sign}${val.toFixed(1)}%</div>
@@ -1531,6 +1568,7 @@ function renderEtfHeat(etfs) {
     }).join("") + `</div>`;
   }
   el.innerHTML = html;
+  el.querySelectorAll(".etf-tile").forEach(t => t.onclick = () => openEtfHoldings(t.dataset.etf, t.dataset.label));
 }
 async function loadEtfHeatmap(tf) {
   if (tf) state.etfHeatTf = tf;
@@ -1542,6 +1580,59 @@ async function loadEtfHeatmap(tf) {
   renderEtfHeat((data && data.etfs) || []);
 }
 document.querySelectorAll("#etfheat-tf button").forEach(b => b.onclick = () => loadEtfHeatmap(b.dataset.tf));
+
+/* ── ETF holdings drill-down (click a heat tile → its constituent stocks) ── */
+let _etfHoldings = [], _etfHoldSort = "weight", _etfHoldName = "";
+function closeEtfModal() { $("etf-modal").style.display = "none"; }
+async function openEtfHoldings(etf, label) {
+  const tf = state.etfHeatTf || "monthly";
+  _etfHoldName = `${label} · ${etf}`;
+  $("etf-modal-title").textContent = _etfHoldName;
+  $("etf-modal-sub").textContent = `holdings · ${ETFHEAT_TF_LABEL[tf] || ""} move`;
+  $("etf-modal-empty").style.display = "none";
+  $("etf-modal-body").innerHTML = `<tr><td colspan="4" class="empty" style="padding:18px">Loading holdings…</td></tr>`;
+  $("etf-modal").style.display = "flex";
+  let data;
+  try { data = await api(`/api/etf-holdings?etf=${encodeURIComponent(etf)}&tf=${encodeURIComponent(tf)}`); }
+  catch { _etfHoldings = []; renderEtfHoldings(); return; }
+  _etfHoldings = (data && data.holdings) || [];
+  renderEtfHoldings();
+}
+function renderEtfHoldings() {
+  const body = $("etf-modal-body"), empty = $("etf-modal-empty");
+  if (!_etfHoldings.length) {
+    body.innerHTML = "";
+    empty.style.display = "block";
+    empty.textContent = "No stock holdings on file for this ETF yet.";
+    return;
+  }
+  empty.style.display = "none";
+  $("etf-modal-sub").textContent = `${_etfHoldings.length} holdings · ${ETFHEAT_TF_LABEL[state.etfHeatTf || "monthly"] || ""} move`;
+  const rows = [..._etfHoldings].sort((a, b) =>
+    _etfHoldSort === "ret"
+      ? (b.ret ?? -Infinity) - (a.ret ?? -Infinity)
+      : (b.weight ?? -Infinity) - (a.weight ?? -Infinity));
+  body.innerHTML = rows.map(h => {
+    const ret = h.ret != null
+      ? `<span class="${h.ret >= 0 ? "pos" : "neg"}">${h.ret >= 0 ? "+" : ""}${(h.ret * 100).toFixed(1)}%</span>` : "—";
+    const wt = h.weight != null ? h.weight.toFixed(1) + "%" : "—";
+    return `<tr data-ticker="${esc(h.ticker)}">
+      <td class="left"><span class="tkr">${esc(h.ticker)}</span></td>
+      <td class="left">${esc((h.company_name || "").slice(0, 36))}</td>
+      <td class="num">${wt}</td>
+      <td class="num">${ret}</td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("tr[data-ticker]").forEach(tr =>
+    tr.onclick = () => { closeEtfModal(); openDrawer(tr.dataset.ticker); });
+}
+document.querySelectorAll("#etf-modal-sort button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#etf-modal-sort button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); _etfHoldSort = b.dataset.sort; renderEtfHoldings();
+});
+$("etf-modal-close").onclick = closeEtfModal;
+$("etf-modal").onclick = e => { if (e.target.id === "etf-modal") closeEtfModal(); };
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("etf-modal").style.display === "flex") closeEtfModal(); });
 
 /* ── Calendar tab (earnings + macro) ── */
 function fmtCap(v) {

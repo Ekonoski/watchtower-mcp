@@ -261,6 +261,66 @@ def _etf_heat_snapshot(tf: str) -> list:
     } for tk, g, lbl, r, h, rk in rows]
 
 
+def _etf_holdings(etf: str, days: int) -> list:
+    """Full constituent list for an ETF (migration 0053), each enriched with its
+    price move over `days` calendar days from daily_prices, plus company name and
+    sector from tickers. Ordered by published weight. Holdings not in our price
+    universe come back with ret=None (still listed). Powers /api/etf-holdings."""
+    from screen.reversal_screen import _conn
+    try:
+        conn = _conn()
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH cons AS (
+                    SELECT holding_ticker AS ticker, weight
+                    FROM etf_constituents WHERE etf_ticker = %(etf)s
+                ),
+                px AS (
+                    SELECT dp.ticker,
+                           (array_agg(dp.close ORDER BY dp.trade_date DESC))[1] AS last_close,
+                           (array_agg(dp.close ORDER BY dp.trade_date DESC)
+                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - %(days)s))[1] AS prev_close
+                    FROM daily_prices dp
+                    WHERE dp.ticker IN (SELECT ticker FROM cons)
+                      AND dp.trade_date >= CURRENT_DATE - (%(days)s + 60)
+                    GROUP BY dp.ticker
+                )
+                SELECT c.ticker, c.weight, t.company_name, t.sector,
+                       p.last_close,
+                       CASE WHEN p.prev_close > 0 THEN p.last_close / p.prev_close - 1 ELSE NULL END AS ret
+                FROM cons c
+                LEFT JOIN px p     ON p.ticker = c.ticker
+                LEFT JOIN tickers t ON t.ticker = c.ticker
+                ORDER BY c.weight DESC NULLS LAST, c.ticker
+                """,
+                {"etf": etf, "days": days},
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    out = []
+    for (tk, w, co, sec, lc, ret) in rows:
+        out.append({
+            "ticker": tk,
+            "weight": float(w) if w is not None else None,
+            "company_name": co,
+            "sector": sec,
+            "price": float(lc) if lc is not None else None,
+            "ret": float(ret) if ret is not None else None,
+            "in_universe": co is not None,
+        })
+    return out
+
+
 def _earnings_calendar_rows(days: int = 14, min_cap: float = 2e9) -> list:
     """Upcoming earnings for the Calendar tab: every watchlist name plus
     mid/large-caps (>= min_cap) reporting in the next `days`, enriched with
@@ -1175,6 +1235,23 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"tf": tf, "window_days": days, "etfs": [], "error": str(e)[:120]})
         return JSONResponse({"tf": tf, "window_days": days, "etfs": etfs})
+
+    @mcp.custom_route("/api/etf-holdings", methods=["GET"])
+    async def etf_holdings(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        etf = (request.query_params.get("etf") or "").upper().strip()
+        if not etf or not etf.isalnum() or len(etf) > 8:
+            return JSONResponse({"etf": etf, "tf": "monthly", "holdings": [], "error": "bad etf symbol"})
+        tf = (request.query_params.get("tf") or "monthly").lower()
+        if tf not in _HEAT_WINDOWS:
+            tf = "monthly"
+        days = _HEAT_WINDOWS[tf]
+        try:
+            holdings = await asyncio.to_thread(_etf_holdings, etf, days)
+        except Exception as e:
+            return JSONResponse({"etf": etf, "tf": tf, "holdings": [], "error": str(e)[:120]})
+        return JSONResponse({"etf": etf, "tf": tf, "holdings": holdings, "count": len(holdings)})
 
     @mcp.custom_route("/api/calendar/earnings", methods=["GET"])
     async def calendar_earnings(request: Request):
