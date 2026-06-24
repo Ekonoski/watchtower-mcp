@@ -214,6 +214,11 @@
   .heat-tile .ht-sec { font-size: 12px; font-weight: 700; line-height: 1.15; }
   .heat-tile .ht-ret { font-size: 19px; font-weight: 800; margin-top: 6px; }
   .heat-tile .ht-n { position: absolute; top: 8px; right: 9px; font-size: 10px; opacity: 0.6; font-weight: 600; }
+  /* ETF rotation map — tiles show theme label + ticker + move, under labeled bands */
+  .heat-tile .ht-tk { font-family: var(--mono); font-size: 11px; font-weight: 800; opacity: .8; margin-top: 1px; }
+  .etf-band-label { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
+  .etf-band-label:first-child { margin-top: 4px; }
+  #etf-heat .heat-map + .etf-band-label { margin-top: 16px; }
   /* Vantage — denser tiles (many names per sector), clickable */
   .vantage-map { grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 6px; }
   .vantage-map .heat-tile { min-height: 50px; padding: 7px 8px; cursor: pointer; transition: transform .06s; }
@@ -467,6 +472,20 @@
         <span class="heat-legend"><i class="hl cold"></i>cold <i class="hl warm"></i> <i class="hl hot"></i>hot</span>
       </div>
       <div id="heat-map" class="heat-map"></div>
+    </div>
+
+    <div class="heat-wrap">
+      <div class="heat-head">
+        <span class="heat-title">ETF Rotation Map <span class="heat-sub" id="etfheat-sub">— 1-month, by theme</span></span>
+        <div class="seg" id="etfheat-tf">
+          <button data-tf="daily">Daily</button>
+          <button data-tf="weekly">Weekly</button>
+          <button data-tf="monthly" class="on">Monthly</button>
+          <button data-tf="quarterly">Quarterly</button>
+        </div>
+        <span class="heat-legend"><i class="hl cold"></i>cold <i class="hl warm"></i> <i class="hl hot"></i>hot</span>
+      </div>
+      <div id="etf-heat"></div>
     </div>
 
     <div class="controls">
@@ -768,6 +787,7 @@ let state = {
   gemSleeve: "all",
   gemSearch: "",
   heatTf: "quarterly",
+  etfHeatTf: "monthly",
   heatWeight: "median",
 };
 
@@ -1224,6 +1244,7 @@ async function loadGems() {
   try { data = await api("/api/gems/latest"); } catch { return; }
   state.gems = data;
   loadGemDepartures();
+  loadEtfHeatmap();
   // Build theme filter chips from the loaded gems.
   const themes = [...new Set((data.gems || []).map(g => g.theme).filter(Boolean))];
   const seg = $("gem-theme-filter");
@@ -1416,6 +1437,41 @@ async function loadHeatmap(tf, wt) {
 }
 document.querySelectorAll("#heat-tf button").forEach(b => b.onclick = () => loadHeatmap(b.dataset.tf, null));
 document.querySelectorAll("#heat-wt button").forEach(b => b.onclick = () => loadHeatmap(null, b.dataset.wt));
+
+/* ── ETF rotation heat map ── */
+const ETF_BAND_LABEL = { broad: "Broad Market", sector: "Sectors", theme: "Themes & Industries" };
+const ETFHEAT_TF_LABEL = { daily: "today's move", weekly: "1-week", monthly: "1-month", quarterly: "3-month" };
+function renderEtfHeat(etfs) {
+  const el = $("etf-heat");
+  if (!etfs || !etfs.length) { el.innerHTML = `<span class="empty">ETF heat map unavailable.</span>`; return; }
+  let html = "";
+  for (const band of ["broad", "sector", "theme"]) {
+    const rows = etfs.filter(e => e.group === band);
+    if (!rows.length) continue;
+    html += `<div class="etf-band-label">${ETF_BAND_LABEL[band] || band}</div><div class="heat-map">`;
+    html += rows.map(e => {
+      const val = (e.ret || 0) * 100;
+      const sign = val >= 0 ? "+" : "";
+      const tip = `${esc(e.label)} (${esc(e.ticker)}) · ${sign}${val.toFixed(1)}%`;
+      return `<div class="heat-tile" style="background:${heatColor(e.heat)}" title="${tip}">
+        <div class="ht-sec">${esc(e.label)}</div>
+        <div class="ht-tk">${esc(e.ticker)}</div>
+        <div class="ht-ret">${sign}${val.toFixed(1)}%</div>
+      </div>`;
+    }).join("") + `</div>`;
+  }
+  el.innerHTML = html;
+}
+async function loadEtfHeatmap(tf) {
+  if (tf) state.etfHeatTf = tf;
+  tf = state.etfHeatTf || "monthly";
+  document.querySelectorAll("#etfheat-tf button").forEach(b => b.classList.toggle("on", b.dataset.tf === tf));
+  $("etfheat-sub").textContent = `— ${ETFHEAT_TF_LABEL[tf] || ""}, by theme`;
+  let data;
+  try { data = await api(`/api/heatmap-etf?tf=${encodeURIComponent(tf)}`); } catch { return; }
+  renderEtfHeat((data && data.etfs) || []);
+}
+document.querySelectorAll("#etfheat-tf button").forEach(b => b.onclick = () => loadEtfHeatmap(b.dataset.tf));
 
 /* ── Vantage: fundamentals map ── */
 async function loadVantage() {

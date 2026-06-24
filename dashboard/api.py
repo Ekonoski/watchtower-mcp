@@ -220,6 +220,47 @@ def _sector_heat_live(tf: str = "quarterly", weight: str = "median") -> list:
     return _sector_heat_compute(_HEAT_SESSIONS.get(tf, 63), weight)
 
 
+def _etf_heat_snapshot(tf: str) -> list:
+    """Read the precomputed ETF rotation heat map (migration 0051 — refreshed
+    nightly by ingestion/refresh_vantage.py). One row per ETF for the timeframe,
+    ordered by band then catalog order so the frontend can render labeled bands
+    (broad / sector / theme). Returns [] if the snapshot is missing/empty."""
+    from screen.reversal_screen import _conn
+    try:
+        conn = _conn()
+    except Exception:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ticker, theme_group, theme_label, ret, heat, rank
+                FROM etf_heat_snapshot
+                WHERE tf = %(tf)s
+                ORDER BY
+                    CASE theme_group WHEN 'broad' THEN 0 WHEN 'sector' THEN 1 ELSE 2 END,
+                    sort_order, ticker
+                """,
+                {"tf": tf},
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return [{
+        "ticker": tk,
+        "group": g,
+        "label": lbl,
+        "ret": float(r) if r is not None else 0.0,
+        "heat": float(h) if h is not None else 0.5,
+        "rank": int(rk),
+    } for tk, g, lbl, r, h, rk in rows]
+
+
 def _sector_heat_compute(sessions_back: int = 63, weight: str = "median") -> list:
     """Live sector heat map: rank every GICS sector hottest->coldest by price
     momentum over `sessions_back` TRADING SESSIONS (last bar vs the bar N sessions
@@ -1015,6 +1056,20 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": [], "error": str(e)[:120]})
         return JSONResponse({"tf": tf, "window_days": days, "weight": weight, "sectors": sectors})
+
+    @mcp.custom_route("/api/heatmap-etf", methods=["GET"])
+    async def heatmap_etf(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        tf = (request.query_params.get("tf") or "monthly").lower()
+        if tf not in _HEAT_WINDOWS:
+            tf = "monthly"
+        days = _HEAT_WINDOWS[tf]
+        try:
+            etfs = await asyncio.to_thread(_etf_heat_snapshot, tf)
+        except Exception as e:
+            return JSONResponse({"tf": tf, "window_days": days, "etfs": [], "error": str(e)[:120]})
+        return JSONResponse({"tf": tf, "window_days": days, "etfs": etfs})
 
     @mcp.custom_route("/api/rotation", methods=["GET"])
     async def rotation(request: Request):
