@@ -261,11 +261,17 @@ def _etf_heat_snapshot(tf: str) -> list:
     } for tk, g, lbl, r, h, rk in rows]
 
 
-def _etf_holdings(etf: str, days: int) -> list:
+def _etf_holdings(etf: str, sessions: int) -> list:
     """Full constituent list for an ETF (migration 0053), each enriched with its
-    price move over `days` calendar days from daily_prices, plus company name and
-    sector from tickers. Ordered by published weight. Holdings not in our price
-    universe come back with ret=None (still listed). Powers /api/etf-holdings."""
+    price move over `sessions` trading sessions from daily_prices, plus company
+    name and sector from tickers. Ordered by published weight. Holdings not in our
+    price universe come back with ret=None (still listed). Powers /api/etf-holdings.
+
+    Session-anchored (not calendar-day) lookback: the move is last_close vs. the
+    close `sessions` bars earlier, indexing into the date-desc array. This matches
+    the sector/ETF heat MVs and is robust to the latest bar lagging the calendar
+    (e.g. before today's close is loaded a 1-session daily move still compares the
+    two most recent real sessions instead of collapsing to 0%)."""
     from screen.reversal_screen import _conn
     try:
         conn = _conn()
@@ -282,11 +288,10 @@ def _etf_holdings(etf: str, days: int) -> list:
                 px AS (
                     SELECT dp.ticker,
                            (array_agg(dp.close ORDER BY dp.trade_date DESC))[1] AS last_close,
-                           (array_agg(dp.close ORDER BY dp.trade_date DESC)
-                              FILTER (WHERE dp.trade_date <= CURRENT_DATE - %(days)s))[1] AS prev_close
+                           (array_agg(dp.close ORDER BY dp.trade_date DESC))[1 + %(sessions)s] AS prev_close
                     FROM daily_prices dp
                     WHERE dp.ticker IN (SELECT ticker FROM cons)
-                      AND dp.trade_date >= CURRENT_DATE - (%(days)s + 60)
+                      AND dp.trade_date >= CURRENT_DATE - (%(sessions)s * 2 + 30)
                     GROUP BY dp.ticker
                 )
                 SELECT c.ticker, c.weight, t.company_name, t.sector,
@@ -297,7 +302,7 @@ def _etf_holdings(etf: str, days: int) -> list:
                 LEFT JOIN tickers t ON t.ticker = c.ticker
                 ORDER BY c.weight DESC NULLS LAST, c.ticker
                 """,
-                {"etf": etf, "days": days},
+                {"etf": etf, "sessions": sessions},
             )
             rows = cur.fetchall()
     except Exception:
@@ -1244,11 +1249,11 @@ def register_routes(mcp) -> None:
         if not etf or not etf.isalnum() or len(etf) > 8:
             return JSONResponse({"etf": etf, "tf": "monthly", "holdings": [], "error": "bad etf symbol"})
         tf = (request.query_params.get("tf") or "monthly").lower()
-        if tf not in _HEAT_WINDOWS:
+        if tf not in _HEAT_SESSIONS:
             tf = "monthly"
-        days = _HEAT_WINDOWS[tf]
+        sessions = _HEAT_SESSIONS[tf]
         try:
-            holdings = await asyncio.to_thread(_etf_holdings, etf, days)
+            holdings = await asyncio.to_thread(_etf_holdings, etf, sessions)
         except Exception as e:
             return JSONResponse({"etf": etf, "tf": tf, "holdings": [], "error": str(e)[:120]})
         return JSONResponse({"etf": etf, "tf": tf, "holdings": holdings, "count": len(holdings)})

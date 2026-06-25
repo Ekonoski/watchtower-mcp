@@ -1547,6 +1547,8 @@ document.querySelectorAll("#heat-wt button").forEach(b => b.onclick = () => load
 /* ── ETF rotation heat map ── */
 const ETF_BAND_LABEL = { broad: "Broad Market", sector: "Sectors", theme: "Themes & Industries" };
 const ETFHEAT_TF_LABEL = { daily: "today's move", weekly: "1-week", monthly: "1-month", quarterly: "3-month" };
+// Move-phrase for the holdings modal sub-line (reads naturally on its own — no trailing " move" appended).
+const ETFHEAT_MOVE_LABEL = { daily: "today's move", weekly: "1-week move", monthly: "1-month move", quarterly: "3-month move" };
 function renderEtfHeat(etfs) {
   const el = $("etf-heat");
   if (!etfs || !etfs.length) { el.innerHTML = `<span class="empty">ETF heat map unavailable.</span>`; return; }
@@ -1588,7 +1590,7 @@ async function openEtfHoldings(etf, label) {
   const tf = state.etfHeatTf || "monthly";
   _etfHoldName = `${label} · ${etf}`;
   $("etf-modal-title").textContent = _etfHoldName;
-  $("etf-modal-sub").textContent = `holdings · ${ETFHEAT_TF_LABEL[tf] || ""} move`;
+  $("etf-modal-sub").textContent = `holdings · ${ETFHEAT_MOVE_LABEL[tf] || ""}`;
   $("etf-modal-empty").style.display = "none";
   $("etf-modal-body").innerHTML = `<tr><td colspan="4" class="empty" style="padding:18px">Loading holdings…</td></tr>`;
   $("etf-modal").style.display = "flex";
@@ -1607,7 +1609,7 @@ function renderEtfHoldings() {
     return;
   }
   empty.style.display = "none";
-  $("etf-modal-sub").textContent = `${_etfHoldings.length} holdings · ${ETFHEAT_TF_LABEL[state.etfHeatTf || "monthly"] || ""} move`;
+  $("etf-modal-sub").textContent = `${_etfHoldings.length} holdings · ${ETFHEAT_MOVE_LABEL[state.etfHeatTf || "monthly"] || ""}`;
   const rows = [..._etfHoldings].sort((a, b) =>
     _etfHoldSort === "ret"
       ? (b.ret ?? -Infinity) - (a.ret ?? -Infinity)
