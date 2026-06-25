@@ -386,7 +386,12 @@ def _earnings_calendar_rows(days: int = 14, min_cap: float = 2e9) -> list:
 def _economic_calendar_rows(days: int = 14) -> list:
     """Upcoming macro events for the Calendar tab (next `days`), US + major
     global, from economic_calendar (migration 0052). Returns all impact levels
-    ordered by date/time; the frontend pins High-impact and mutes Low."""
+    ordered by date/time; the frontend pins High-impact and mutes Low.
+
+    event_time is stored in UTC (as FMP delivers it); we convert to America/
+    New_York for display so the times read in ET (Postgres handles DST, and the
+    date is re-derived from the ET timestamp so a late-UTC foreign print that
+    falls on the prior US evening is grouped under the correct ET day)."""
     from screen.reversal_screen import _conn
     try:
         conn = _conn()
@@ -396,12 +401,26 @@ def _economic_calendar_rows(days: int = 14) -> list:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT event_date, event_time, country, event, currency, impact,
+                WITH conv AS (
+                    SELECT event_date, country, event, currency, impact,
+                           actual, previous, estimate, change_pct, unit,
+                           CASE WHEN NULLIF(event_time, '') IS NOT NULL THEN
+                               ((event_date::text || ' ' || event_time)::timestamp
+                                  AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York'
+                           END AS ts_et
+                    FROM economic_calendar
+                    -- widen the lower bound by a day so a UTC-early event that lands
+                    -- on the prior ET evening still surfaces, then re-filter on ET date
+                    WHERE event_date >= CURRENT_DATE - 1
+                      AND event_date <= CURRENT_DATE + (%(days)s || ' days')::interval
+                )
+                SELECT COALESCE(ts_et::date, event_date) AS ev_date_et,
+                       CASE WHEN ts_et IS NOT NULL THEN to_char(ts_et, 'HH24:MI') ELSE '' END AS ev_time_et,
+                       country, event, currency, impact,
                        actual, previous, estimate, change_pct, unit
-                FROM economic_calendar
-                WHERE event_date >= CURRENT_DATE
-                  AND event_date <= CURRENT_DATE + (%(days)s || ' days')::interval
-                ORDER BY event_date ASC, event_time ASC, event ASC
+                FROM conv
+                WHERE COALESCE(ts_et::date, event_date) >= CURRENT_DATE
+                ORDER BY COALESCE(ts_et, event_date::timestamp) ASC, event ASC
                 """,
                 {"days": days},
             )
@@ -417,7 +436,7 @@ def _economic_calendar_rows(days: int = 14) -> list:
     for (ed, et, ctry, ev, cur_, imp, act, prev, est, chg, unit) in rows:
         out.append({
             "event_date": ed.isoformat() if ed else None,
-            "event_time": et or "",
+            "event_time": et or "",                          # ET, "HH:MM" (24h)
             "country": ctry,
             "event": ev,
             "currency": cur_,
