@@ -388,6 +388,61 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
 
 @mcp.tool()
+def watchtower_fair_value(ticker: str, discount_rate: float = 10.0,
+                          growth_rate: float = 0.0, years: int = 10) -> str:
+    """
+    Estimate a stock's intrinsic fair value and upside/downside vs. its price.
+
+    A simple 2-stage discounted-cash-flow model on trailing free cash flow (the
+    shape of Qualtrim's stock-price estimator): grow FCF for `years`, decaying
+    toward a long-run rate, discount back, add a Gordon terminal value, divide by
+    shares. Falls back to an EPS × exit-multiple estimate for names with negative
+    FCF but positive earnings. Also surfaces fundamental red flags (negative FCF,
+    distress Altman Z, weak Piotroski, dilution, leverage, revenue/margin erosion).
+
+    A conservative value anchor to pair with the momentum/rotation signals — not a
+    price target.
+
+    Args:
+      discount_rate: required annual return %, default 10. Lower it to see what
+        growth/return the current price is implying.
+      growth_rate: near-term FCF/EPS growth %. 0 (default) = derive it from the
+        analyst EPS estimate ladder automatically.
+      years: projection horizon, default 10.
+    """
+    ticker = ticker.upper().strip()
+    try:
+        from analysis.fundamental_value import compute_fair_value, fundamentals_snapshot
+    except Exception as e:
+        return f"Fair-value module unavailable: {e}"
+    fv = compute_fair_value(
+        ticker,
+        discount_rate=discount_rate / 100.0,
+        growth_rate=(growth_rate / 100.0) if growth_rate else None,
+        years=years,
+    )
+    snap = fundamentals_snapshot(ticker)
+    flags = snap.get("red_flags") or []
+    if not fv:
+        note = (" Red flags: " + "; ".join(flags)) if flags else ""
+        return (f"**{ticker} — no fair-value estimate.** Needs positive trailing "
+                f"FCF or earnings (likely unprofitable on both).{note}")
+    a = fv["assumptions"]
+    up = fv.get("upside_pct")
+    up_s = (f"{up*100:+.0f}% {'upside' if up >= 0 else 'downside'}") if up is not None else "n/a"
+    lines = [
+        f"**{ticker} — FAIR VALUE ${fv['fair_value']:,.2f}** vs price "
+        f"${fv['price']:,.2f} → **{up_s}**",
+        (f"*{fv['method']} · {a['growth_rate']*100:.1f}% growth "
+         f"({a['growth_source']}) → {a['terminal_growth']*100:.1f}% terminal · "
+         f"{a['discount_rate']*100:.0f}% discount · {a['years']}y*"),
+    ]
+    lines.append(("⚠ Red flags: " + "; ".join(flags)) if flags
+                 else "✓ No major fundamental red flags.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
     """
     Run a single stock through ALL Watchtower screens and return a complete picture.
@@ -1273,6 +1328,7 @@ async def health(request: Request):
             "watchtower_run_screen",
             "watchtower_intraday_scan",
             "watchtower_analyze_ticker",
+            "watchtower_fair_value",
             "watchtower_get_momentum",
             "watchtower_get_bearish_ideas",
             "watchtower_get_hidden_gems",
