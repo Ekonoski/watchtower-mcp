@@ -2114,16 +2114,28 @@ function _sparkline(vals, color) {
     <polyline points="${d}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
 }
 function renderFairValue(fv) {
-  if (!fv || fv.fair_value == null) return "";
-  const up = fv.upside_pct, a = fv.assumptions || {};
+  if (!fv) return "";
+  // No meaningful estimate (financials/REITs, or unprofitable) — show WHY, never a fake number.
+  if (fv.fair_value == null) {
+    if (!fv.note) return "";
+    return `<div class="social-box">
+      <b>Fair Value</b>
+      <div style="margin-top:6px;color:var(--muted);font-size:11.5px;line-height:1.5">${esc(fv.note)}</div>
+    </div>`;
+  }
+  const up = fv.upside_pct, a = fv.assumptions || {}, low = fv.confidence === "low";
   const cls = up == null ? "" : (up >= 0 ? "pos" : "neg");
   const upS = up == null ? "—" : `${up >= 0 ? "+" : ""}${(up * 100).toFixed(0)}% ${up >= 0 ? "upside" : "downside"}`;
-  return `<div class="social-box">
+  const caveat = low
+    ? `<div style="margin-top:6px;color:var(--yellow);font-size:10.5px;line-height:1.4">⚠ low confidence${fv.note ? " — " + esc(fv.note) : ""}</div>`
+    : "";
+  return `<div class="social-box"${low ? ' style="opacity:.78"' : ""}>
     <b>Fair Value</b> <span style="color:var(--muted);font-size:11px">— intrinsic estimate, not a price target</span>
     <div class="grid2" style="margin-top:8px">
-      <div><div class="k">Fair value</div><b class="num">$${fmtNum(fv.fair_value)}</b></div>
+      <div><div class="k">Fair value</div><b class="num">$${fmtNum(fv.fair_value)}${low ? " <span style='font-size:10px;color:var(--yellow)'>≈</span>" : ""}</b></div>
       <div><div class="k">vs $${fmtNum(fv.price)} now</div><b class="num ${cls}">${upS}</b></div>
     </div>
+    ${caveat}
     <div style="margin-top:6px;color:var(--muted);font-size:10.5px;line-height:1.45">
       ${esc(fv.method)}<br>${(a.growth_rate * 100).toFixed(1)}% growth (${esc(a.growth_source || "")})
       → ${(a.terminal_growth * 100).toFixed(1)}% terminal · ${(a.discount_rate * 100).toFixed(0)}% discount · ${a.years}y

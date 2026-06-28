@@ -66,6 +66,34 @@ def _decayed_growth(g, terminal, t, years):
     return g + (terminal - g) * (t - 1) / (years - 1)
 
 
+def _dcf_unfit(sector, industry):
+    """Reason a free-cash-flow DCF is NOT meaningful for this business, else None.
+    Insurers (float), banks (deposits/reserves), and REITs (FFO/NAV) all distort
+    'free cash flow' — a DCF on it produces nonsense, so we don't show one."""
+    i = (industry or "").lower()
+    if "insurance" in i or "bank" in i or "capital markets" in i:
+        return "free cash flow is distorted by float/reserves for banks & insurers"
+    if (sector or "") == "Real Estate":
+        return "REITs are valued on FFO/NAV, not free cash flow"
+    return None
+
+
+def _revenue_growth(cur, ticker):
+    """Trailing revenue growth (latest TTM vs prior TTM). A fallback growth input
+    for profitable-on-cash-but-not-on-EPS names. None if <8 quarters."""
+    cur.execute(
+        """SELECT revenue FROM fundamentals_quarterly
+           WHERE ticker = %s AND revenue IS NOT NULL
+           ORDER BY period_end_date DESC LIMIT 8""",
+        (ticker,),
+    )
+    rev = [float(x[0]) for x in cur.fetchall()]
+    if len(rev) < 8:
+        return None
+    ttm, prev = sum(rev[:4]), sum(rev[4:8])
+    return (ttm / prev - 1.0) if prev > 0 else None
+
+
 def compute_fair_value(ticker, discount_rate=None, growth_rate=None,
                        years=DEFAULT_YEARS, terminal_growth=DEFAULT_TERMINAL_GROWTH,
                        price_override=None):
@@ -85,30 +113,49 @@ def compute_fair_value(ticker, discount_rate=None, growth_rate=None,
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT fcf_ttm, ni_ttm, shares_outstanding, price
-                   FROM valuation_metrics WHERE ticker = %s
-                   ORDER BY as_of_date DESC LIMIT 1""",
+                """SELECT v.fcf_ttm, v.ni_ttm, v.shares_outstanding, v.price,
+                          v.sector, t.industry
+                   FROM valuation_metrics v JOIN tickers t ON t.ticker = v.ticker
+                   WHERE v.ticker = %s
+                   ORDER BY v.as_of_date DESC LIMIT 1""",
                 (ticker,),
             )
             row = cur.fetchone()
             if not row:
                 return None
-            fcf_ttm, ni_ttm, shares, eod_price = (_f(x) for x in row)
+            fcf_ttm, ni_ttm, shares, eod_price = (_f(x) for x in row[:4])
+            sector, industry = row[4], row[5]
+            unfit = _dcf_unfit(sector, industry)
 
             if growth_rate is not None:
                 g_raw, g_src = float(growth_rate), "user override"
             else:
                 est = _growth_from_estimates(cur, ticker)
-                g_raw = est if est is not None else DEFAULT_GROWTH
-                g_src = "analyst EPS estimates" if est is not None else "default (no estimates)"
+                if est is not None:
+                    g_raw, g_src = est, "analyst EPS estimates"
+                else:
+                    rev_g = _revenue_growth(cur, ticker)
+                    if rev_g is not None:
+                        g_raw, g_src = rev_g, "trailing revenue growth"
+                    else:
+                        g_raw, g_src = DEFAULT_GROWTH, "default (no estimates)"
     finally:
         try:
             conn.close()
         except Exception:
             pass
 
-    g = max(0.0, min(GROWTH_CAP, g_raw))
     price = _f(price_override) if price_override is not None else eod_price
+    price_out = round(price, 2) if price else None
+
+    # Wrong tool for the business — show why instead of a false-precision number.
+    if unfit:
+        return {"fair_value": None, "price": price_out, "upside_pct": None,
+                "method": "n/a", "confidence": "n/a",
+                "note": f"DCF skipped — {unfit}. Judge it on book value / P-B or premium growth instead.",
+                "assumptions": {}, "inputs": {"fcf_ttm": fcf_ttm, "ni_ttm": ni_ttm}}
+
+    g = max(0.0, min(GROWTH_CAP, g_raw))
     if not shares or shares <= 0:
         return None
 
@@ -135,11 +182,25 @@ def compute_fair_value(ticker, discount_rate=None, growth_rate=None,
         return None  # unprofitable on both FCF and earnings — no honest estimate
 
     upside = (fair / price - 1.0) if (price and price > 0) else None
+
+    # Confidence: a simple DCF is only trustworthy when the inputs are. Flag (don't
+    # hide) the cases where it tends to misfire so the UI can caveat the number.
+    confidence, notes = "ok", []
+    if g_src.startswith("default"):
+        confidence = "low"
+        notes.append("no usable growth input — generic assumption")
+    if upside is not None and abs(upside) > 0.60:
+        confidence = "low"
+        notes.append("estimate is far from market price — a simple DCF may not fit "
+                     "this business (early-stage, hyper-growth, or cyclical)")
+
     return {
         "fair_value": round(fair, 2),
-        "price": round(price, 2) if price else None,
+        "price": price_out,
         "upside_pct": round(upside, 4) if upside is not None else None,
         "method": method,
+        "confidence": confidence,
+        "note": "; ".join(notes) if notes else None,
         "assumptions": {
             "discount_rate": round(r, 4),
             "growth_rate": round(g, 4),
