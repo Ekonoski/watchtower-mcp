@@ -308,6 +308,12 @@
   .tm-body th.on, .tm-body td.on { background: rgba(255,255,255,.05); }
   .vantage-map .heat-tile.v-hit { outline: 3px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 2px #000, 0 0 16px rgba(255,255,255,.6); z-index: 3; }
   .vantage-map.dimmed .heat-tile:not(.v-hit) { opacity: .22; }
+  /* Heat-map tile finder — type to spotlight matching tiles (sector + ETF rotation maps) */
+  .tile-find { background:#0e1622; border:1px solid #24405e; color:#dfeefc; border-radius:7px; padding:5px 10px; font-size:12px; min-width:215px; outline:none; }
+  .tile-find:focus { border-color:#3a7bd5; box-shadow:0 0 0 2px rgba(58,123,213,.25); }
+  .tile-find::placeholder { color:#5f7790; }
+  .heat-tile.tile-hit { outline:3px solid #fff; outline-offset:1px; box-shadow:0 0 0 2px #000, 0 0 16px rgba(255,255,255,.7); z-index:3; }
+  #heat-map.dimmed .heat-tile:not(.tile-hit), #etf-heat.dimmed .heat-tile:not(.tile-hit) { opacity:.15; transition:opacity .12s; }
   #v-lookup { display: none; margin: 4px 0 14px; padding: 10px 14px; border-radius: 8px;
     background: var(--panel2); border: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
   #v-lookup b { color: var(--text); }
@@ -511,6 +517,8 @@
     <div class="heat-wrap">
       <div class="heat-head">
         <span class="heat-title">ETF Rotation Map <span class="heat-sub" id="etfheat-sub">— 1-month, by theme</span></span>
+        <input id="tile-find" class="tile-find" type="search" autocomplete="off" spellcheck="false"
+               placeholder="🔍 find a tile — solar, ARKG, uranium…" title="Spotlight matching tiles across both heat maps (Esc to clear)">
         <div class="seg" id="etfheat-tf">
           <button data-tf="daily">Daily</button>
           <button data-tf="weekly">Weekly</button>
@@ -1527,6 +1535,7 @@ function renderHeatMap(heat) {
       <div class="ht-ret">${sign}${val.toFixed(1)}%</div>
     </div>`;
   }).join("");
+  if ($("tile-find") && $("tile-find").value.trim()) applyTileFind();  // keep spotlight across re-renders
 }
 const HEAT_TF_LABEL = { daily: "today's move", weekly: "1-week", monthly: "1-month", quarterly: "3-month" };
 const HEAT_WT_LABEL = { median: "median (typical stock)", cap: "cap-weighted (index)" };
@@ -1571,6 +1580,7 @@ function renderEtfHeat(etfs) {
   }
   el.innerHTML = html;
   el.querySelectorAll(".etf-tile").forEach(t => t.onclick = () => openEtfHoldings(t.dataset.etf, t.dataset.label));
+  if ($("tile-find") && $("tile-find").value.trim()) applyTileFind();  // keep spotlight across re-renders
 }
 async function loadEtfHeatmap(tf) {
   if (tf) state.etfHeatTf = tf;
@@ -1582,6 +1592,33 @@ async function loadEtfHeatmap(tf) {
   renderEtfHeat((data && data.etfs) || []);
 }
 document.querySelectorAll("#etfheat-tf button").forEach(b => b.onclick = () => loadEtfHeatmap(b.dataset.tf));
+
+/* ── Tile finder: type a name/ticker to spotlight matching tiles (replaces Ctrl+F) ──
+   Matches on each tile's visible text (theme label + ticker + %), across BOTH the
+   Sector Heat Map and the ETF Rotation Map. Highlights every match, dims the rest,
+   and scrolls the first hit to center. Esc clears. */
+function _allHeatTiles() {
+  return [...$("heat-map").querySelectorAll(".heat-tile"),
+          ...$("etf-heat").querySelectorAll(".heat-tile")];
+}
+function applyTileFind() {
+  const inp = $("tile-find");
+  const q = (inp ? inp.value : "").trim().toLowerCase();
+  const tiles = _allHeatTiles();
+  tiles.forEach(t => t.classList.remove("tile-hit"));
+  if (!q) { $("heat-map").classList.remove("dimmed"); $("etf-heat").classList.remove("dimmed"); return; }
+  let first = null;
+  for (const t of tiles) {
+    if (t.textContent.toLowerCase().includes(q)) { t.classList.add("tile-hit"); if (!first) first = t; }
+  }
+  $("heat-map").classList.toggle("dimmed", !!first);
+  $("etf-heat").classList.toggle("dimmed", !!first);
+  if (first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+if ($("tile-find")) {
+  $("tile-find").oninput = applyTileFind;
+  $("tile-find").onkeydown = e => { if (e.key === "Escape") { e.target.value = ""; applyTileFind(); e.target.blur(); } };
+}
 
 /* ── ETF holdings drill-down (click a heat tile → its constituent stocks) ── */
 let _etfHoldings = [], _etfHoldSort = "weight", _etfHoldName = "";

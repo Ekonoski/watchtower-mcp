@@ -241,10 +241,13 @@ def watchtower_run_screen(
             or r.get("breakdown_score")
             or r.get("score", "N/A")
         )
-        line = f"- **{r.get('ticker')}** | {r.get('company_name', '')[:28]} | Score: {score}"
+        line = f"- **{r.get('ticker')}** | {(r.get('company_name') or '')[:28]} | Score: {score}"
         if with_plan and r.get("plan"):
             p = r["plan"]
-            line += f" | Stop: ${p.get('stop_price', 0):.2f} | Size: {p.get('position_pct', 0):.1f}%"
+            # `or 0` (not a .get default) so a present-but-None value can't reach
+            # the :.2f format — that raises "unsupported format string passed to
+            # NoneType.__format__" and breaks the whole tool call (Sentry ToolError).
+            line += f" | Stop: ${(p.get('stop_price') or 0):.2f} | Size: {(p.get('position_pct') or 0):.1f}%"
         lines.append(line)
 
     if with_synthesis:
@@ -291,10 +294,13 @@ def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: 
 
     lines = [header]
     for r in results:
-        line = (f"- **{r.get('ticker')}** | {r.get('signal_type',''):<18} | Score: {r.get('score',0):.0f}"
-                f" | {r.get('change_pct',0):+.1f}% | Vol: {r.get('vol_pace_ratio',0):.1f}x"
+        # `or 0`/`or ''` (not .get defaults) so a present-but-None value can't reach
+        # a format spec — :.0f/:<18 on None raises "unsupported format string passed
+        # to NoneType.__format__" and breaks the whole tool call.
+        line = (f"- **{r.get('ticker')}** | {(r.get('signal_type') or ''):<18} | Score: {(r.get('score') or 0):.0f}"
+                f" | {(r.get('change_pct') or 0):+.1f}% | Vol: {(r.get('vol_pace_ratio') or 0):.1f}x"
                 f" | {'↑VWAP' if r.get('above_vwap') else '↓VWAP'}"
-                f" | ${r.get('current_price',0):.2f}"
+                f" | ${(r.get('current_price') or 0):.2f}"
                 f"  {r.get('rationale','')}")
         lines.append(line)
 
