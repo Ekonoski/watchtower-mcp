@@ -2034,6 +2034,8 @@ async function openDrawer(ticker) {
   } else {
     html += `<div class="empty">No live intraday data${d.intraday_error ? ": " + esc(d.intraday_error) : ""}</div>`;
   }
+  html += renderFairValue(d.fair_value);
+  html += renderFundamentals(d.fundamentals);
   html += renderLevels(d.levels, d.levels_error);
   const s = d.social;
   if (s && s.source !== "unavailable") {
@@ -2098,6 +2100,63 @@ function renderLevels(lv, err) {
     <b>Key Levels</b> <span style="color:var(--muted)">— support/resistance · ★ = strength · tags = timeframes</span>
     <div class="seg" id="lvl-chips" style="margin:8px 0;display:inline-flex">${chips}</div>
     <div id="lvl-ladder" style="margin-top:4px">${renderLevelLadder()}</div>
+  </div>`;
+}
+/* ── Fair value + fundamentals (Qualtrim-style value lens) ── */
+function _sparkline(vals, color) {
+  const pts = vals.filter(v => v != null && isFinite(v));
+  if (pts.length < 2) return `<span style="color:var(--muted);font-size:10px">—</span>`;
+  const w = 116, h = 26, min = Math.min(...pts), max = Math.max(...pts), rng = (max - min) || 1;
+  const step = w / (pts.length - 1);
+  const d = pts.map((v, i) => `${(i * step).toFixed(1)},${(h - (v - min) / rng * h).toFixed(1)}`).join(" ");
+  const c = color || (pts[pts.length - 1] >= pts[0] ? "var(--green)" : "var(--red)");
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="display:block">
+    <polyline points="${d}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+}
+function renderFairValue(fv) {
+  if (!fv || fv.fair_value == null) return "";
+  const up = fv.upside_pct, a = fv.assumptions || {};
+  const cls = up == null ? "" : (up >= 0 ? "pos" : "neg");
+  const upS = up == null ? "—" : `${up >= 0 ? "+" : ""}${(up * 100).toFixed(0)}% ${up >= 0 ? "upside" : "downside"}`;
+  return `<div class="social-box">
+    <b>Fair Value</b> <span style="color:var(--muted);font-size:11px">— intrinsic estimate, not a price target</span>
+    <div class="grid2" style="margin-top:8px">
+      <div><div class="k">Fair value</div><b class="num">$${fmtNum(fv.fair_value)}</b></div>
+      <div><div class="k">vs $${fmtNum(fv.price)} now</div><b class="num ${cls}">${upS}</b></div>
+    </div>
+    <div style="margin-top:6px;color:var(--muted);font-size:10.5px;line-height:1.45">
+      ${esc(fv.method)}<br>${(a.growth_rate * 100).toFixed(1)}% growth (${esc(a.growth_source || "")})
+      → ${(a.terminal_growth * 100).toFixed(1)}% terminal · ${(a.discount_rate * 100).toFixed(0)}% discount · ${a.years}y
+    </div>
+  </div>`;
+}
+function renderFundamentals(f) {
+  if (!f || !f.history || f.history.length < 2) return "";
+  const H = f.history;
+  const money = v => { const x = Math.abs(v), s = v < 0 ? "-" : "";
+    return x >= 1e9 ? `${s}$${(x / 1e9).toFixed(1)}B` : x >= 1e6 ? `${s}$${(x / 1e6).toFixed(0)}M` : `${s}$${x.toFixed(0)}`; };
+  const lastOf = vals => { for (let i = vals.length - 1; i >= 0; i--) if (vals[i] != null) return vals[i]; return null; };
+  const row = (label, vals, fmt) => {
+    const last = lastOf(vals);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:2px 0">
+      <span style="width:58px;color:var(--muted);font-size:11px">${label}</span>
+      <span style="flex:1">${_sparkline(vals)}</span>
+      <span class="num" style="width:60px;text-align:right;font-size:11.5px">${last != null ? fmt(last) : "—"}</span>
+    </div>`;
+  };
+  const flags = f.red_flags || [];
+  const flagHtml = flags.length
+    ? `<div style="margin-top:8px;color:var(--red);font-size:11.5px;line-height:1.5">⚠ ${flags.map(esc).join(" · ")}</div>`
+    : `<div style="margin-top:8px;color:var(--green);font-size:11.5px">✓ No major fundamental red flags</div>`;
+  return `<div class="social-box">
+    <b>Fundamentals</b> <span style="color:var(--muted);font-size:11px">— ~5y quarterly trend</span>
+    <div style="margin-top:6px">
+      ${row("Revenue", H.map(q => q.revenue), money)}
+      ${row("Free CF", H.map(q => q.fcf), money)}
+      ${row("EPS", H.map(q => q.eps), v => "$" + fmtNum(v, 2))}
+      ${row("Gross %", H.map(q => q.gross_margin != null ? q.gross_margin * 100 : null), v => fmtNum(v, 0) + "%")}
+    </div>
+    ${flagHtml}
   </div>`;
 }
 // Global ticker lookup — open the full drawer (price, signal, S/R levels,

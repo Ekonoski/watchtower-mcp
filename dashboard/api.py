@@ -1188,6 +1188,12 @@ def register_routes(mcp) -> None:
                 out["profile"] = _company_profile(ticker)
             except Exception as e:
                 out["profile_error"] = str(e)[:120]
+            try:
+                from analysis.fundamental_value import compute_fair_value, fundamentals_snapshot
+                out["fair_value"] = compute_fair_value(ticker, price_override=price)
+                out["fundamentals"] = fundamentals_snapshot(ticker)
+            except Exception as e:
+                out["fair_value_error"] = str(e)[:120]
             return out
 
         return JSONResponse(await asyncio.to_thread(_fetch))
