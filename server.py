@@ -423,22 +423,25 @@ def watchtower_fair_value(ticker: str, discount_rate: float = 10.0,
     )
     snap = fundamentals_snapshot(ticker)
     flags = snap.get("red_flags") or []
-    if not fv:
-        note = (" Red flags: " + "; ".join(flags)) if flags else ""
-        return (f"**{ticker} — no fair-value estimate.** Needs positive trailing "
-                f"FCF or earnings (likely unprofitable on both).{note}")
+    flag_line = ("⚠ Red flags: " + "; ".join(flags)) if flags else "✓ No major fundamental red flags."
+    if not fv or fv.get("fair_value") is None:
+        why = (fv or {}).get("note") or ("needs positive trailing FCF or earnings "
+                                         "(likely unprofitable on both)")
+        return f"**{ticker} — no fair-value estimate.** {why}\n{flag_line}"
     a = fv["assumptions"]
     up = fv.get("upside_pct")
     up_s = (f"{up*100:+.0f}% {'upside' if up >= 0 else 'downside'}") if up is not None else "n/a"
     lines = [
         f"**{ticker} — FAIR VALUE ${fv['fair_value']:,.2f}** vs price "
         f"${fv['price']:,.2f} → **{up_s}**",
-        (f"*{fv['method']} · {a['growth_rate']*100:.1f}% growth "
-         f"({a['growth_source']}) → {a['terminal_growth']*100:.1f}% terminal · "
-         f"{a['discount_rate']*100:.0f}% discount · {a['years']}y*"),
     ]
-    lines.append(("⚠ Red flags: " + "; ".join(flags)) if flags
-                 else "✓ No major fundamental red flags.")
+    if fv.get("confidence") == "low":
+        lines.append(f"⚠ LOW CONFIDENCE — {fv.get('note') or 'inputs are weak for this name'}")
+    lines.append(
+        f"*{fv['method']} · {a['growth_rate']*100:.1f}% growth "
+        f"({a['growth_source']}) → {a['terminal_growth']*100:.1f}% terminal · "
+        f"{a['discount_rate']*100:.0f}% discount · {a['years']}y*")
+    lines.append(flag_line)
     return "\n".join(lines)
 
 
