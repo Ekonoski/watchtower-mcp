@@ -598,6 +598,7 @@
       <label class="ctl">Sort
         <select id="scr-sort">
           <option value="score">Gem score</option>
+          <option value="rs">Rel. strength</option>
           <option value="3m">3-mo return</option>
           <option value="6m">6-mo return</option>
           <option value="1m">1-mo return</option>
@@ -626,6 +627,7 @@
           <th class="left">Sector</th>
           <th>Mkt Cap</th>
           <th>Price</th>
+          <th title="Relative strength 1–99: momentum (1m + 2×3m + 6m) percentile vs the whole screenable universe. 99 = top.">RS</th>
           <th>1M</th>
           <th>3M</th>
           <th>6M</th>
@@ -1001,6 +1003,7 @@ function renderScreener() {
       <td class="left">${esc(r.sector || "")}</td>
       <td class="num">${scrMcap(r.market_cap)}</td>
       <td class="num">${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
+      <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
       <td class="num">${scrPct(r.ret_1m)}</td>
       <td class="num">${scrPct(r.ret_3m)}</td>
       <td class="num">${scrPct(r.ret_6m)}</td>
@@ -2065,6 +2068,7 @@ async function openDrawer(ticker) {
   } else {
     html += `<div class="empty">No live intraday data${d.intraday_error ? ": " + esc(d.intraday_error) : ""}</div>`;
   }
+  html += renderRS(d.memberships);
   html += renderMemberships(d.memberships);
   html += renderFairValue(d.fair_value);
   html += renderFundamentals(d.fundamentals);
@@ -2098,6 +2102,18 @@ async function openDrawer(ticker) {
     el.onclick = () => openEtfHoldings(el.dataset.etf, el.dataset.label));
   $("d-body").querySelectorAll(".mb-theme").forEach(el =>
     el.onclick = () => openThemeMembers(el.dataset.theme));
+}
+function rsColor(rs) { return rs >= 80 ? "var(--green)" : rs >= 60 ? "#9dd44a" : rs >= 40 ? "var(--yellow)" : "var(--red)"; }
+function renderRS(m) {
+  const rs = m && m.rs_pct;
+  if (rs == null) return "";
+  const read = rs >= 90 ? "market leader" : rs >= 80 ? "strong leader" : rs >= 60 ? "outperforming"
+             : rs >= 40 ? "middle of the pack" : rs >= 20 ? "lagging" : "bottom of the market";
+  return `<div class="social-box" style="display:flex;align-items:center;gap:12px">
+    <b>Relative Strength</b>
+    <span class="num" style="font-size:22px;font-weight:800;color:${rsColor(rs)}">${rs}</span>
+    <span style="color:var(--muted);font-size:11.5px;line-height:1.4">${read} — momentum vs the full screenable universe<br>(1m + 2×3m + 6m, session-anchored; 99 = top)</span>
+  </div>`;
 }
 function renderMemberships(m) {
   if (!m || (!(m.etfs || []).length && !(m.themes || []).length)) return "";
