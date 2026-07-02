@@ -249,33 +249,42 @@ def run_social_buzz_scan(tickers: Optional[List[str]] = None,
     except Exception:
         pass
 
-    # Load tickers from social_buzz if not provided
-    if tickers is None:
-        tickers = _load_buzz_tickers(conn)
+    try:
+        # Load tickers from social_buzz if not provided
+        if tickers is None:
+            tickers = _load_buzz_tickers(conn)
 
-    if not tickers:
-        return []
+        if not tickers:
+            return []
 
-    grok = _get_grok()
-    results = []
-    today = date.today()
+        grok = _get_grok()
+        results = []
+        today = date.today()
 
-    # Process in batches to manage Grok API calls
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
-        batch_results = _score_batch(batch, grok)
+        # Process in batches to manage Grok API calls
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i + batch_size]
+            batch_results = _score_batch(batch, grok)
 
-        for ticker, data in batch_results.items():
-            result = {"ticker": ticker, "date": today, **data}
-            results.append(result)
+            for ticker, data in batch_results.items():
+                result = {"ticker": ticker, "date": today, **data}
+                results.append(result)
 
-            # Write back to Supabase
-            if conn:
-                _upsert_sentiment(conn, ticker, today, data)
+                # Write back to Supabase
+                if conn:
+                    _upsert_sentiment(conn, ticker, today, data)
 
-        time.sleep(0.5)  # pace Grok calls between batches
+            time.sleep(0.5)  # pace Grok calls between batches
 
-    return results
+        return results
+    finally:
+        # conn was leaking — this runs daily and each leaked conn holds a
+        # Supabase pool slot until GC.
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _load_buzz_tickers(conn) -> List[str]:

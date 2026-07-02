@@ -414,11 +414,30 @@ def run_screen(
         List of result dicts sorted by score descending.
     """
     # ── Load Supabase fundamentals / prices ───────────────────────────────────
+    # Owns the DB connection for the whole scan; the finally guarantees it's
+    # released on every return/raise path. This runs every 5 minutes during
+    # market hours AND on every dashboard drawer open — leaking here exhausts
+    # the Supabase pool and every screen starts failing as "no data".
     try:
         conn = _conn()
     except Exception:
         conn = None
+    try:
+        return _run_screen_with_conn(conn, min_score, single_ticker, broad)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
+
+def _run_screen_with_conn(
+    conn,
+    min_score: float,
+    single_ticker: str,
+    broad: bool,
+) -> List[dict]:
     quality_map = {}
     watchlist_tickers = []
     if conn is not None:

@@ -588,7 +588,15 @@ def run_news_scan(lookback_minutes: int = 35) -> List[dict]:
     except Exception:
         pass
 
+    # conn's only job is this one lookup — release it immediately (this scan
+    # runs every 5 min; holding an idle conn for the multi-minute Grok
+    # classification loop below starves the Supabase pool).
     known_tickers = _load_known_tickers(conn)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     import logging as _logging
     _nlog = _logging.getLogger(__name__)

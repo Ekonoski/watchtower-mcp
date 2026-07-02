@@ -588,12 +588,31 @@ def run_screen(
 
     Falls back to Supabase daily_prices universe if Polygon unavailable.
     """
+    # Own the DB connection here so every return/raise path releases it —
+    # this scan holds it for many minutes (full-market Polygon fetch), and a
+    # leaked conn keeps a Supabase pool slot until GC.
     conn = None
     try:
         conn = _conn()
     except Exception:
         pass
+    try:
+        return _run_screen_with_conn(conn, min_score, top_n, single_ticker, with_synthesis)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
+
+def _run_screen_with_conn(
+    conn,
+    min_score: float,
+    top_n: int,
+    single_ticker: Optional[str],
+    with_synthesis: bool,
+) -> List[dict]:
     # ── Single ticker shortcut ───────────────────────────────────────────────
     if single_ticker:
         ticker = single_ticker.upper()

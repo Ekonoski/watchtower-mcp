@@ -466,20 +466,10 @@ def send_intraday_alert(
         subject = f"Watchtower Alert — {n} setup{'s' if n != 1 else ''}{news_suffix} | {time_str}"
     html = _build_html(results, minutes_elapsed, is_market_hours, news_alerts=news_alerts, market_pulse=market_pulse)
 
-    sent = _send_email(subject, html)
-    if sent and results:
-        try:
-            from analysis.alert_tracker import log_alerts
-            log_alerts(results, "intraday")
-        except Exception:
-            pass
-    if sent and news_alerts:
-        try:
-            from analysis.alert_tracker import log_alerts
-            log_alerts(news_alerts, "news")
-        except Exception:
-            pass
-    return sent
+    # Performance logging moved to the scheduler (unconditional, pre-send):
+    # gating log_alerts on a successful send meant an email failure silently
+    # dropped that scan's signals from alert_log. This function now only sends.
+    return _send_email(subject, html)
 
 
 def _build_gems_html(results: List[dict]) -> str:
