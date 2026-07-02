@@ -251,24 +251,29 @@ def _get_et_now():
 def _market_minutes_elapsed() -> tuple:
     """
     Returns (minutes_elapsed, is_market_hours).
-    minutes_elapsed = minutes since 9:30 AM ET today (capped at 390 = full session).
-    is_market_hours = True if currently between 9:30 and 16:00 ET.
+
+    Delegates to market_calendar.market_minutes — the calendar-aware single
+    source of truth. The old clock-only version here reported Saturday 11 AM
+    as is_market_hours=True, so weekend/holiday manual scans persisted
+    signals labeled as live market-hours data with bogus pace math. Keeps the
+    clock-only fallback ONLY for an import failure.
     """
-    now = _get_et_now()
-    open_minutes = 9 * 60 + 30    # 570
-    close_minutes = 16 * 60 + 0   # 960
-    current_minutes = now.hour * 60 + now.minute
-
-    is_market_hours = open_minutes <= current_minutes <= close_minutes
-
-    if current_minutes < open_minutes:
-        minutes_elapsed = 0
-    elif current_minutes > close_minutes:
-        minutes_elapsed = 390
-    else:
-        minutes_elapsed = current_minutes - open_minutes
-
-    return minutes_elapsed, is_market_hours
+    try:
+        from screen.market_calendar import market_minutes
+        return market_minutes()
+    except Exception:
+        now = _get_et_now()
+        open_minutes = 9 * 60 + 30    # 570
+        close_minutes = 16 * 60 + 0   # 960
+        current_minutes = now.hour * 60 + now.minute
+        is_market_hours = open_minutes <= current_minutes <= close_minutes
+        if current_minutes < open_minutes:
+            minutes_elapsed = 0
+        elif current_minutes > close_minutes:
+            minutes_elapsed = 390
+        else:
+            minutes_elapsed = current_minutes - open_minutes
+        return minutes_elapsed, is_market_hours
 
 
 # ── Signal classification ─────────────────────────────────────────────────────

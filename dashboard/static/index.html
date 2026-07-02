@@ -2228,7 +2228,7 @@ async function loadPerformance() {
       ${s.win_rate_short !== null && s.win_rate_short !== undefined ? `<div class="row"><span>Win rate ${esc(s.short_label || "D7")}</span><b>${s.win_rate_short}%</b></div>` : ""}
       ${s.win_rate_full !== null && s.win_rate_full !== undefined ? `<div class="row"><span>Win rate ${esc(s.full_label || "D30")}</span><b>${s.win_rate_full}%</b></div>` : ""}
       ${s.avg_short_return !== null && s.avg_short_return !== undefined ? `<div class="row"><span>Avg ${esc(s.short_label || "D7")} return</span><b class="${s.avg_short_return >= 0 ? "pos" : "neg"}">${s.avg_short_return >= 0 ? "+" : ""}${fmtNum(s.avg_short_return)}%</b></div>` : ""}
-      ${s.avg_peak_return !== null && s.avg_peak_return !== undefined ? `<div class="row"><span>Avg peak return</span><b class="pos">+${fmtNum(s.avg_peak_return)}%</b></div>` : ""}
+      ${s.avg_peak_return !== null && s.avg_peak_return !== undefined ? `<div class="row"><span>Avg peak (in trade direction)</span><b class="${s.avg_peak_return >= 0 ? "pos" : "neg"}">${s.avg_peak_return >= 0 ? "+" : ""}${fmtNum(s.avg_peak_return)}%</b></div>` : ""}
       ${s.best !== null && s.best !== undefined ? `<div class="row"><span>Best / Worst</span><b><span class="pos">${fmtNum(s.best, 1)}%</span> / <span class="neg">${fmtNum(s.worst, 1)}%</span></b></div>` : ""}
     </div>`).join("");
   const rows = rep.rows || [];

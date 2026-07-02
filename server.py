@@ -610,8 +610,11 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
         if sleeve == "INTRADAY":
             signal = data.get("signal_type", "")
             rationale = data.get("rationale", "")
-            change = data.get("change_pct", 0)
-            vol_pace = data.get("vol_pace_ratio", 0)
+            # `or 0`, not a .get default — a present-but-None value would hit
+            # the :+.1f format and crash the whole tool call (same class as
+            # the fixed Sentry ToolErrors).
+            change = data.get("change_pct") or 0
+            vol_pace = data.get("vol_pace_ratio") or 0
             if signal:
                 line += f" | Signal: {signal} | Chg: {change:+.1f}% | Vol pace: {vol_pace:.1f}x"
             if rationale:
@@ -624,7 +627,7 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
                 line += f"\n  → {rationale}"
         elif sleeve == "VOLUME_BURST":
             signal = data.get("signal", "")
-            surge = data.get("surge_ratio", 0)
+            surge = data.get("surge_ratio") or 0
             line += f" | Signal: {signal} | Surge: {surge:.1f}x"
         else:
             rationale = data.get("rationale", "") or data.get("plan_rationale", "")
@@ -668,7 +671,7 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
                 buzz = query_ticker_sentiment(ticker)
                 context += (
                     f"\nX/Social: {buzz.get('sentiment','neutral')} "
-                    f"(score {buzz.get('sentiment_score', 0):+.2f}, "
+                    f"(score {(buzz.get('sentiment_score') or 0):+.2f}, "
                     f"{buzz.get('buzz_level','low')} buzz) — {buzz.get('summary','')}"
                 )
             except Exception:

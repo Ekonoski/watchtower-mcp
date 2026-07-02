@@ -235,7 +235,7 @@ def fill_daily_returns() -> int:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, ticker, alert_type, alert_date, entry_price,
-                       filled_through_day, spy_entry_price, track_days
+                       filled_through_day, spy_entry_price, track_days, signal_type
                 FROM alert_log
                 WHERE status = 'tracking'
                   AND alert_date < %s
@@ -251,7 +251,7 @@ def fill_daily_returns() -> int:
         spy_closes_cache: Dict[date, list] = {}
 
         for (alert_id, ticker, alert_type, alert_date, entry_price,
-             filled_through, spy_entry, track_days) in rows:
+             filled_through, spy_entry, track_days, signal_type) in rows:
 
             filled_through = filled_through or 0
             if not entry_price:
@@ -300,10 +300,19 @@ def fill_daily_returns() -> int:
                     if m >= 30 and _spy_ret_at(30) is not None and 30 <= current_day:
                         updates["spy_d30_return"] = _spy_ret_at(30)
 
-            # Peak tracking from the same bars: best close after the alert day
+            # Peak tracking from the same bars: best close after the alert day,
+            # measured IN TRADE DIRECTION. For bearish signals the favorable
+            # move is DOWN, so the peak is the largest (entry - close)/entry —
+            # the long-only max() used to report a short's worst adverse move
+            # as its "peak". d_peak_return is therefore stored
+            # direction-adjusted (positive = trade worked), matching how the
+            # report and UI already display it without sign-flipping.
+            bearish = _is_bearish(alert_type, signal_type)
             peak_ret, peak_day = None, None
             for i, (_, c) in enumerate(closes[1:], start=1):
                 r = (c - entry) / entry * 100
+                if bearish:
+                    r = -r
                 if peak_ret is None or r > peak_ret:
                     peak_ret, peak_day = round(r, 4), i
             is_complete = current_day >= max_days

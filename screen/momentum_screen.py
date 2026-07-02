@@ -538,9 +538,12 @@ def print_summary(results: List[dict], max_pullback: float, with_plan: bool = Fa
         print(f"\n  {'TICKER':<7} {'COMPANY':<22} {'PRICE':>8} "
               f"{'20D%':>6} {'SCORE':>5} {'SIGNAL':<11} "
               f"{'ATR':>5} {'STOP':>7} {'STOP%':>6} {'SHARES':>6} {'POS%':>6}")
-        print(f"  {'\u2500' * 7} {'\u2500' * 22} {'\u2500' * 8} "
-              f"{'\u2500' * 6} {'\u2500' * 5} {'\u2500' * 11} "
-              f"{'\u2500' * 5} {'\u2500' * 7} {'\u2500' * 6} {'\u2500' * 6} {'\u2500' * 6}")
+        bar = "\u2500"  # box-drawing dash; kept out of the f-string expressions so
+        # the module still parses on Python 3.11 (backslashes in f-string
+        # expressions are only legal from 3.12).
+        print(f"  {bar * 7} {bar * 22} {bar * 8} "
+              f"{bar * 6} {bar * 5} {bar * 11} "
+              f"{bar * 5} {bar * 7} {bar * 6} {bar * 6} {bar * 6}")
         for r in results:
             plan = r.get("plan", {})
             atr_s = f"{plan['atr']:>4.2f}" if plan.get("atr") else " N/A"
@@ -552,13 +555,14 @@ def print_summary(results: List[dict], max_pullback: float, with_plan: bool = Fa
                   f"{r['momentum_score']:>5.0f} "
                   f"{r['signal']:<11} "
                   f"{atr_s} {stop_s} {stop_pct_s} "
-                  f"{plan.get('shares', 0):>6d} {plan.get('position_pct', 0):>5.1f}%")
+                  f"{(plan.get('shares') or 0):>6d} {(plan.get('position_pct') or 0):>5.1f}%")
         return
 
     print(f"\n  {'TICKER':<7} {'COMPANY':<25} {'SECTOR':<20} {'PRICE':>8} {'%OFF':>6} "
           f"{'20D%':>6} {'SCORE':>6} {'RSI':>5} {'MACD':>6} {'SIGNAL':<11}")
-    print(f"  {'\u2500' * 7} {'\u2500' * 25} {'\u2500' * 20} {'\u2500' * 8} {'\u2500' * 6} "
-          f"{'\u2500' * 6} {'\u2500' * 6} {'\u2500' * 5} {'\u2500' * 6} {'\u2500' * 11}")
+    bar = "\u2500"  # kept out of the f-string expressions for Python 3.11 compatibility
+    print(f"  {bar * 7} {bar * 25} {bar * 20} {bar * 8} {bar * 6} "
+          f"{bar * 6} {bar * 6} {bar * 5} {bar * 6} {bar * 11}")
 
     for r in results:
         macd_dir = "+" if r["macd_hist"] > 0 else "\u2212"
@@ -618,7 +622,8 @@ def print_detail(r: dict):
     w_rsi_s = f"{w_rsi_v:.1f}" if w_rsi_v and not np.isnan(w_rsi_v) else "N/A"
     w_macd_v = r.get("w_macd_hist", 0)
     w_macd_s = f"{w_macd_v:+.2f}" if w_macd_v and not np.isnan(w_macd_v) else "N/A"
-    print(f"\n  WEEKLY: RSI={w_rsi_s}  MACD={w_macd_s}  EMA stack: {'8>13 \u2713' if r.get('w_ema_stack') else '8<13'}")
+    stack_s = "8>13 \u2713" if r.get("w_ema_stack") else "8<13"  # \u2713 kept out of the f-string expression (3.11 compat)
+    print(f"\n  WEEKLY: RSI={w_rsi_s}  MACD={w_macd_s}  EMA stack: {stack_s}")
     print(f"  MOMENTUM SCORE:    {r['momentum_score']:.0f} / 100  \u2192  {r['signal']}")
 
     plan = r.get("plan")
