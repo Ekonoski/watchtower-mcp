@@ -780,6 +780,7 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
                 f"""
                 SELECT s.ticker, s.company_name, s.sector, s.industry, s.market_cap, s.price,
                        s.ret_1m, s.ret_3m, s.ret_6m, s.vs_sma, s.rev_yoy, s.rs_pct,
+                       s.is_parabolic, s.is_recent_ipo,
                        s.piotroski_score, s.altman_z_score, s.gross_margin,
                        g.up_and_comer_score, g.theme, g.sleeve
                 FROM screener_snapshot s
@@ -812,6 +813,7 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
         "ret_1m": _f(r["ret_1m"]), "ret_3m": _f(r["ret_3m"]), "ret_6m": _f(r["ret_6m"]),
         "vs_sma": _f(r["vs_sma"]), "rev_yoy": _f(r["rev_yoy"]),
         "rs_pct": int(r["rs_pct"]) if r["rs_pct"] is not None else None,
+        "is_parabolic": bool(r["is_parabolic"]), "is_recent_ipo": bool(r["is_recent_ipo"]),
         "piotroski": int(r["piotroski_score"]) if r["piotroski_score"] is not None else None,
         "altman_z": _f(r["altman_z_score"]), "gross_margin": _f(r["gross_margin"]),
         "gem_score": _f(r["up_and_comer_score"]), "gem_theme": r["theme"], "gem_sleeve": r["sleeve"],

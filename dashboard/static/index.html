@@ -997,8 +997,12 @@ function renderScreener() {
     const gem = r.gem_score != null
       ? `<span class="scr-gembadge" title="${esc(r.gem_theme || "")}">${r.gem_score.toFixed(0)}</span>` : "";
     const fcls = r.piotroski == null ? "" : (r.piotroski >= 7 ? "pos" : r.piotroski <= 3 ? "neg" : "");
+    const paraBadge = r.is_parabolic
+      ? `<span title="up ≥150% in 6 months — parabolic; excluded from gem scoring but shown here so leaders stay visible" style="margin-left:4px">🔥</span>` : "";
+    const ipoBadge = r.is_recent_ipo
+      ? `<span title="listed < ~6 months — 6M return not computable yet" style="margin-left:4px;font-size:9px;padding:1px 4px;border:1px solid var(--border);border-radius:4px;color:var(--muted)">IPO</span>` : "";
     return `<tr class="${r.gem_score != null ? "is-gem" : ""}" data-ticker="${esc(r.ticker)}" style="cursor:pointer">
-      <td class="left"><b>${esc(r.ticker)}</b></td>
+      <td class="left"><b>${esc(r.ticker)}</b>${paraBadge}${ipoBadge}</td>
       <td class="left">${esc((r.company_name || "").slice(0, 26))}</td>
       <td class="left">${esc(r.sector || "")}</td>
       <td class="num">${scrMcap(r.market_cap)}</td>
