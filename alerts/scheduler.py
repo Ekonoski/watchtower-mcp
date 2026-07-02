@@ -234,6 +234,20 @@ def run_scheduled_scan(force: bool = False):
         is_mkt = results[0].get("is_market_hours", True) if results else True
         mins = results[0].get("minutes_elapsed", 0) if results else 0
 
+        # Log alerts for performance tracking BEFORE the email attempt, on every
+        # scan. This used to live inside the email path gated on a successful
+        # send, so a Gmail/Resend hiccup silently dropped that scan's signals
+        # from alert_log — under-counting the performance stats for exactly the
+        # high-conviction scans. alert_log dedupes per ticker/type/day.
+        try:
+            from analysis.alert_tracker import log_alerts
+            if results:
+                log_alerts(results, "intraday")
+            if news_alerts:
+                log_alerts(news_alerts, "news")
+        except Exception as e:
+            log.warning(f"[scheduler] Alert logging error (non-fatal): {e}")
+
         global _last_email_ts
         fresh_signals, fresh_news = _fresh_for_email(results, news_alerts)
         heartbeat_due = (time.time() - _last_email_ts) >= EMAIL_HEARTBEAT_SEC
@@ -252,17 +266,6 @@ def run_scheduled_scan(force: bool = False):
                 _last_email_ts = time.time()
                 for t in fresh_signals + fresh_news:
                     _emailed_tickers[t] = _last_email_ts
-        else:
-            # Email path also logs alerts for performance tracking — keep that
-            # going on skipped scans (alert_log dedupes per ticker/type/day).
-            try:
-                from analysis.alert_tracker import log_alerts
-                if results:
-                    log_alerts(results, "intraday")
-                if news_alerts:
-                    log_alerts(news_alerts, "news")
-            except Exception as e:
-                log.warning(f"[scheduler] Alert logging error (non-fatal): {e}")
 
         log.info(
             f"[scheduler] Scan complete. {len(results)} signals, "

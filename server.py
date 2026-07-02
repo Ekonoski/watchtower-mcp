@@ -880,7 +880,7 @@ def watchtower_get_themes(window: str = "1w", weight: str = "median") -> str:
             pass
     if not rows:
         return "No theme data yet — the Themes snapshots refresh with the daily ingestion."
-    as_of = rows[0][9]
+    as_of = rows[0][-1]  # max(as_of) OVER () is the final SELECT column ([9] was `leaders`)
     lines = [
         f"**MARKET THEMES — ranked by {wkey.upper()} "
         f"({'cap-weighted' if suffix == 'cap' else 'median'}), as of {as_of}**",
