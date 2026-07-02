@@ -1267,8 +1267,13 @@ def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str =
     ]
     for r in shown:
         rs = f"RS {r['rs_pct']} · " if r.get("rs_pct") is not None else ""
+        flags = ""
+        if r.get("is_parabolic"):
+            flags += " 🔥parabolic"
+        if r.get("is_recent_ipo"):
+            flags += " [recent IPO]"
         rets = (f"{rs}1M {_fmt_pct(r.get('ret_1m'))} · 3M {_fmt_pct(r.get('ret_3m'))} · "
-                f"6M {_fmt_pct(r.get('ret_6m'))}")
+                f"6M {_fmt_pct(r.get('ret_6m'))}{flags}")
         fund = []
         if r.get("rev_yoy") is not None:
             fund.append(f"rev {_fmt_pct(r['rev_yoy'])}")
