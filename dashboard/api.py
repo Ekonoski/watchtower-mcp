@@ -735,6 +735,7 @@ def _gem_departures() -> dict:
 # Whitelisted sort keys -> ORDER BY (keys are fixed, safe to inline)
 _SCREENER_SORTS = {
     "score":  "g.up_and_comer_score DESC NULLS LAST",
+    "rs":     "s.rs_pct DESC NULLS LAST",
     "1m":     "s.ret_1m DESC NULLS LAST",
     "3m":     "s.ret_3m DESC NULLS LAST",
     "6m":     "s.ret_6m DESC NULLS LAST",
@@ -778,7 +779,7 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
             cur.execute(
                 f"""
                 SELECT s.ticker, s.company_name, s.sector, s.industry, s.market_cap, s.price,
-                       s.ret_1m, s.ret_3m, s.ret_6m, s.vs_sma, s.rev_yoy,
+                       s.ret_1m, s.ret_3m, s.ret_6m, s.vs_sma, s.rev_yoy, s.rs_pct,
                        s.piotroski_score, s.altman_z_score, s.gross_margin,
                        g.up_and_comer_score, g.theme, g.sleeve
                 FROM screener_snapshot s
@@ -810,6 +811,7 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
         "industry": r["industry"], "market_cap": _f(r["market_cap"]), "price": _f(r["price"]),
         "ret_1m": _f(r["ret_1m"]), "ret_3m": _f(r["ret_3m"]), "ret_6m": _f(r["ret_6m"]),
         "vs_sma": _f(r["vs_sma"]), "rev_yoy": _f(r["rev_yoy"]),
+        "rs_pct": int(r["rs_pct"]) if r["rs_pct"] is not None else None,
         "piotroski": int(r["piotroski_score"]) if r["piotroski_score"] is not None else None,
         "altman_z": _f(r["altman_z_score"]), "gross_margin": _f(r["gross_margin"]),
         "gem_score": _f(r["up_and_comer_score"]), "gem_theme": r["theme"], "gem_sleeve": r["sleeve"],
@@ -1148,6 +1150,34 @@ def _ticker_memberships(ticker: str) -> dict:
             cur.execute("SELECT theme FROM theme_members WHERE ticker = %s ORDER BY theme",
                         (ticker,))
             out["themes"] = [r[0] for r in cur.fetchall()]
+            # Relative strength for ANY priced ticker, computed live against the
+            # screener universe's momentum composite (1m + 2*3m + 6m, session-
+            # anchored). The MV's own rs_pct only covers names that pass the
+            # screener gates — which excludes exactly the hottest names (the
+            # >150%-in-6m "blown off" gate), and those are the ones you open.
+            cur.execute(
+                """
+                WITH me AS (
+                    SELECT (closes[1]/NULLIF(closes[22],0)-1)  AS r1m,
+                           (closes[1]/NULLIF(closes[64],0)-1)  AS r3m,
+                           (closes[1]/NULLIF(closes[127],0)-1) AS r6m
+                    FROM (SELECT array_agg(close ORDER BY trade_date DESC) AS closes
+                          FROM daily_prices
+                          WHERE ticker = %s AND trade_date >= CURRENT_DATE - 280) z
+                )
+                SELECT (1 + round(
+                    (SELECT count(*) FROM screener_snapshot s
+                     WHERE COALESCE(s.ret_1m,0) + 2*COALESCE(s.ret_3m,0) + COALESCE(s.ret_6m,0)
+                         < COALESCE(me.r1m,0) + 2*COALESCE(me.r3m,0) + COALESCE(me.r6m,0)
+                    )::numeric
+                    / NULLIF((SELECT count(*) FROM screener_snapshot), 0) * 98))::int
+                FROM me
+                WHERE me.r3m IS NOT NULL
+                """,
+                (ticker,),
+            )
+            r = cur.fetchone()
+            out["rs_pct"] = int(r[0]) if r and r[0] is not None else None
     except Exception as e:
         log.warning(f"[dashboard.api] _ticker_memberships({ticker}) failed: {e}")
     finally:

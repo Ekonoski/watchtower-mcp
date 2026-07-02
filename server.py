@@ -1236,7 +1236,9 @@ def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str =
 
     Args:
         sector: 'ALL' or a GICS sector (e.g. 'Technology', 'Energy', 'Industrials').
-        sort: score | 1m | 3m | 6m | rev | mktcap | ticker (default score).
+        sort: score | rs | 1m | 3m | 6m | rev | mktcap | ticker (default score).
+            'rs' = relative-strength percentile (1-99, momentum vs the whole
+            screenable universe; 99 = top).
         cap: market-cap band — 'gem' (<$10B, default), 'large' (<$50B), 'all'.
         gems_only: True = only names currently flagged as hidden gems.
         industry: optional exact GICS industry filter (e.g. 'Uranium', 'Biotechnology').
@@ -1264,7 +1266,8 @@ def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str =
         "*per name: 1M·3M·6M return | rev YoY, gross margin, Piotroski, Altman-Z | gem score*\n",
     ]
     for r in shown:
-        rets = (f"1M {_fmt_pct(r.get('ret_1m'))} · 3M {_fmt_pct(r.get('ret_3m'))} · "
+        rs = f"RS {r['rs_pct']} · " if r.get("rs_pct") is not None else ""
+        rets = (f"{rs}1M {_fmt_pct(r.get('ret_1m'))} · 3M {_fmt_pct(r.get('ret_3m'))} · "
                 f"6M {_fmt_pct(r.get('ret_6m'))}")
         fund = []
         if r.get("rev_yoy") is not None:
