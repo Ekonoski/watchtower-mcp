@@ -6,6 +6,9 @@ This version uses the standard mcp Python SDK (FastMCP) for maximum compatibilit
 with Grok, Claude, and other MCP clients.
 """
 
+import base64
+import hashlib
+import hmac
 import os
 import secrets
 import time
@@ -46,8 +49,36 @@ OAUTH_PATHS = {
     "/token",
 }
 
-# In-memory store for one-time auth codes: code -> (redirect_uri, expires_at)
-_auth_codes: dict[str, tuple[str, float]] = {}
+# In-memory store for one-time auth codes:
+#   code -> (redirect_uri, expires_at, code_challenge, challenge_method)
+_auth_codes: dict[str, tuple[str, float, str, str]] = {}
+
+# Only redirect back to known MCP-client callback origins. Without this,
+# /authorize + /token together let anyone who finds the hostname mint a
+# working bearer token with two curl calls. Extend via OAUTH_REDIRECT_ALLOW
+# (comma-separated URL prefixes) if a new client's callback isn't covered —
+# the 400 response echoes the attempted URI to make that painless.
+_REDIRECT_ALLOW = [p.strip() for p in os.environ.get(
+    "OAUTH_REDIRECT_ALLOW",
+    "https://claude.ai/,https://claude.com/,https://www.claude.com/,"
+    "https://grok.com/,https://www.grok.com/,https://x.ai/,https://accounts.x.ai/",
+).split(",") if p.strip()]
+
+
+def _redirect_allowed(uri: str) -> bool:
+    return any(uri.startswith(prefix) for prefix in _REDIRECT_ALLOW)
+
+
+def _mcp_session_token() -> str:
+    """Bearer token handed to OAuth clients — HMAC-derived from the master
+    token so the master secret itself never transits the OAuth flow.
+    Deterministic (no storage; survives restarts; all clients share it) and
+    rotates automatically whenever MCP_AUTH_TOKEN is rotated."""
+    if not MCP_AUTH_TOKEN:
+        return ""
+    return "wts_" + hmac.new(
+        MCP_AUTH_TOKEN.encode(), b"watchtower-mcp-session-v1", hashlib.sha256
+    ).hexdigest()
 
 
 def _get_screens():
@@ -1263,16 +1294,33 @@ def watchtower_get_screener(sector: str = "ALL", sort: str = "score", cap: str =
 
 @mcp.custom_route("/authorize", methods=["GET"])
 async def authorize(request: Request):
-    """OAuth authorization endpoint — auto-approves and redirects back with a code."""
+    """OAuth authorization endpoint — auto-approves for ALLOWLISTED client
+    callbacks and redirects back with a one-time code. PKCE (code_challenge)
+    is recorded here and enforced at /token when presented."""
     params = dict(request.query_params)
     redirect_uri = params.get("redirect_uri", "")
     state = params.get("state", "")
+    code_challenge = params.get("code_challenge", "")
+    challenge_method = (params.get("code_challenge_method") or "plain").upper()
 
     if not redirect_uri:
         return JSONResponse({"error": "missing redirect_uri"}, status_code=400)
+    if not _redirect_allowed(redirect_uri):
+        return JSONResponse(
+            {"error": "unauthorized_redirect_uri",
+             "error_description": f"redirect_uri not in allowlist: {redirect_uri}. "
+                                  "Add its https origin prefix to the "
+                                  "OAUTH_REDIRECT_ALLOW env var if this is a "
+                                  "legitimate new MCP client."},
+            status_code=400)
+
+    # housekeeping: drop expired codes so the dict can't grow unboundedly
+    now = time.time()
+    for c in [c for c, v in _auth_codes.items() if v[1] < now]:
+        _auth_codes.pop(c, None)
 
     code = secrets.token_urlsafe(32)
-    _auth_codes[code] = (redirect_uri, time.time() + 300)  # 5-min expiry
+    _auth_codes[code] = (redirect_uri, now + 300, code_challenge, challenge_method)
 
     sep = "&" if "?" in redirect_uri else "?"
     location = f"{redirect_uri}{sep}code={code}"
@@ -1284,7 +1332,11 @@ async def authorize(request: Request):
 
 @mcp.custom_route("/token", methods=["POST"])
 async def token(request: Request):
-    """OAuth token endpoint — exchanges auth code for the MCP Bearer token."""
+    """OAuth token endpoint — exchanges a one-time code for a session Bearer
+    token. Enforces PKCE when the client supplied a code_challenge at
+    /authorize (Claude does; Grok's manual-credentials flow may not — PKCE is
+    enforced-when-offered so both keep working). Returns an HMAC-derived
+    session token, never MCP_AUTH_TOKEN itself."""
     try:
         form = await request.form()
         data = dict(form)
@@ -1307,12 +1359,35 @@ async def token(request: Request):
     if entry is None:
         return JSONResponse({"error": "invalid_grant"}, status_code=400)
 
-    _, expires_at = entry
+    redirect_uri, expires_at, code_challenge, challenge_method = entry
     if time.time() > expires_at:
         return JSONResponse({"error": "invalid_grant", "error_description": "code expired"}, status_code=400)
 
+    # redirect_uri binding (RFC 6749 §4.1.3): enforced when the client sends it.
+    sent_redirect = data.get("redirect_uri", "")
+    if sent_redirect and sent_redirect != redirect_uri:
+        return JSONResponse({"error": "invalid_grant",
+                             "error_description": "redirect_uri mismatch"}, status_code=400)
+
+    # PKCE (RFC 7636): if a challenge was registered with the code, the
+    # matching verifier is REQUIRED — this is what stops a stolen/forged code
+    # from being exchanged by anyone other than the client that started the flow.
+    if code_challenge:
+        verifier = data.get("code_verifier", "")
+        if not verifier:
+            return JSONResponse({"error": "invalid_grant",
+                                 "error_description": "code_verifier required"}, status_code=400)
+        if challenge_method == "S256":
+            digest = hashlib.sha256(verifier.encode("ascii", errors="replace")).digest()
+            computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+        else:  # "plain"
+            computed = verifier
+        if not hmac.compare_digest(computed, code_challenge):
+            return JSONResponse({"error": "invalid_grant",
+                                 "error_description": "PKCE verification failed"}, status_code=400)
+
     return JSONResponse({
-        "access_token": MCP_AUTH_TOKEN,
+        "access_token": _mcp_session_token(),
         "token_type": "bearer",
         "expires_in": 315360000,  # ~10 years — effectively permanent
     })
@@ -1426,7 +1501,13 @@ class AuthASGIWrapper:
                     await self._unauthorized(send, base_url)
                     return
                 token = auth.split(" ", 1)[1].strip()
-                if token != MCP_AUTH_TOKEN:
+                # Accept the master token (direct/manual configs) or the
+                # HMAC-derived session token the OAuth flow now hands out.
+                # Existing clients that cached the raw master token before the
+                # hardening keep working; new OAuth exchanges never see it.
+                valid = (hmac.compare_digest(token, MCP_AUTH_TOKEN)
+                         or hmac.compare_digest(token, _mcp_session_token()))
+                if not valid:
                     await self._unauthorized(send, base_url)
                     return
 
