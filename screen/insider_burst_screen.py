@@ -242,8 +242,8 @@ def print_summary(results: List[dict], quarters: int):
         poff_s = f"{r['pct_off_high']:.1f}%" if r.get("pct_off_high") is not None else "  N/A"
         print(f"  {r['ticker']:<7} {(r.get('company_name') or '')[:24]:<25} "
               f"{(r.get('sector') or '')[:19]:<20} "
-              f"{r['score']:>5.0f} {r.get('insider_ratio', 0):>6.2f} "
-              f"{r.get('insider_buy_count', 0):>5} {rsi_s:>5} "
+              f"{r['score']:>5.0f} {(r.get('insider_ratio') or 0):>6.2f} "
+              f"{(r.get('insider_buy_count') or 0):>5} {rsi_s:>5} "
               f"{price_s:>8} {poff_s:>6}")
 
 

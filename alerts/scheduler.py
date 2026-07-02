@@ -70,6 +70,53 @@ def _another_scan_just_saved(window_sec: int = 120) -> bool:
         return False  # table missing / DB down — don't block scanning
 
 
+def _claim_daily_job(job_name: str) -> bool:
+    """Cross-container once-per-day claim for the daily jobs.
+
+    The scheduler 'lock' is a PID file in each container's own tmpfs, so a
+    Railway deploy overlapping a daily slot (e.g. 6:30 AM gems) ran the job in
+    BOTH containers — double gems email, double Grok spend.
+    _another_scan_just_saved() only protects the intraday scan. This claims
+    (job_name, ET date) via INSERT ON CONFLICT: exactly one container wins.
+    Fails OPEN (True) on DB trouble — a rare duplicate email beats silently
+    never running the job."""
+    try:
+        from screen.reversal_screen import _conn
+        try:
+            from screen.market_calendar import et_now
+            run_date = et_now().date()
+        except Exception:
+            from datetime import date as _date
+            run_date = _date.today()
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS scheduler_job_claims (
+                           job_name TEXT NOT NULL,
+                           run_date DATE NOT NULL,
+                           claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                           PRIMARY KEY (job_name, run_date)
+                       )"""
+                )
+                cur.execute(
+                    "INSERT INTO scheduler_job_claims (job_name, run_date) "
+                    "VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (job_name, run_date),
+                )
+                won = cur.rowcount == 1
+            conn.commit()
+            if not won:
+                log.info(f"[scheduler] {job_name}: already claimed for {run_date} "
+                         f"by a sibling container — skipping.")
+            return won
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"[scheduler] job-claim check failed ({e}) — running anyway.")
+        return True
+
+
 def _build_x_velocity_alerts(market_pulse: dict, results: list, news_alerts: list) -> list:
     """X velocity: tickers trending on X with NO scanner signal and NO news
     behind them — often the earliest tell (rumors, viral DD, halts being
@@ -220,7 +267,11 @@ def run_scheduled_scan(force: bool = False):
 
         # Deploy-overlap dedupe: if a sibling container already saved this
         # scan slot while we were scanning, stand down (no save, no email).
-        if _another_scan_just_saved():
+        # Manual triggers (force=True) skip this: the user pressed Scan Now
+        # and expects THIS scan's snapshot — standing down because a scheduled
+        # scan happened to save within the window silently discarded the whole
+        # 2-3 minute run (UI said "scan started" and nothing ever appeared).
+        if not force and _another_scan_just_saved():
             log.info("[scheduler] Sibling container already saved this scan slot — standing down.")
             return
 
@@ -289,6 +340,8 @@ def run_daily_fill_returns():
             return
     except Exception:
         pass
+    if not _claim_daily_job("fill_returns"):
+        return
     try:
         from analysis.alert_tracker import fill_daily_returns
         log.info("[scheduler] Starting daily alert return fill...")
@@ -311,6 +364,8 @@ def run_daily_social_scan():
             return
     except Exception:
         pass
+    if not _claim_daily_job("social_buzz"):
+        return
     try:
         from analysis.social_buzz import run_social_buzz_scan
         log.info("[scheduler] Starting daily social buzz scan...")
@@ -333,6 +388,8 @@ def run_daily_screens_scan():
             return
     except Exception:
         pass
+    if not _claim_daily_job("daily_screens"):
+        return
     try:
         from analysis.alert_tracker import log_alerts
 
@@ -393,6 +450,8 @@ def run_daily_gems_scan():
             return
     except Exception:
         pass
+    if not _claim_daily_job("gems_scan"):
+        return
     try:
         from screen.upcomer_screen import run_screen
         from alerts.email_alerts import send_hidden_gems_alert
