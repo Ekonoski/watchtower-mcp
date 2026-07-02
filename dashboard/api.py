@@ -1114,6 +1114,50 @@ def _company_profile(ticker: str) -> dict:
     return out
 
 
+def _ticker_memberships(ticker: str) -> dict:
+    """Which heat-map ETF tiles and theme baskets hold this ticker — the
+    drawer's "belongs to" line. Completes the drill-down loop in reverse: from
+    a single runner back to the chartable ETF whose breakout it follows, and
+    the theme basket it trades with. Pure DB reads over etf_constituents /
+    etf_theme_map / theme_members."""
+    from screen.reversal_screen import _conn
+    out = {"etfs": [], "themes": []}
+    try:
+        conn = _conn()
+    except Exception:
+        return out
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT c.etf_ticker, m.theme_label, m.theme_group, c.weight
+                FROM etf_constituents c
+                JOIN etf_theme_map m ON m.ticker = c.etf_ticker
+                WHERE c.holding_ticker = %s
+                ORDER BY CASE m.theme_group
+                           WHEN 'theme' THEN 0 WHEN 'sector' THEN 1 ELSE 2 END,
+                         c.weight DESC NULLS LAST
+                """,
+                (ticker,),
+            )
+            out["etfs"] = [
+                {"ticker": r[0], "label": r[1], "group": r[2],
+                 "weight": float(r[3]) if r[3] is not None else None}
+                for r in cur.fetchall()
+            ]
+            cur.execute("SELECT theme FROM theme_members WHERE ticker = %s ORDER BY theme",
+                        (ticker,))
+            out["themes"] = [r[0] for r in cur.fetchall()]
+    except Exception as e:
+        log.warning(f"[dashboard.api] _ticker_memberships({ticker}) failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
+
+
 def _fmp_description(ticker: str) -> str:
     """One-shot FMP /profile fetch for a company's business description."""
     api_key = os.environ.get("FMP_API_KEY", "").strip()
@@ -1261,10 +1305,14 @@ def register_routes(mcp) -> None:
                 return "fair", (compute_fair_value(ticker, price_override=price),
                                 fundamentals_snapshot(ticker))
 
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            def _member():
+                return "memberships", _ticker_memberships(ticker)
+
+            with ThreadPoolExecutor(max_workers=5) as pool:
                 futures = {pool.submit(fn): name for fn, name in
                            ((_levels, "levels"), (_social, "social"),
-                            (_profile, "profile"), (_fair, "fair_value"))}
+                            (_profile, "profile"), (_fair, "fair_value"),
+                            (_member, "memberships"))}
                 for fut, name in futures.items():
                     try:
                         key, val = fut.result(timeout=45)

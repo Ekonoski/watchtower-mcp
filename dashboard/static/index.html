@@ -916,6 +916,8 @@ function fmtVol(v) {
   return String(v);
 }
 function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+// esc() covers text nodes but not quotes — use this inside HTML attributes.
+function escAttr(s) { return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 3200);
@@ -2063,6 +2065,7 @@ async function openDrawer(ticker) {
   } else {
     html += `<div class="empty">No live intraday data${d.intraday_error ? ": " + esc(d.intraday_error) : ""}</div>`;
   }
+  html += renderMemberships(d.memberships);
   html += renderFairValue(d.fair_value);
   html += renderFundamentals(d.fundamentals);
   html += renderLevels(d.levels, d.levels_error);
@@ -2088,6 +2091,32 @@ async function openDrawer(ticker) {
   }
   html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
   $("d-body").innerHTML = html;
+  // Membership chips → jump straight into the ETF holdings / theme modals.
+  // Bound via data-attributes (not inline onclick) so names with quotes can't
+  // break the handlers.
+  $("d-body").querySelectorAll(".mb-etf").forEach(el =>
+    el.onclick = () => openEtfHoldings(el.dataset.etf, el.dataset.label));
+  $("d-body").querySelectorAll(".mb-theme").forEach(el =>
+    el.onclick = () => openThemeMembers(el.dataset.theme));
+}
+function renderMemberships(m) {
+  if (!m || (!(m.etfs || []).length && !(m.themes || []).length)) return "";
+  const GROUP_LBL = { broad: "broad", sector: "sector", theme: "" };
+  const etfChips = (m.etfs || []).map(e => {
+    const grp = GROUP_LBL[e.group] ?? "";
+    const w = e.weight != null ? ` ${fmtNum(e.weight, 1)}%` : "";
+    return `<span class="chip mb-etf" style="cursor:pointer" data-etf="${escAttr(e.ticker)}" data-label="${escAttr(e.label)}"
+      title="open ${escAttr(e.label)} (${escAttr(e.ticker)}) holdings — this name is${w ? w + " of the basket" : " a constituent"}">
+      ${esc(e.label)} <b>${esc(e.ticker)}</b>${w}${grp ? ` <i style="opacity:.6">${grp}</i>` : ""}</span>`;
+  }).join(" ");
+  const themeChips = (m.themes || []).map(t =>
+    `<span class="chip mb-theme" style="cursor:pointer" data-theme="${escAttr(t)}"
+       title="open the ${escAttr(t)} theme basket">${esc(t)}</span>`).join(" ");
+  return `<div class="social-box">
+    <b>Belongs to</b> <span style="color:var(--muted);font-size:11px">— heat-map ETFs &amp; theme baskets holding this name · click to open</span>
+    ${etfChips ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px">${etfChips}</div>` : ""}
+    ${themeChips ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:5px">${themeChips}</div>` : ""}
+  </div>`;
 }
 function _stars(n) { n = Math.max(0, Math.min(5, n || 0)); return "★".repeat(n) + "☆".repeat(5 - n); }
 const TF_ORDER = ["1W", "1D", "4H", "1H", "15m", "5m"];
