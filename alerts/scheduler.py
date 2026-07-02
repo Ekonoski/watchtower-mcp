@@ -265,6 +265,19 @@ def run_scheduled_scan(force: bool = False):
         except Exception as e:
             log.warning(f"[scheduler] X velocity error (non-fatal): {e}")
 
+        # Watchlist × levels: names you're tracking crossing their starred
+        # S/R levels since the last scan. Signal-shaped rows ride the normal
+        # pipeline (dashboard, notification, email gating, tracking).
+        try:
+            from analysis.watchlist_levels import build_watchlist_level_alerts
+            wl = build_watchlist_level_alerts()
+            if wl:
+                results.extend(wl)
+                log.info(f"[scheduler] Watchlist levels: {len(wl)} level cross(es): "
+                         + ", ".join(f"{r['ticker']} {r['signal_type']}" for r in wl))
+        except Exception as e:
+            log.warning(f"[scheduler] Watchlist levels error (non-fatal): {e}")
+
         # Deploy-overlap dedupe: if a sibling container already saved this
         # scan slot while we were scanning, stand down (no save, no email).
         # Manual triggers (force=True) skip this: the user pressed Scan Now
