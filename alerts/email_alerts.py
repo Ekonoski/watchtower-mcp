@@ -85,6 +85,8 @@ _SIGNAL_COLORS = {
     "GAP_DOWN_CONFIRM":  "#991b1b",
     "DISTRIBUTION":      "#c2410c",
     "VOLUME_SURGE":      "#ca8a04",
+    "LEVEL_BREAKOUT":    "#15803d",
+    "LEVEL_BREAKDOWN":   "#dc2626",
 }
 
 # News sentiment → badge color
