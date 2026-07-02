@@ -964,10 +964,12 @@ function scrMcap(v) {
 }
 async function loadScreener() {
   const s = state.scr;
+  const tok = seqTake("screener");
   let d;
   try {
     d = await api(`/api/screener?sector=${encodeURIComponent(s.sector)}&sort=${encodeURIComponent(s.sort)}&gems_only=${s.gemsOnly}&cap=${encodeURIComponent(s.cap)}&industry=${encodeURIComponent(s.industry || "")}&search=${encodeURIComponent(s.search || "")}`);
   } catch { return; }
+  if (seqStale("screener", tok)) return;  // filters changed while this was in flight
   if (d.sectors) {
     // Refresh sector counts each load — they change with the cap band.
     const sel = $("scr-sector");
@@ -1023,6 +1025,16 @@ document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#scr-cap button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.scr.cap = b.dataset.cap; loadScreener();
 });
+
+/* ── fetch-race guards ─────────────────────────────────────────────────────
+   Click ticker A then B quickly and whichever /api response lands LAST used
+   to paint the UI — A's numbers under B's header, or a heat map showing the
+   previous timeframe's returns under the new label. Each loader takes a
+   token at start and discards its response if a newer request superseded it
+   (same pattern the Vantage lookup already used). */
+const _seq = {};
+function seqTake(key) { _seq[key] = (_seq[key] || 0) + 1; return _seq[key]; }
+function seqStale(key, tok) { return _seq[key] !== tok; }
 
 /* ── tabs ── */
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
@@ -1420,8 +1432,10 @@ function volBadge(v) {  // median member volume vs prior month — a basket-leve
 }
 async function loadThemes() {
   const t = state.themes;
+  const tok = seqTake("themes");
   let d;
   try { d = await api(`/api/themes?window=${t.window}&weight=${t.weight}`); } catch { return; }
+  if (seqStale("themes", tok)) return;  // window/weight changed while in flight
   const winLbl = THEME_WIN_LBL[t.window] || t.window;
   $("theme-sub").textContent = `— ${winLbl}, ${t.weight === "cap" ? "cap-weighted" : "median"} · click a tile for all names`;
   const rows = (d && d.rows) || [];
@@ -1546,8 +1560,10 @@ async function loadHeatmap(tf, wt) {
   document.querySelectorAll("#heat-tf button").forEach(b => b.classList.toggle("on", b.dataset.tf === tf));
   document.querySelectorAll("#heat-wt button").forEach(b => b.classList.toggle("on", b.dataset.wt === wt));
   $("heat-sub").textContent = `— ${HEAT_TF_LABEL[tf] || ""} ${HEAT_WT_LABEL[wt] || ""}, hottest → coldest`;
+  const tok = seqTake("heatmap");
   let data;
   try { data = await api(`/api/heatmap?tf=${encodeURIComponent(tf)}&weight=${encodeURIComponent(wt)}`); } catch { return; }
+  if (seqStale("heatmap", tok)) return;  // user already toggled to another tf/weight
   renderHeatMap((data && data.sectors) || []);
 }
 document.querySelectorAll("#heat-tf button").forEach(b => b.onclick = () => loadHeatmap(b.dataset.tf, null));
@@ -1587,8 +1603,10 @@ async function loadEtfHeatmap(tf) {
   tf = state.etfHeatTf || "monthly";
   document.querySelectorAll("#etfheat-tf button").forEach(b => b.classList.toggle("on", b.dataset.tf === tf));
   $("etfheat-sub").textContent = `— ${ETFHEAT_TF_LABEL[tf] || ""}, by theme`;
+  const tok = seqTake("etfheat");
   let data;
   try { data = await api(`/api/heatmap-etf?tf=${encodeURIComponent(tf)}`); } catch { return; }
+  if (seqStale("etfheat", tok)) return;  // user already toggled to another timeframe
   renderEtfHeat((data && data.etfs) || []);
 }
 document.querySelectorAll("#etfheat-tf button").forEach(b => b.onclick = () => loadEtfHeatmap(b.dataset.tf));
@@ -1637,12 +1655,21 @@ async function openEtfHoldings(etf, label) {
   _etfHoldings = (data && data.holdings) || [];
   renderEtfHoldings();
 }
+// ETFs that hold no equities BY DESIGN — the empty drawer is correct, not a
+// data gap, so say what the fund actually holds instead of implying "yet".
+const NON_EQUITY_ETFS = {
+  GLD:  "GLD holds physical gold bullion — there are no constituent stocks to analyze. For gold-equity rotation, use the Gold Miners (GDX) / Jr Gold Miners (GDXJ) tiles.",
+  IBIT: "IBIT holds spot bitcoin — there are no constituent stocks to analyze. For crypto-equity rotation, use the Crypto Miners (WGMI) and Blockchain (BLOK) tiles.",
+  TLT:  "TLT holds long-term U.S. Treasury bonds — no constituent stocks. It's on the board as a rates/risk-off read.",
+  HYG:  "HYG holds high-yield corporate bonds — no constituent stocks. It's on the board as a credit-risk read.",
+};
 function renderEtfHoldings() {
   const body = $("etf-modal-body"), empty = $("etf-modal-empty");
   if (!_etfHoldings.length) {
     body.innerHTML = "";
     empty.style.display = "block";
-    empty.textContent = "No stock holdings on file for this ETF yet.";
+    const tk = (_etfHoldName.split("·")[1] || "").trim();
+    empty.textContent = NON_EQUITY_ETFS[tk] || "No stock holdings on file for this ETF yet.";
     return;
   }
   empty.style.display = "none";
@@ -2006,6 +2033,7 @@ function gemCard(g) {
 
 /* ── ticker drawer ── */
 async function openDrawer(ticker) {
+  const tok = seqTake("drawer");
   const dr = $("drawer");
   dr.classList.add("open");
   $("d-ticker").textContent = "$" + ticker;
@@ -2013,7 +2041,8 @@ async function openDrawer(ticker) {
   $("d-body").innerHTML = "";
   let d;
   try { d = await api("/api/ticker/" + encodeURIComponent(ticker)); }
-  catch { $("d-sub").textContent = "failed to load"; return; }
+  catch { if (!seqStale("drawer", tok)) $("d-sub").textContent = "failed to load"; return; }
+  if (seqStale("drawer", tok)) return;  // a newer drawer request superseded this one
   $("d-sub").innerHTML = `<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker)}" target="_blank" rel="noopener">TradingView ↗</a> · <a href="#" onclick="openTrendSpider('${esc(ticker)}');return false" title="Copies the ticker and opens TrendSpider — paste into its symbol search">TrendSpider ↗</a> · <a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank" rel="noopener">Yahoo ↗</a>`;
   const i = d.intraday;
   let html = "";
@@ -2273,6 +2302,20 @@ async function removeFromWatchlist(ticker) {
 }
 
 /* ── auto-refresh loop ── */
+// Non-scanner tabs used to load once per click: leave Gems open overnight and
+// the 6:30 AM scan never appeared without a manual re-click. Every 4th tick
+// (~2 min) the ACTIVE tab's loader re-runs — cheap (one API call for the tab
+// you're actually looking at) and the seq guards make overlapping loads safe.
+const TAB_REFRESHERS = {
+  swings: () => loadSwings(),
+  gems: () => loadGems(),
+  themes: () => loadThemes(),
+  screener: () => loadScreener(),
+  vantage: () => loadVantage(),
+  news: () => { /* news rides the scanner snapshot via loadLatest() */ },
+  calendar: () => loadCalendar(),
+};
+let _tabTicks = 0;
 setInterval(() => {
   state.countdown -= 1;
   if (state.countdown <= 0) {
@@ -2280,6 +2323,12 @@ setInterval(() => {
     loadLatest();
     // Keep watchlist quotes live while you're monitoring positions
     if ($("tab-watchlist").classList.contains("active")) loadWatchlist();
+    _tabTicks += 1;
+    if (_tabTicks % 4 === 0) {
+      const active = document.querySelector("nav button.active");
+      const fn = active && TAB_REFRESHERS[active.dataset.tab];
+      if (fn) fn();
+    }
   }
   $("countdown").textContent = "↻ " + state.countdown + "s";
 }, 1000);

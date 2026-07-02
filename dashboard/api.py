@@ -25,6 +25,7 @@ import hmac
 import logging
 import os
 import threading
+import time
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
@@ -41,11 +42,21 @@ def _dashboard_password() -> str:
     return (os.environ.get("DASHBOARD_PASSWORD") or os.environ.get("MCP_AUTH_TOKEN") or "").strip()
 
 
-def _session_token() -> str:
+_SESSION_TTL_SEC = 60 * 60 * 24 * 30  # 30 days, matching the cookie max_age
+
+
+def _session_token(expires_at: int = None) -> str:
+    """Signed session token WITH an expiry: '<expiry_ts>.<hmac(pw, v2|ts)>'.
+    The old scheme was a deterministic, never-expiring HMAC of the password —
+    one captured cookie meant permanent access until the password changed."""
     pw = _dashboard_password()
     if not pw:
         return ""
-    return hmac.new(pw.encode(), b"watchtower-dashboard-v1", hashlib.sha256).hexdigest()
+    if expires_at is None:
+        expires_at = int(time.time()) + _SESSION_TTL_SEC
+    sig = hmac.new(pw.encode(), f"watchtower-dashboard-v2|{expires_at}".encode(),
+                   hashlib.sha256).hexdigest()
+    return f"{expires_at}.{sig}"
 
 
 def _is_authed(request: Request) -> bool:
@@ -53,7 +64,51 @@ def _is_authed(request: Request) -> bool:
     if not pw:
         return True  # no password configured — open (dev mode)
     cookie = request.cookies.get(_COOKIE_NAME, "")
-    return bool(cookie) and hmac.compare_digest(cookie, _session_token())
+    if "." not in cookie:
+        return False  # legacy non-expiring cookie — one-time re-login
+    ts_s, _, _sig = cookie.partition(".")
+    try:
+        expires_at = int(ts_s)
+    except ValueError:
+        return False
+    if time.time() > expires_at:
+        return False
+    return hmac.compare_digest(cookie, _session_token(expires_at))
+
+
+# Login backoff: the password was brute-forceable at network speed. After 5
+# failures per client IP, lockouts double from 30s (capped at 1h); success
+# clears. In-memory — resets on deploy, which is fine for a one-user dashboard.
+_login_fails: dict = {}  # ip -> [fail_count, locked_until_epoch]
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return getattr(getattr(request, "client", None), "host", "") or "unknown"
+
+
+def _login_throttled(ip: str) -> int:
+    """Seconds the caller must still wait, or 0 if allowed."""
+    entry = _login_fails.get(ip)
+    if not entry:
+        return 0
+    remaining = int(entry[1] - time.time())
+    return max(0, remaining)
+
+
+def _login_failed(ip: str):
+    fails, _ = _login_fails.get(ip, [0, 0])
+    fails += 1
+    lock = 0
+    if fails >= 5:
+        lock = time.time() + min(3600, 30 * (2 ** (fails - 5)))
+    _login_fails[ip] = [fails, lock]
+
+
+def _login_succeeded(ip: str):
+    _login_fails.pop(ip, None)
 
 
 def _unauthorized() -> JSONResponse:
@@ -1092,6 +1147,12 @@ def register_routes(mcp) -> None:
 
     @mcp.custom_route("/api/login", methods=["POST"])
     async def login(request: Request):
+        ip = _client_ip(request)
+        wait = _login_throttled(ip)
+        if wait:
+            return JSONResponse(
+                {"error": f"too many attempts — try again in {wait}s"},
+                status_code=429)
         try:
             body = await request.json()
         except Exception:
@@ -1100,11 +1161,13 @@ def register_routes(mcp) -> None:
         if not _dashboard_password():
             return JSONResponse({"ok": True, "note": "no password configured"})
         if not hmac.compare_digest(password, _dashboard_password()):
+            _login_failed(ip)
             return JSONResponse({"error": "wrong password"}, status_code=401)
+        _login_succeeded(ip)
         resp = JSONResponse({"ok": True})
         resp.set_cookie(
             _COOKIE_NAME, _session_token(),
-            max_age=60 * 60 * 24 * 30, httponly=True, samesite="lax",
+            max_age=_SESSION_TTL_SEC, httponly=True, samesite="lax",
             secure=request.url.scheme == "https",
         )
         return resp
@@ -1164,6 +1227,13 @@ def register_routes(mcp) -> None:
             return JSONResponse({"error": "invalid ticker"}, status_code=400)
 
         def _fetch():
+            # The drawer is the most-used click in the app and these five
+            # blocks used to run serially (intraday -> levels' six Polygon
+            # timeframe fetches -> Grok social -> profile -> fair value),
+            # taking many seconds. They're independent except that levels and
+            # fair-value want the live price from intraday — so intraday runs
+            # first, then the other four fan out on a small thread pool.
+            from concurrent.futures import ThreadPoolExecutor
             out = {"ticker": ticker, "intraday": None, "social": None, "levels": None}
             price = None
             try:
@@ -1174,26 +1244,36 @@ def register_routes(mcp) -> None:
                     price = rows[0].get("current_price")
             except Exception as e:
                 out["intraday_error"] = str(e)[:120]
-            try:
+
+            def _levels():
                 from analysis.levels import compute_levels
-                out["levels"] = compute_levels(ticker, current_price=price)
-            except Exception as e:
-                out["levels_error"] = str(e)[:120]
-            try:
+                return "levels", compute_levels(ticker, current_price=price)
+
+            def _social():
                 from analysis.social_buzz import query_ticker_sentiment
-                out["social"] = query_ticker_sentiment(ticker)
-            except Exception as e:
-                out["social_error"] = str(e)[:120]
-            try:
-                out["profile"] = _company_profile(ticker)
-            except Exception as e:
-                out["profile_error"] = str(e)[:120]
-            try:
+                return "social", query_ticker_sentiment(ticker)
+
+            def _profile():
+                return "profile", _company_profile(ticker)
+
+            def _fair():
                 from analysis.fundamental_value import compute_fair_value, fundamentals_snapshot
-                out["fair_value"] = compute_fair_value(ticker, price_override=price)
-                out["fundamentals"] = fundamentals_snapshot(ticker)
-            except Exception as e:
-                out["fair_value_error"] = str(e)[:120]
+                return "fair", (compute_fair_value(ticker, price_override=price),
+                                fundamentals_snapshot(ticker))
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {pool.submit(fn): name for fn, name in
+                           ((_levels, "levels"), (_social, "social"),
+                            (_profile, "profile"), (_fair, "fair_value"))}
+                for fut, name in futures.items():
+                    try:
+                        key, val = fut.result(timeout=45)
+                        if key == "fair":
+                            out["fair_value"], out["fundamentals"] = val
+                        else:
+                            out[key] = val
+                    except Exception as e:
+                        out[f"{name}_error"] = str(e)[:120]
             return out
 
         return JSONResponse(await asyncio.to_thread(_fetch))
