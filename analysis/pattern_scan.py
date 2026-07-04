@@ -197,6 +197,22 @@ def _pt(ctx, idx, price):
     return {"date": str(d) if d is not None else None, "price": round(price, 4)}
 
 
+def _robust_extreme(vals: list, side: str):
+    """Spike-resistant trigger line: the level a chartist would draw.
+
+    A neckline defined by the single most extreme print (a one-day spike
+    that immediately failed) sits above where the market actually fought;
+    the level the OTHER bars respected is the real line. For windows long
+    enough to afford it, the most extreme 1-2 bars are treated as overshoot
+    and the trigger sits at the next value: drop 1 outlier at 15+ bars,
+    2 at 60+. Short windows keep the true extreme untouched."""
+    vs = sorted(v for v in vals if v is not None)
+    if not vs:
+        return None
+    k = 2 if len(vs) >= 60 else (1 if len(vs) >= 15 else 0)
+    return vs[-1 - k] if side == "high" else vs[k]
+
+
 # ── Reversals: head & shoulders (both ways) ──────────────────────────────────
 
 def _det_inverse_hs(ctx):
@@ -224,11 +240,8 @@ def _det_inverse_hs(ctx):
     if not ls_cands:
         return None
     l1_idx, l1 = min(ls_cands, key=lambda t: t[1])
-    neck_win = [x for x in ctx["highs"][l2_idx:l3_idx + 1] if x is not None]
-    if not neck_win:
-        return None
-    neck = max(neck_win)
-    if neck <= 0 or l3 >= neck * 0.995 or l1 >= neck:
+    neck = _robust_extreme(ctx["highs"][l2_idx:l3_idx + 1], "high")
+    if not neck or neck <= 0 or l3 >= neck * 0.995 or l1 >= neck:
         return None
     depth = (neck - l2) / l2
     if depth < min_depth:
@@ -278,11 +291,8 @@ def _det_hs_top(ctx):
     if not ls_cands:
         return None
     h1_idx, h1 = max(ls_cands, key=lambda t: t[1])
-    neck_win = [x for x in ctx["lows"][h2_idx:h3_idx + 1] if x is not None]
-    if not neck_win:
-        return None
-    neck = min(neck_win)
-    if neck <= 0 or h3 <= neck * 1.005 or h1 <= neck:
+    neck = _robust_extreme(ctx["lows"][h2_idx:h3_idx + 1], "low")
+    if not neck or neck <= 0 or h3 <= neck * 1.005 or h1 <= neck:
         return None
     depth = (h2 - neck) / h2
     if depth < min_depth:
@@ -329,10 +339,9 @@ def _det_double_bottom(ctx):
     lows_span = [x for x in ctx["lows"][l1_idx:] if x is not None]
     if not lows_span or min(lows_span) < bottom * 0.999:
         return None
-    neck_win = [x for x in ctx["highs"][l1_idx:l2_idx + 1] if x is not None]
-    if not neck_win:
+    trigger = _robust_extreme(ctx["highs"][l1_idx:l2_idx + 1], "high")
+    if not trigger:
         return None
-    trigger = max(neck_win)
     depth = (trigger - bottom) / bottom
     if depth < min_depth:
         return None
@@ -376,11 +385,8 @@ def _det_double_top(ctx):
     highs_span = [x for x in ctx["highs"][h1_idx:] if x is not None]
     if not highs_span or max(highs_span) > top * 1.001:
         return None
-    neck_win = [x for x in ctx["lows"][h1_idx:h2_idx + 1] if x is not None]
-    if not neck_win:
-        return None
-    trigger = min(neck_win)
-    if trigger <= 0:
+    trigger = _robust_extreme(ctx["lows"][h1_idx:h2_idx + 1], "low")
+    if not trigger or trigger <= 0:
         return None
     depth = (top - trigger) / top
     if depth < min_depth:
