@@ -650,7 +650,8 @@
       <h3>Chart Patterns</h3>
       <p>Classical setups detected across <b>weekly, daily, and 4-hour</b> bars: inverse head &amp;
       shoulders (including the double-bottom-with-a-<b>higher-low</b> variant), H&amp;S tops, double
-      bottoms/tops, flags, triangles, and wedges. <b>Forming</b> = price hasn't crossed the trigger
+      bottoms/tops, flags, triangles, wedges, cup &amp; handle, and long-term range
+      breakouts/breakdowns. <b>Forming</b> = price hasn't crossed the trigger
       line yet — the entry window; <b>Breakout</b> = crossed within the last few bars and not yet
       extended. Stale or extended breaks are dropped automatically, so everything here is live.
       Weekly/daily read closing-price structure; 4H uses full highs/lows. An intraday alert fires
@@ -1153,6 +1154,8 @@ const PATTERN_LABELS = {
   bull_flag: "Bull Flag", bear_flag: "Bear Flag",
   asc_triangle: "Asc Triangle", desc_triangle: "Desc Triangle",
   falling_wedge: "Falling Wedge", rising_wedge: "Rising Wedge",
+  cup_handle: "Cup & Handle",
+  range_breakout: "Range Breakout", range_breakdown: "Range Breakdown",
 };
 async function loadPatterns() {
   const p = state.pat;

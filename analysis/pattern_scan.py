@@ -51,13 +51,19 @@ log = logging.getLogger(__name__)
 TF = {
     "weekly": dict(pivot_k=2, min_bars=45, recent=16, break_recent=5,
                    max_ext=0.12, scale=1.7, max_width=110, min_sep=3,
-                   flag_max=8, run_len=13, tri_window=34),
+                   flag_max=8, run_len=13, tri_window=34,
+                   cup_min=12, cup_max=80, handle_max=8,
+                   range_lens=(104, 78, 52, 26)),
     "daily":  dict(pivot_k=3, min_bars=80, recent=30, break_recent=7,
                    max_ext=0.08, scale=1.0, max_width=160, min_sep=4,
-                   flag_max=15, run_len=21, tri_window=50),
+                   flag_max=15, run_len=21, tri_window=50,
+                   cup_min=25, cup_max=150, handle_max=15,
+                   range_lens=(180, 120, 90, 60)),
     "4h":     dict(pivot_k=3, min_bars=55, recent=36, break_recent=12,
                    max_ext=0.05, scale=0.6, max_width=170, min_sep=4,
-                   flag_max=18, run_len=26, tri_window=60),
+                   flag_max=18, run_len=26, tri_window=60,
+                   cup_min=30, cup_max=150, handle_max=18,
+                   range_lens=(320, 240, 160, 100)),
 }
 
 PATTERN_NAMES = {
@@ -66,6 +72,8 @@ PATTERN_NAMES = {
     "bull_flag": "Bull Flag", "bear_flag": "Bear Flag",
     "asc_triangle": "Asc Triangle", "desc_triangle": "Desc Triangle",
     "falling_wedge": "Falling Wedge", "rising_wedge": "Rising Wedge",
+    "cup_handle": "Cup & Handle",
+    "range_breakout": "Range Breakout", "range_breakdown": "Range Breakdown",
 }
 
 FOUR_H_LIQUID_TOP = 350     # most-liquid names always scanned on 4h
@@ -656,9 +664,146 @@ def _det_rising_wedge(ctx):
                phs[-1][1], pls[-1][0], start, points, quality)
 
 
+# ── Cup & handle ─────────────────────────────────────────────────────────────
+
+def _det_cup_handle(ctx):
+    """Rounded base between two rims at the same level, then a shallow handle
+    pause under the rim — breakout over the rim completes it."""
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    rim_tol, min_depth, max_depth = 0.04 * s, 0.10 * s, 0.55
+    phighs = ctx["phighs"]
+    # Right rim: latest pivot high with a 3..handle_max bar handle after it.
+    cands = [(i, p) for i, p in phighs if 3 <= (n - 1) - i <= cfg["handle_max"]]
+    if not cands:
+        return None
+    r_idx, r_rim = cands[-1]
+    # Left rim: an earlier pivot high at the same level, a real cup-width away.
+    lcands = [(i, p) for i, p in phighs
+              if r_idx - cfg["cup_max"] <= i <= r_idx - cfg["cup_min"]
+              and abs(p - r_rim) / r_rim <= rim_tol]
+    if not lcands:
+        return None
+    l_idx, l_rim = lcands[0]
+    rim = max(l_rim, r_rim)
+    inner_h = [x for x in ctx["highs"][l_idx + 1:r_idx] if x is not None]
+    if not inner_h or max(inner_h) > rim * 1.015:
+        return None  # the rims must be the top of the cup
+    inner = [(j, x) for j, x in enumerate(ctx["lows"][l_idx + 1:r_idx]) if x is not None]
+    if not inner:
+        return None
+    b_off, bottom = min(inner, key=lambda t: t[1])
+    depth = (rim - bottom) / rim
+    if not (min_depth <= depth <= max_depth):
+        return None
+    b_rel = (b_off + 1) / (r_idx - l_idx)
+    if not (0.2 <= b_rel <= 0.85):
+        return None  # V-low hugging one rim — not a rounded base
+    # Handle: a shallow pause in the UPPER half of the cup.
+    h_lows = [x for x in ctx["lows"][r_idx + 1:] if x is not None]
+    if not h_lows:
+        return None
+    h_low = min(h_lows)
+    if h_low < bottom + 0.55 * (rim - bottom):
+        return None  # handle too deep — that's just the cup refilling
+    if ctx["last"] <= h_low:
+        return None
+    status = _status(ctx, r_idx, rim, "bullish")
+    if status is None:
+        return None
+    handle_ret = (rim - h_low) / (rim - bottom) if rim > bottom else 1.0
+    quality = min(8.0, 20.0 * depth) \
+        + (9.0 if handle_ret <= 0.25 else (5.0 if handle_ret <= 0.40 else 2.0)) \
+        + 5.0 * max(0.0, 1.0 - abs(l_rim - r_rim) / r_rim / rim_tol)
+    points = {"left_rim": _pt(ctx, l_idx, l_rim), "right_rim": _pt(ctx, r_idx, r_rim),
+              "bottom": _pt(ctx, l_idx + 1 + b_off, bottom),
+              "handle_low": round(h_low, 4), "depth_pct": round(depth * 100, 2),
+              "_anchor_price": bottom}
+    return _mk(ctx, "cup_handle", "bullish", status, rim, rim + (rim - bottom),
+               h_low, l_idx + 1 + b_off, l_idx, points, quality)
+
+
+# ── Long-term range breakout / breakdown ─────────────────────────────────────
+
+def _det_range_break(ctx):
+    """A horizontal range tested repeatedly on BOTH edges for a long time,
+    with price now at (or freshly through) an edge. Tries the longest
+    qualifying window first — the longer the range, the bigger the move it
+    tends to fuel. Mid-range names are skipped: nothing actionable."""
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    closes, last = ctx["closes"], ctx["last"]
+    for L in cfg["range_lens"]:
+        if L > n - 2:
+            continue
+        start = n - L
+        hi = _robust_extreme(ctx["highs"][start:], "high")
+        lo = _robust_extreme(ctx["lows"][start:], "low")
+        if not hi or not lo or lo <= 0 or hi <= lo:
+            continue
+        height = (hi - lo) / lo
+        if height > 0.28 * s or height < 0.04:
+            continue  # not a tradeable box: too loose to be a range, or dead
+        cs = [c for c in closes[start:] if c is not None]
+        if len(cs) < L * 0.8:
+            continue
+        band = 0.2 * (hi - lo)
+        t_top = sum(1 for c in cs if c >= hi - band)
+        t_bot = sum(1 for c in cs if c <= lo + band)
+        if t_top < 4 or t_bot < 4:
+            continue  # both edges must be well-tested
+        # A steady trend "touches" its window's bottom early and top late and
+        # would masquerade as a range — real ranges OSCILLATE, so both edges
+        # must be visited in both halves of the window.
+        half = len(cs) // 2
+        if not all(any(c >= hi - band for c in part) and
+                   any(c <= lo + band for c in part)
+                   for part in (cs[:half], cs[half:])):
+            continue
+
+        quality = min(8.0, 4.0 * L / cfg["range_lens"][-1]) \
+            + min(9.0, 0.75 * min(t_top, t_bot)) \
+            + (5.0 if height <= 0.18 * s else 0.0)
+        points = {"range_high": round(hi, 4), "range_low": round(lo, 4),
+                  "bars": L, "height_pct": round(height * 100, 2),
+                  "touches_top": t_top, "touches_bottom": t_bot}
+        mid = (hi + lo) / 2
+
+        if last >= hi:
+            below = [i for i in range(start, n)
+                     if closes[i] is not None and closes[i] < hi]
+            if not below:
+                continue
+            since = (n - 1) - max(below)
+            if since > cfg["break_recent"] or last > hi * (1 + cfg["max_ext"]):
+                continue  # stale or extended break
+            points["_anchor_price"] = hi
+            return _mk(ctx, "range_breakout", "bullish", "breakout", hi,
+                       hi + (hi - lo), mid, start, start, points, quality)
+        if last <= lo:
+            above = [i for i in range(start, n)
+                     if closes[i] is not None and closes[i] > lo]
+            if not above:
+                continue
+            since = (n - 1) - max(above)
+            if since > cfg["break_recent"] or last < lo * (1 - cfg["max_ext"]):
+                continue
+            points["_anchor_price"] = lo
+            return _mk(ctx, "range_breakdown", "bearish", "breakout", lo,
+                       lo - (hi - lo), mid, start, start, points, quality)
+        if last > hi - (hi - lo) * 0.25:
+            points["_anchor_price"] = hi
+            return _mk(ctx, "range_breakout", "bullish", "forming", hi,
+                       hi + (hi - lo), mid, start, start, points, quality)
+        if last < lo + (hi - lo) * 0.25:
+            points["_anchor_price"] = lo
+            return _mk(ctx, "range_breakdown", "bearish", "forming", lo,
+                       lo - (hi - lo), mid, start, start, points, quality)
+    return None
+
+
 DETECTORS = [_det_inverse_hs, _det_hs_top, _det_double_bottom, _det_double_top,
              _det_bull_flag, _det_bear_flag, _det_asc_triangle,
-             _det_desc_triangle, _det_falling_wedge, _det_rising_wedge]
+             _det_desc_triangle, _det_falling_wedge, _det_rising_wedge,
+             _det_cup_handle, _det_range_break]
 
 
 def detect_patterns(bars: list, timeframe: str) -> list:

@@ -736,7 +736,7 @@ def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
 
     Patterns: Inverse H&S (low → equal-or-lower low → HIGHER low → neckline),
     H&S top, double bottom/top, bull/bear flag, ascending/descending triangle,
-    falling/rising wedge. The scan keeps only LIVE setups — 'forming' (price
+    falling/rising wedge, cup & handle, long-term range breakout/breakdown. The scan keeps only LIVE setups — 'forming' (price
     hasn't crossed the trigger line yet: the entry window) and fresh
     'breakout' (crossed within the last few bars, not extended). Weekly and
     daily detect closing-price structure; 4h uses true highs/lows.
