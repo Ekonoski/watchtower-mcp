@@ -674,6 +674,9 @@
         <button data-dir="bullish">Bullish</button>
         <button data-dir="bearish">Bearish</button>
       </div>
+      <label class="ctl">Pattern
+        <select id="pat-pattern"><option value="ALL">All patterns</option></select>
+      </label>
       <label class="ctl">Sector
         <select id="pat-sector"><option value="ALL">All sectors</option></select>
       </label>
@@ -1143,7 +1146,7 @@ document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
 });
 
 /* ── chart patterns ── */
-state.pat = { tf: "all", status: "forming", dir: "all", search: "", sector: "ALL" };
+state.pat = { tf: "all", status: "forming", dir: "all", search: "", sector: "ALL", kind: "ALL" };
 const PATTERN_LABELS = {
   inverse_hs: "Inv H&S", hs_top: "H&S Top",
   double_bottom: "Double Bottom", double_top: "Double Top",
@@ -1178,8 +1181,19 @@ function renderPatterns() {
       .map(([s0, n]) => `<option value="${escAttr(s0)}">${esc(s0)} (${n})</option>`).join("");
   sel.value = state.pat.sector;
   const sec = state.pat.sector;
+  // Pattern-type dropdown, same live-count treatment as sectors.
+  const patCounts = {};
+  (state.patRows || []).forEach(r => { patCounts[r.pattern] = (patCounts[r.pattern] || 0) + 1; });
+  if (state.pat.kind !== "ALL" && !patCounts[state.pat.kind]) state.pat.kind = "ALL";
+  const ksel = $("pat-pattern");
+  ksel.innerHTML = `<option value="ALL">All patterns (${(state.patRows || []).length})</option>` +
+    Object.entries(patCounts).sort((a, b) => b[1] - a[1])
+      .map(([p0, n]) => `<option value="${escAttr(p0)}">${esc(PATTERN_LABELS[p0] || p0)} (${n})</option>`).join("");
+  ksel.value = state.pat.kind;
+  const kind = state.pat.kind;
   const rows = (state.patRows || []).filter(r =>
-    (!q || r.ticker.includes(q)) && (sec === "ALL" || (r.sector || "—") === sec));
+    (!q || r.ticker.includes(q)) && (sec === "ALL" || (r.sector || "—") === sec)
+    && (kind === "ALL" || r.pattern === kind));
   const body = $("pat-body");
   $("pat-empty").style.display = rows.length ? "none" : "";
   $("pat-count").textContent = rows.length ? `${rows.length} setups` : "";
@@ -1225,6 +1239,7 @@ document.querySelectorAll("#pat-dir button").forEach(b => b.onclick = () => {
 });
 $("pat-search").addEventListener("input", e => { state.pat.search = e.target.value; renderPatterns(); });
 $("pat-sector").addEventListener("change", e => { state.pat.sector = e.target.value; renderPatterns(); });
+$("pat-pattern").addEventListener("change", e => { state.pat.kind = e.target.value; renderPatterns(); });
 
 /* ── fetch-race guards ─────────────────────────────────────────────────────
    Click ticker A then B quickly and whichever /api response lands LAST used
