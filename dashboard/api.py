@@ -45,35 +45,89 @@ def _dashboard_password() -> str:
 _SESSION_TTL_SEC = 60 * 60 * 24 * 30  # 30 days, matching the cookie max_age
 
 
-def _session_token(expires_at: int = None) -> str:
-    """Signed session token WITH an expiry: '<expiry_ts>.<hmac(pw, v2|ts)>'.
-    The old scheme was a deterministic, never-expiring HMAC of the password —
-    one captured cookie meant permanent access until the password changed."""
-    pw = _dashboard_password()
-    if not pw:
+def _hash_password(password: str) -> str:
+    """Salted scrypt (stdlib-only): 'scrypt$n$r$p$salt_hex$hash_hex'."""
+    import secrets as _secrets
+    salt = _secrets.token_bytes(16)
+    h = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32)
+    return f"scrypt$16384$8$1${salt.hex()}${h.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        _scheme, n, r, p, salt_hex, hash_hex = stored.split("$")
+        h = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex),
+                           n=int(n), r=int(r), p=int(p), dklen=32)
+        return hmac.compare_digest(h.hex(), hash_hex)
+    except Exception:
+        return False
+
+
+def _get_user(username: str):
+    """Active user row or None. Any DB problem reads as 'no such user' so the
+    legacy single-password fallback still lets you in during a bad deploy."""
+    from screen.reversal_screen import _conn
+    try:
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT username, password_hash, role, display_name "
+                    "FROM dashboard_users WHERE username = %s AND active = true",
+                    (username,))
+                r = cur.fetchone()
+            if not r:
+                return None
+            return {"username": r[0], "password_hash": r[1], "role": r[2],
+                    "display_name": r[3] or r[0]}
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _session_token(username: str, expires_at: int = None) -> str:
+    """Signed session token carrying WHO you are: 'v3|<user>|<expiry>.<hmac>'.
+    Signed with the server secret (DASHBOARD_PASSWORD env), which is now a
+    signing key rather than a login credential — per-user passwords live in
+    dashboard_users as scrypt hashes."""
+    key = _dashboard_password()
+    if not key:
         return ""
     if expires_at is None:
         expires_at = int(time.time()) + _SESSION_TTL_SEC
-    sig = hmac.new(pw.encode(), f"watchtower-dashboard-v2|{expires_at}".encode(),
-                   hashlib.sha256).hexdigest()
-    return f"{expires_at}.{sig}"
+    payload = f"v3|{username}|{expires_at}"
+    sig = hmac.new(key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
 
 
-def _is_authed(request: Request) -> bool:
-    pw = _dashboard_password()
-    if not pw:
-        return True  # no password configured — open (dev mode)
+def _current_user(request: Request):
+    """Username from a valid, unexpired v3 cookie — else None. Older cookie
+    formats are rejected (a one-time re-login after this deploys)."""
+    key = _dashboard_password()
+    if not key:
+        return "eric"  # no secret configured — open dev mode, act as owner
     cookie = request.cookies.get(_COOKIE_NAME, "")
-    if "." not in cookie:
-        return False  # legacy non-expiring cookie — one-time re-login
-    ts_s, _, _sig = cookie.partition(".")
+    if not cookie.startswith("v3|") or "." not in cookie:
+        return None
+    payload, _, _sig = cookie.rpartition(".")
+    parts = payload.split("|")
+    if len(parts) != 3:
+        return None
+    _, username, ts_s = parts
     try:
         expires_at = int(ts_s)
     except ValueError:
-        return False
+        return None
     if time.time() > expires_at:
-        return False
-    return hmac.compare_digest(cookie, _session_token(expires_at))
+        return None
+    if not hmac.compare_digest(cookie, _session_token(username, expires_at)):
+        return None
+    return username
+
+
+def _is_authed(request: Request) -> bool:
+    return _current_user(request) is not None
 
 
 # Login backoff: the password was brute-forceable at network speed. After 5
@@ -1233,20 +1287,166 @@ def register_routes(mcp) -> None:
             body = await request.json()
         except Exception:
             body = {}
+        username = (body.get("username") or "").strip().lower()
         password = (body.get("password") or "").strip()
         if not _dashboard_password():
             return JSONResponse({"ok": True, "note": "no password configured"})
-        if not hmac.compare_digest(password, _dashboard_password()):
-            _login_failed(ip)
-            return JSONResponse({"error": "wrong password"}, status_code=401)
-        _login_succeeded(ip)
+
+        user = await asyncio.to_thread(_get_user, username) if username else None
+        if user and _verify_password(password, user["password_hash"]):
+            _login_succeeded(ip)
+            resp = JSONResponse({"ok": True, "username": user["username"],
+                                 "role": user["role"]})
+            resp.set_cookie(
+                _COOKIE_NAME, _session_token(user["username"]),
+                max_age=_SESSION_TTL_SEC, httponly=True, samesite="lax",
+                secure=request.url.scheme == "https",
+            )
+            return resp
+
+        # Legacy fallback: if the users table is missing/empty (pre-migration
+        # deploy, DB hiccup) the old shared password still opens the door as
+        # the owner — never lock yourself out of your own dashboard.
+        if not user and hmac.compare_digest(password, _dashboard_password()):
+            _login_succeeded(ip)
+            resp = JSONResponse({"ok": True, "username": "eric", "role": "owner",
+                                 "note": "legacy password login"})
+            resp.set_cookie(
+                _COOKIE_NAME, _session_token("eric"),
+                max_age=_SESSION_TTL_SEC, httponly=True, samesite="lax",
+                secure=request.url.scheme == "https",
+            )
+            return resp
+
+        _login_failed(ip)
+        return JSONResponse({"error": "wrong username or password"}, status_code=401)
+
+    @mcp.custom_route("/api/me", methods=["GET"])
+    async def me(request: Request):
+        u = _current_user(request)
+        if not u:
+            return _unauthorized()
+        user = await asyncio.to_thread(_get_user, u)
+        return JSONResponse({"username": u,
+                             "role": (user or {}).get("role", "owner"),
+                             "display_name": (user or {}).get("display_name", u)})
+
+    @mcp.custom_route("/api/logout", methods=["POST"])
+    async def logout(request: Request):
         resp = JSONResponse({"ok": True})
-        resp.set_cookie(
-            _COOKIE_NAME, _session_token(),
-            max_age=_SESSION_TTL_SEC, httponly=True, samesite="lax",
-            secure=request.url.scheme == "https",
-        )
+        resp.delete_cookie(_COOKIE_NAME)
         return resp
+
+    @mcp.custom_route("/api/change-password", methods=["POST"])
+    async def change_password(request: Request):
+        u = _current_user(request)
+        if not u:
+            return _unauthorized()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        old, new = (body.get("old") or "").strip(), (body.get("new") or "").strip()
+        if len(new) < 8:
+            return JSONResponse({"error": "new password must be at least 8 characters"},
+                                status_code=400)
+        user = await asyncio.to_thread(_get_user, u)
+        if not user or not _verify_password(old, user["password_hash"]):
+            return JSONResponse({"error": "current password is wrong"}, status_code=401)
+
+        def _set():
+            from screen.reversal_screen import _conn
+            conn = _conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE dashboard_users SET password_hash=%s, "
+                                "updated_at=now() WHERE username=%s",
+                                (_hash_password(new), u))
+                conn.commit()
+            finally:
+                conn.close()
+        await asyncio.to_thread(_set)
+        return JSONResponse({"ok": True})
+
+    @mcp.custom_route("/api/users", methods=["GET", "POST"])
+    async def users_admin(request: Request):
+        """Owner-only user management. Owner rows are additionally protected by
+        DB triggers (migration 0060): a manager can never deactivate, demote,
+        or delete the owner by ANY path."""
+        u = _current_user(request)
+        if not u:
+            return _unauthorized()
+        user = await asyncio.to_thread(_get_user, u)
+        if not user or user["role"] != "owner":
+            return JSONResponse({"error": "owner only"}, status_code=403)
+
+        if request.method == "GET":
+            def _list():
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT username, role, display_name, active, "
+                                    "created_at FROM dashboard_users ORDER BY role, username")
+                        return [{"username": r[0], "role": r[1], "display_name": r[2],
+                                 "active": r[3],
+                                 "created_at": r[4].isoformat() if r[4] else None}
+                                for r in cur.fetchall()]
+                finally:
+                    conn.close()
+            return JSONResponse({"users": await asyncio.to_thread(_list)})
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        action = (body.get("action") or "").strip()
+        target = (body.get("username") or "").strip().lower()
+        import re as _re
+        if not _re.match(r"^[a-z0-9_]{2,24}$", target or ""):
+            return JSONResponse({"error": "invalid username"}, status_code=400)
+
+        def _admin():
+            from screen.reversal_screen import _conn
+            conn = _conn()
+            try:
+                with conn.cursor() as cur:
+                    if action == "create":
+                        pw = (body.get("password") or "").strip()
+                        if len(pw) < 8:
+                            return {"error": "password must be at least 8 characters"}
+                        cur.execute(
+                            "INSERT INTO dashboard_users (username, password_hash, role, display_name) "
+                            "VALUES (%s, %s, 'manager', %s) ON CONFLICT (username) DO NOTHING",
+                            (target, _hash_password(pw),
+                             (body.get("display_name") or target)[:40]))
+                        if cur.rowcount == 0:
+                            return {"error": "username already exists"}
+                    elif action == "reset_password":
+                        pw = (body.get("password") or "").strip()
+                        if len(pw) < 8:
+                            return {"error": "password must be at least 8 characters"}
+                        # owner may reset MANAGER passwords; own password goes
+                        # through change-password (needs the current one)
+                        cur.execute("UPDATE dashboard_users SET password_hash=%s, updated_at=now() "
+                                    "WHERE username=%s AND role='manager'",
+                                    (_hash_password(pw), target))
+                        if cur.rowcount == 0:
+                            return {"error": "no such manager account"}
+                    elif action in ("deactivate", "activate"):
+                        cur.execute("UPDATE dashboard_users SET active=%s, updated_at=now() "
+                                    "WHERE username=%s AND role='manager'",
+                                    (action == "activate", target))
+                        if cur.rowcount == 0:
+                            return {"error": "no such manager account"}
+                    else:
+                        return {"error": "unknown action"}
+                conn.commit()
+                return {"ok": True}
+            finally:
+                conn.close()
+        result = await asyncio.to_thread(_admin)
+        return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
     @mcp.custom_route("/api/scan/latest", methods=["GET"])
     async def scan_latest(request: Request):
@@ -1594,6 +1794,8 @@ def register_routes(mcp) -> None:
         if not _is_authed(request):
             return _unauthorized()
 
+        me_user = _current_user(request)
+
         if request.method == "POST":
             try:
                 body = await request.json()
@@ -1611,13 +1813,13 @@ def register_routes(mcp) -> None:
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            INSERT INTO watchlist (ticker, notes, active)
-                            VALUES (%s, %s, true)
-                            ON CONFLICT (ticker)
+                            INSERT INTO watchlist (owner, ticker, notes, active)
+                            VALUES (%s, %s, %s, true)
+                            ON CONFLICT (owner, ticker)
                             DO UPDATE SET active = true,
                                           notes = COALESCE(NULLIF(EXCLUDED.notes, ''), watchlist.notes)
                             """,
-                            (ticker, notes),
+                            (me_user, ticker, notes),
                         )
                     conn.commit()
                 finally:
@@ -1626,18 +1828,28 @@ def register_routes(mcp) -> None:
             await asyncio.to_thread(_add)
             return JSONResponse({"ok": True, "ticker": ticker})
 
+        # scope=mine (default) shows your list; scope=all shows both partners'
+        # lists side by side (separate-but-visible), with rows tagged by owner.
+        scope = (request.query_params.get("scope") or "mine").lower()
+
         def _list():
             from screen.reversal_screen import _conn
             conn = _conn()
             try:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT ticker, notes, added_at FROM watchlist "
-                        "WHERE active = true ORDER BY added_at DESC"
-                    )
+                    if scope == "all":
+                        cur.execute(
+                            "SELECT ticker, notes, added_at, owner FROM watchlist "
+                            "WHERE active = true ORDER BY added_at DESC")
+                    else:
+                        cur.execute(
+                            "SELECT ticker, notes, added_at, owner FROM watchlist "
+                            "WHERE active = true AND owner = %s ORDER BY added_at DESC",
+                            (me_user,))
                     rows = [
                         {"ticker": r[0], "notes": r[1] or "",
-                         "added_at": r[2].isoformat() if r[2] else None}
+                         "added_at": r[2].isoformat() if r[2] else None,
+                         "owner": r[3], "own": r[3] == me_user}
                         for r in cur.fetchall()
                     ]
             finally:
@@ -1669,13 +1881,16 @@ def register_routes(mcp) -> None:
         if not _is_authed(request):
             return _unauthorized()
         ticker = (request.path_params.get("ticker") or "").upper().strip()
+        me_user = _current_user(request)
 
         def _remove():
             from screen.reversal_screen import _conn
             conn = _conn()
             try:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE watchlist SET active = false WHERE ticker = %s", (ticker,))
+                    # own rows only — you can see your partner's list but not edit it
+                    cur.execute("UPDATE watchlist SET active = false "
+                                "WHERE ticker = %s AND owner = %s", (ticker, me_user))
                 conn.commit()
             finally:
                 conn.close()

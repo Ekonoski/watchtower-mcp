@@ -363,6 +363,7 @@
     <button id="btn-notify" title="Browser pop-up alerts for new signals and news">🔔 Alerts: off</button>
     <button id="btn-refresh" title="Reload latest data">Refresh</button>
     <button id="btn-scan" class="primary" title="Run a full market scan now">Scan Now</button>
+    <button id="user-badge" title="Account: change password, manage users, log out" onclick="accountMenu()">👤</button>
   </div>
 </header>
 
@@ -759,7 +760,11 @@
       <input type="text" id="wl-ticker" placeholder="Ticker" size="8" maxlength="6">
       <input type="text" id="wl-notes" placeholder="Notes (optional)" size="34">
       <button id="wl-add" class="primary">Add</button>
-      <span class="count-note">Watchlist tickers are always included in scheduled scans.</span>
+      <div class="seg" id="wl-scope" title="Mine = your list. All = both partners' lists (view-only for theirs).">
+        <button data-scope="mine" class="on">Mine</button>
+        <button data-scope="all">All</button>
+      </div>
+      <span class="count-note">Watchlist tickers are always included in scheduled scans + level alerts.</span>
     </div>
     <div class="tblwrap">
       <table>
@@ -863,7 +868,9 @@
 <div id="login-overlay">
   <div id="login-box">
     <h2>WATCH<span style="color:var(--green)">TOWER</span></h2>
-    <p>Enter your dashboard password.</p>
+    <p>Sign in to your account.</p>
+    <input type="text" id="login-user" placeholder="Username" autocomplete="username"
+           autocapitalize="none" spellcheck="false" style="margin-bottom:8px">
     <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password">
     <div id="login-err"></div>
     <button class="primary" id="login-btn" style="width:100%">Sign in</button>
@@ -931,16 +938,55 @@ async function api(path, opts) {
   return r.json();
 }
 
-/* ── login ── */
+/* ── login / account ── */
+state.me = null;
 $("login-btn").onclick = async () => {
   try {
     const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: $("login-pw").value }) });
-    if (r.ok) { $("login-overlay").classList.remove("show"); loadLatest(); loadWatchlist(); }
-    else $("login-err").textContent = "Wrong password.";
+      body: JSON.stringify({ username: $("login-user").value.trim().toLowerCase(),
+                             password: $("login-pw").value }) });
+    if (r.ok) { $("login-overlay").classList.remove("show"); loadMe(); loadLatest(); loadWatchlist(); }
+    else {
+      const d = await r.json().catch(() => ({}));
+      $("login-err").textContent = d.error || "Wrong username or password.";
+    }
   } catch { $("login-err").textContent = "Connection error."; }
 };
 $("login-pw").addEventListener("keydown", e => { if (e.key === "Enter") $("login-btn").click(); });
+$("login-user").addEventListener("keydown", e => { if (e.key === "Enter") $("login-pw").focus(); });
+
+async function loadMe() {
+  try { state.me = await api("/api/me"); } catch { state.me = null; return; }
+  const el = $("user-badge");
+  if (el && state.me) el.textContent = "👤 " + state.me.username;
+}
+async function accountMenu() {
+  if (!state.me) await loadMe();
+  const isOwner = state.me && state.me.role === "owner";
+  const opts = ["1) Change my password", isOwner ? "2) Reset partner password" : null,
+                isOwner ? "3) Add a user" : null, "4) Log out"].filter(Boolean).join("\n");
+  const pick = prompt(`Signed in as ${state.me ? state.me.username : "?"} (${state.me ? state.me.role : ""})\n\n${opts}\n\nEnter a number:`);
+  if (!pick) return;
+  if (pick.trim() === "1") {
+    const old = prompt("Current password:"); if (!old) return;
+    const nw = prompt("New password (8+ chars):"); if (!nw) return;
+    const r = await api("/api/change-password", { method: "POST", body: JSON.stringify({ old, new: nw }) }).catch(e => ({ error: String(e) }));
+    toast(r && r.ok ? "Password changed." : (r.error || "Failed."));
+  } else if (pick.trim() === "2" && isOwner) {
+    const un = prompt("Manager username to reset:"); if (!un) return;
+    const pw = prompt("New password for them (8+ chars):"); if (!pw) return;
+    const r = await api("/api/users", { method: "POST", body: JSON.stringify({ action: "reset_password", username: un, password: pw }) }).catch(e => ({ error: String(e) }));
+    toast(r && r.ok ? `Password reset for ${un}.` : (r.error || "Failed."));
+  } else if (pick.trim() === "3" && isOwner) {
+    const un = prompt("New username (lowercase, letters/numbers):"); if (!un) return;
+    const pw = prompt("Their temp password (8+ chars):"); if (!pw) return;
+    const r = await api("/api/users", { method: "POST", body: JSON.stringify({ action: "create", username: un, password: pw }) }).catch(e => ({ error: String(e) }));
+    toast(r && r.ok ? `User ${un} created (manager).` : (r.error || "Failed."));
+  } else if (pick.trim() === "4") {
+    await fetch("/api/logout", { method: "POST" }).catch(() => {});
+    location.reload();
+  }
+}
 
 /* ── Screener: full gem-gate pool, sector-filterable ── */
 state.scr = { sector: "ALL", sort: "score", gemsOnly: "0", cap: "gem", industry: "", search: "", sectorsLoaded: false };
@@ -2331,20 +2377,27 @@ async function addToWatchlist(ticker, notes) {
     else toast(r.error || "failed");
   } catch (e) { if (e.message !== "unauthorized") toast("Failed to add."); }
 }
+state.wlScope = "mine";
 async function loadWatchlist() {
   let r;
-  try { r = await api("/api/watchlist"); } catch { return; }
+  try { r = await api("/api/watchlist?scope=" + encodeURIComponent(state.wlScope)); } catch { return; }
   const rows = r.watchlist || [];
   $("wl-empty").style.display = rows.length ? "none" : "block";
+  const showOwner = state.wlScope === "all";
   $("wl-body").innerHTML = rows.map(w => `<tr>
-    <td class="left tkr" style="cursor:pointer" onclick="openDrawer('${esc(w.ticker)}')">${esc(w.ticker)}</td>
+    <td class="left tkr" style="cursor:pointer" onclick="openDrawer('${esc(w.ticker)}')">${esc(w.ticker)}
+      ${showOwner ? `<span class="chip" style="margin-left:5px;font-size:10px" title="whose list this is">${esc(w.owner || "")}</span>` : ""}</td>
     <td class="num">${w.price ? "$" + fmtNum(w.price) : "—"}</td>
     <td class="num ${(w.change_pct ?? 0) >= 0 ? "pos" : "neg"}">${w.price ? ((w.change_pct >= 0 ? "+" : "") + fmtNum(w.change_pct, 1) + "%") : "—"}</td>
     <td class="num">${w.vol_ratio ? fmtNum(w.vol_ratio, 1) + "x" : "—"}</td>
     <td class="left">${esc(w.notes)}</td>
     <td class="left num">${w.added_at ? new Date(w.added_at).toLocaleDateString() : ""}</td>
-    <td><button onclick="removeFromWatchlist('${esc(w.ticker)}')">Remove</button></td></tr>`).join("");
+    <td>${w.own === false ? "" : `<button onclick="removeFromWatchlist('${esc(w.ticker)}')">Remove</button>`}</td></tr>`).join("");
 }
+document.querySelectorAll("#wl-scope button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#wl-scope button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.wlScope = b.dataset.scope; loadWatchlist();
+});
 async function removeFromWatchlist(ticker) {
   try { await api("/api/watchlist/" + encodeURIComponent(ticker), { method: "DELETE" }); loadWatchlist(); }
   catch {}
@@ -2383,6 +2436,7 @@ setInterval(() => {
 }, 1000);
 
 renderNotifyBtn();
+loadMe();
 loadLatest();
 loadWatchlist();
 </script>

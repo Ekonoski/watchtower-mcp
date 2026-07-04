@@ -45,19 +45,27 @@ def _et_today():
         return date.today()
 
 
-def _load_watchlist_tickers() -> list:
+def _load_watchlist_tickers() -> dict:
+    """ticker -> sorted list of owners watching it. Alerts scan the UNION of
+    all users' lists (the alert email inbox is shared) and tag whose name the
+    cross belongs to."""
     try:
         from screen.reversal_screen import _conn
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT ticker FROM watchlist WHERE active = true")
-                return [r[0] for r in cur.fetchall() if r[0]]
+                cur.execute("SELECT ticker, COALESCE(owner, 'eric') "
+                            "FROM watchlist WHERE active = true")
+                out: dict = {}
+                for t, o in cur.fetchall():
+                    if t:
+                        out.setdefault(t, set()).add(o)
+                return {t: sorted(os_) for t, os_ in out.items()}
         finally:
             conn.close()
     except Exception as e:
         log.warning(f"[wl-levels] watchlist load failed: {e}")
-        return []
+        return {}
 
 
 def _strong_levels(ticker: str) -> list:
@@ -88,9 +96,10 @@ def _strong_levels(ticker: str) -> list:
 def build_watchlist_level_alerts() -> list:
     """Signal-shaped rows for watchlist names that CROSSED a >=MIN_STARS level
     since the previous scan. Returns [] when there's nothing actionable."""
-    tickers = _load_watchlist_tickers()
-    if not tickers:
+    watch_map = _load_watchlist_tickers()
+    if not watch_map:
         return []
+    tickers = sorted(watch_map)
 
     # One batched snapshot call for live prices (same helper X-velocity uses).
     try:
@@ -134,12 +143,13 @@ def build_watchlist_level_alerts() -> list:
             else:
                 sig, verb = "LEVEL_BREAKDOWN", ("lost" if lvl["side"] == "support"
                                                 else "rejected back below")
+            owners = "+".join(watch_map.get(ticker, []))
             rows.append({
                 "ticker": ticker,
                 "sleeve": "watchlist_level",
                 "signal_type": sig,
                 "score": 75.0 if stars >= 5 else 65.0,
-                "rationale": (f"Watchlist: {verb} {stars}★ level ${lp:,.2f} "
+                "rationale": (f"Watchlist[{owners}]: {verb} {stars}★ level ${lp:,.2f} "
                               f"({tf_s}{touch_s}) — now ${price:,.2f}")[:200],
                 "current_price": price,
                 "change_pct": round(float(snap.get("change_pct") or 0), 2),
