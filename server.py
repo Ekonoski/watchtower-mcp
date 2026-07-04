@@ -728,6 +728,77 @@ def watchtower_get_gmmss_context() -> str:
     return "GMMSS context: Bull regime (see current_regime.json in repo). Use watchtower_run_screen or the individual getters for live sleeves. Full synthesis available when all keys (POLYGON, XAI) are configured on Railway."
 
 
+@mcp.tool()
+def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
+                            direction: str = "all", top_n: int = 30) -> str:
+    """
+    Live classical chart-pattern detections across weekly, daily, and 4h bars.
+
+    Patterns: Inverse H&S (low → equal-or-lower low → HIGHER low → neckline),
+    H&S top, double bottom/top, bull/bear flag, ascending/descending triangle,
+    falling/rising wedge. The scan keeps only LIVE setups — 'forming' (price
+    hasn't crossed the trigger line yet: the entry window) and fresh
+    'breakout' (crossed within the last few bars, not extended). Weekly and
+    daily detect closing-price structure; 4h uses true highs/lows.
+
+    Args:
+        timeframe: all | weekly | daily | 4h
+        status:    all | forming | breakout
+        direction: all | bullish | bearish
+        top_n:     max rows (default 30)
+    """
+    try:
+        from dashboard.api import _pattern_rows
+        from analysis.pattern_scan import PATTERN_NAMES
+        data = _pattern_rows(timeframe.lower(), status.lower(), direction.lower())
+        rows = data.get("rows") or []
+        if not rows:
+            return ("No live patterns match. The scan runs daily at 6:45 AM ET "
+                    "(4h refresh 12:45 PM); try watchtower_scan_patterns to rescan now.")
+        lines = [f"**Live chart patterns** ({len(rows)} total, showing {min(top_n, len(rows))}) "
+                 f"— as of {data.get('as_of') or 'n/a'}", ""]
+        for r in rows[:top_n]:
+            name = PATTERN_NAMES.get(r["pattern"], r["pattern"])
+            arrow = "▲" if r["direction"] == "bullish" else "▼"
+            rs = f" · RS {r['rs_pct']}" if r.get("rs_pct") is not None else ""
+            dist = r.get("dist_pct")
+            dist_s = f"{dist:+.1f}% vs trigger" if dist is not None else ""
+            lines.append(
+                f"- **{r['ticker']}** {arrow} {name} ({r['timeframe']}, {r['status']}) — "
+                f"px ${r['last_close']:,.2f}, trigger ${r['trigger']:,.2f} ({dist_s}), "
+                f"target ${r['target']:,.2f}, invalid ${r['invalid']:,.2f} · "
+                f"score {r['score']:.0f}{rs}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error fetching patterns: {e}"
+
+
+@mcp.tool()
+def watchtower_scan_patterns(include_4h: bool = True) -> str:
+    """
+    Re-run the chart-pattern scan right now (weekly + daily from the DB,
+    optionally the 4h Polygon pass). Runs in the background — results land in
+    watchtower_get_patterns / the dashboard Patterns tab in a few minutes.
+    """
+    try:
+        import threading
+        from analysis.pattern_scan import run_pattern_scan
+
+        def _run():
+            try:
+                run_pattern_scan(include_4h=include_4h)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"pattern rescan failed: {e}")
+
+        threading.Thread(target=_run, name="pattern-rescan", daemon=True).start()
+        return ("Pattern scan started (weekly + daily"
+                + (" + 4h" if include_4h else "")
+                + "). Check watchtower_get_patterns in ~2-5 minutes.")
+    except Exception as e:
+        return f"Error starting pattern scan: {e}"
+
+
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────
 
 @mcp.tool()

@@ -278,6 +278,19 @@ def run_scheduled_scan(force: bool = False):
         except Exception as e:
             log.warning(f"[scheduler] Watchlist levels error (non-fatal): {e}")
 
+        # Pattern triggers: forming chart patterns (inverse H&S, flags,
+        # triangles, wedges…) whose neckline/trigger line was crossed since
+        # the last scan. Same signal-shaped ride through the pipeline.
+        try:
+            from analysis.pattern_scan import build_pattern_breakout_alerts
+            pb = build_pattern_breakout_alerts()
+            if pb:
+                results.extend(pb)
+                log.info(f"[scheduler] Pattern triggers: {len(pb)} cross(es): "
+                         + ", ".join(f"{r['ticker']} {r['signal_type']}" for r in pb))
+        except Exception as e:
+            log.warning(f"[scheduler] Pattern triggers error (non-fatal): {e}")
+
         # Deploy-overlap dedupe: if a sibling container already saved this
         # scan slot while we were scanning, stand down (no save, no email).
         # Manual triggers (force=True) skip this: the user pressed Scan Now
@@ -493,6 +506,76 @@ def run_daily_gems_scan():
         log.error(f"[scheduler] Hidden gems scan error: {e}")
 
 
+def run_daily_pattern_scan():
+    """
+    Daily chart-pattern scan — 6:45 AM ET, after the daily screens/gems.
+    Weekly + daily timeframes from the DB (data through last night's close),
+    then 4h via Polygon for the bounded candidate set. Results land in
+    pattern_scan; the dashboard Patterns tab and the intraday trigger alerts
+    read from there.
+    """
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            log.info("[scheduler] Pattern scan skipped — market closed.")
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("pattern_scan"):
+        return
+    try:
+        from analysis.pattern_scan import run_pattern_scan
+        log.info("[scheduler] Starting daily pattern scan...")
+        counts = run_pattern_scan()
+        log.info(f"[scheduler] Pattern scan done: {counts}")
+    except Exception as e:
+        log.error(f"[scheduler] Pattern scan error: {e}")
+
+
+def run_midday_pattern_scan():
+    """4h-only pattern refresh — 12:45 PM ET. 4h structures evolve intraday;
+    weekly/daily don't grow a new bar until the close, so they stay put."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("pattern_scan_4h_midday"):
+        return
+    try:
+        from analysis.pattern_scan import scan_4h
+        n = scan_4h()
+        log.info(f"[scheduler] Midday 4h pattern refresh: {n} patterns.")
+    except Exception as e:
+        log.error(f"[scheduler] Midday 4h pattern scan error: {e}")
+
+
+def _seed_pattern_scan_if_empty():
+    """First-deploy seeding: if pattern_scan has never been populated, run a
+    full scan right away (even on a weekend) instead of making the user wait
+    for the next 6:45 AM slot. Claimed so overlapping deploy containers
+    don't both run it."""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pattern_scan LIMIT 1")
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        if not _claim_daily_job("pattern_scan"):
+            return
+        from analysis.pattern_scan import run_pattern_scan
+        log.info("[scheduler] pattern_scan is empty — seeding with a full scan...")
+        counts = run_pattern_scan()
+        log.info(f"[scheduler] Pattern seed scan done: {counts}")
+    except Exception as e:
+        log.warning(f"[scheduler] Pattern seed scan skipped: {e}")
+
+
 def start_scheduler():
     """Start the APScheduler background scheduler. Call once at server startup."""
     try:
@@ -587,11 +670,35 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Daily chart-pattern scan — 6:45 AM ET, Mon-Fri (after screens + gems).
+    scheduler.add_job(
+        run_daily_pattern_scan,
+        CronTrigger(day_of_week="mon-fri", hour="6", minute="45", timezone=et),
+        id="daily_pattern_scan",
+        replace_existing=True,
+    )
+
+    # 4h pattern refresh — 12:45 PM ET, Mon-Fri.
+    scheduler.add_job(
+        run_midday_pattern_scan,
+        CronTrigger(day_of_week="mon-fri", hour="12", minute="45", timezone=et),
+        id="midday_pattern_scan",
+        replace_existing=True,
+    )
+
     scheduler.start()
+
+    # One-time seed on a fresh deploy so the Patterns tab isn't empty until
+    # the next 6:45 AM slot. Background thread — never blocks startup.
+    import threading
+    threading.Thread(target=_seed_pattern_scan_if_empty,
+                     name="pattern-seed", daemon=True).start()
+
     log.info(
         "[scheduler] Scheduler started (America/New_York). "
-        "Daily screens 6:00 AM → Hidden gems 6:30 AM → "
+        "Daily screens 6:00 AM → Hidden gems 6:30 AM → Patterns 6:45 AM → "
         "Pre-market 15-min (7:00-9:15 AM) → "
-        "Market hours 5-min (9:30 AM-4:00 PM ET, email gated)."
+        "Market hours 5-min (9:30 AM-4:00 PM ET, email gated) → "
+        "4h pattern refresh 12:45 PM."
     )
     return scheduler
