@@ -551,25 +551,44 @@ def run_midday_pattern_scan():
         log.error(f"[scheduler] Midday 4h pattern scan error: {e}")
 
 
-def _seed_pattern_scan_if_empty():
-    """First-deploy seeding: if pattern_scan has never been populated, run a
-    full scan right away (even on a weekend) instead of making the user wait
-    for the next 6:45 AM slot. Claimed so overlapping deploy containers
-    don't both run it."""
+def _seed_pattern_scan_if_stale():
+    """Deploy-time seeding: run a full pattern scan right away (even on a
+    weekend) when the table has never been populated OR this deploy ships a
+    newer detection engine (ENGINE_VERSION bump) — new/changed patterns show
+    up within minutes instead of waiting for the next 6:45 AM slot. The
+    version marker is a one-shot claim (sentinel date) so overlapping deploy
+    containers can't both run it."""
     try:
+        from analysis.pattern_scan import run_pattern_scan, ENGINE_VERSION
         from screen.reversal_screen import _conn
+        need = False
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM pattern_scan LIMIT 1")
-                if cur.fetchone():
-                    return
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS scheduler_job_claims (
+                           job_name TEXT NOT NULL,
+                           run_date DATE NOT NULL,
+                           claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                           PRIMARY KEY (job_name, run_date)
+                       )"""
+                )
+                cur.execute(
+                    "INSERT INTO scheduler_job_claims (job_name, run_date) "
+                    "VALUES (%s, DATE '2000-01-01') ON CONFLICT DO NOTHING",
+                    (f"pattern_engine_v{ENGINE_VERSION}",),
+                )
+                if cur.rowcount == 1:
+                    need = True  # first container to boot this engine version
+                else:
+                    cur.execute("SELECT 1 FROM pattern_scan LIMIT 1")
+                    need = cur.fetchone() is None
+            conn.commit()
         finally:
             conn.close()
-        if not _claim_daily_job("pattern_scan"):
+        if not need:
             return
-        from analysis.pattern_scan import run_pattern_scan
-        log.info("[scheduler] pattern_scan is empty — seeding with a full scan...")
+        log.info("[scheduler] pattern_scan empty or engine updated — full rescan...")
         counts = run_pattern_scan()
         log.info(f"[scheduler] Pattern seed scan done: {counts}")
     except Exception as e:
@@ -691,7 +710,7 @@ def start_scheduler():
     # One-time seed on a fresh deploy so the Patterns tab isn't empty until
     # the next 6:45 AM slot. Background thread — never blocks startup.
     import threading
-    threading.Thread(target=_seed_pattern_scan_if_empty,
+    threading.Thread(target=_seed_pattern_scan_if_stale,
                      name="pattern-seed", daemon=True).start()
 
     log.info(

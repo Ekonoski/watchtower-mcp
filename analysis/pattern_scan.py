@@ -45,6 +45,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 log = logging.getLogger(__name__)
 
+# Bump whenever detectors/thresholds change: the scheduler rescans once per
+# version on deploy, so new/changed patterns populate within minutes instead
+# of waiting for the next 6:45 AM slot.
+ENGINE_VERSION = 2
+
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
 # Bar-count knobs (widths, windows) are per-timeframe absolutes.
