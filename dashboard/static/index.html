@@ -674,6 +674,9 @@
         <button data-dir="bullish">Bullish</button>
         <button data-dir="bearish">Bearish</button>
       </div>
+      <label class="ctl">Sector
+        <select id="pat-sector"><option value="ALL">All sectors</option></select>
+      </label>
       <input type="text" id="pat-search" placeholder="Filter ticker…" size="12">
       <span class="count-note" id="pat-count"></span>
     </div>
@@ -682,6 +685,7 @@
         <thead><tr>
           <th class="left">Ticker</th>
           <th class="left">Pattern</th>
+          <th class="left" title="Sector — watch for several setups clustering in one sector: that's rotation starting">Sector</th>
           <th>TF</th>
           <th>Status</th>
           <th>Price</th>
@@ -1139,7 +1143,7 @@ document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
 });
 
 /* ── chart patterns ── */
-state.pat = { tf: "all", status: "forming", dir: "all", search: "" };
+state.pat = { tf: "all", status: "forming", dir: "all", search: "", sector: "ALL" };
 const PATTERN_LABELS = {
   inverse_hs: "Inv H&S", hs_top: "H&S Top",
   double_bottom: "Double Bottom", double_top: "Double Top",
@@ -1160,7 +1164,22 @@ async function loadPatterns() {
 }
 function renderPatterns() {
   const q = (state.pat.search || "").trim().toUpperCase();
-  const rows = (state.patRows || []).filter(r => !q || r.ticker.includes(q));
+  // Sector dropdown with live counts — several setups piling into one
+  // sector is the rotation tell, so the counts are the headline.
+  const secCounts = {};
+  (state.patRows || []).forEach(r => {
+    const s0 = r.sector || "—";
+    secCounts[s0] = (secCounts[s0] || 0) + 1;
+  });
+  if (state.pat.sector !== "ALL" && !secCounts[state.pat.sector]) state.pat.sector = "ALL";
+  const sel = $("pat-sector");
+  sel.innerHTML = `<option value="ALL">All sectors (${(state.patRows || []).length})</option>` +
+    Object.entries(secCounts).sort((a, b) => b[1] - a[1])
+      .map(([s0, n]) => `<option value="${escAttr(s0)}">${esc(s0)} (${n})</option>`).join("");
+  sel.value = state.pat.sector;
+  const sec = state.pat.sector;
+  const rows = (state.patRows || []).filter(r =>
+    (!q || r.ticker.includes(q)) && (sec === "ALL" || (r.sector || "—") === sec));
   const body = $("pat-body");
   $("pat-empty").style.display = rows.length ? "none" : "";
   $("pat-count").textContent = rows.length ? `${rows.length} setups` : "";
@@ -1176,6 +1195,7 @@ function renderPatterns() {
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
       <td class="left"><b>${esc(r.ticker)}</b></td>
       <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> ${esc(name)}</td>
+      <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
       <td class="num">${esc(tfLabel[r.timeframe] || r.timeframe)}</td>
       <td class="num"><span class="${stCls}">${esc(r.status)}</span></td>
       <td class="num">${r.last_close != null ? "$" + r.last_close.toFixed(2) : "—"}</td>
@@ -1204,6 +1224,7 @@ document.querySelectorAll("#pat-dir button").forEach(b => b.onclick = () => {
   b.classList.add("on"); state.pat.dir = b.dataset.dir; loadPatterns();
 });
 $("pat-search").addEventListener("input", e => { state.pat.search = e.target.value; renderPatterns(); });
+$("pat-sector").addEventListener("change", e => { state.pat.sector = e.target.value; renderPatterns(); });
 
 /* ── fetch-race guards ─────────────────────────────────────────────────────
    Click ticker A then B quickly and whichever /api response lands LAST used

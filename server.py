@@ -761,13 +761,14 @@ def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
             name = PATTERN_NAMES.get(r["pattern"], r["pattern"])
             arrow = "▲" if r["direction"] == "bullish" else "▼"
             rs = f" · RS {r['rs_pct']}" if r.get("rs_pct") is not None else ""
+            sec = f" · {r['sector']}" if r.get("sector") else ""
             dist = r.get("dist_pct")
             dist_s = f"{dist:+.1f}% vs trigger" if dist is not None else ""
             lines.append(
                 f"- **{r['ticker']}** {arrow} {name} ({r['timeframe']}, {r['status']}) — "
                 f"px ${r['last_close']:,.2f}, trigger ${r['trigger']:,.2f} ({dist_s}), "
                 f"target ${r['target']:,.2f}, invalid ${r['invalid']:,.2f} · "
-                f"score {r['score']:.0f}{rs}")
+                f"score {r['score']:.0f}{rs}{sec}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error fetching patterns: {e}"
