@@ -55,7 +55,7 @@ DAY_TRADE_TYPES = {"intraday", "news"}
 # the performance report so every stat reads "return in trade direction".
 BEARISH_SIGNAL_TYPES = {
     "VWAP_REJECTION", "INTRADAY_BREAKDOWN", "GAP_DOWN_CONFIRM", "DISTRIBUTION",
-    "SELL", "STRONG_SELL", "LEVEL_BREAKDOWN",
+    "SELL", "STRONG_SELL", "LEVEL_BREAKDOWN", "PATTERN_BREAKDOWN",
 }
 
 

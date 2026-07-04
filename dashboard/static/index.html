@@ -381,6 +381,7 @@
   <button data-tab="gems">Hidden Gems</button>
   <button data-tab="themes">Themes</button>
   <button data-tab="screener">Screener</button>
+  <button data-tab="patterns">Patterns</button>
   <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
   <button data-tab="calendar">Calendar</button>
@@ -643,6 +644,62 @@
     </div>
   </section>
 
+  <!-- ── PATTERNS ── -->
+  <section id="tab-patterns" class="tabpane">
+    <div class="gems-intro">
+      <h3>Chart Patterns</h3>
+      <p>Classical setups detected across <b>weekly, daily, and 4-hour</b> bars: inverse head &amp;
+      shoulders (including the double-bottom-with-a-<b>higher-low</b> variant), H&amp;S tops, double
+      bottoms/tops, flags, triangles, and wedges. <b>Forming</b> = price hasn't crossed the trigger
+      line yet — the entry window; <b>Breakout</b> = crossed within the last few bars and not yet
+      extended. Stale or extended breaks are dropped automatically, so everything here is live.
+      Weekly/daily read closing-price structure; 4H uses full highs/lows. An intraday alert fires
+      the moment a forming name crosses its trigger. Refreshed daily at 6:45 AM ET (4H again at
+      12:45 PM). Click any row for the full chart drawer.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" id="pat-tf">
+        <button data-tf="all" class="on">All TFs</button>
+        <button data-tf="weekly">Weekly</button>
+        <button data-tf="daily">Daily</button>
+        <button data-tf="4h">4H</button>
+      </div>
+      <div class="seg" id="pat-status">
+        <button data-st="forming" class="on">Forming</button>
+        <button data-st="breakout">Breakout</button>
+        <button data-st="all">All</button>
+      </div>
+      <div class="seg" id="pat-dir">
+        <button data-dir="all" class="on">All</button>
+        <button data-dir="bullish">Bullish</button>
+        <button data-dir="bearish">Bearish</button>
+      </div>
+      <input type="text" id="pat-search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="pat-count"></span>
+    </div>
+    <div class="tblwrap">
+      <table id="pat-table">
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th class="left">Pattern</th>
+          <th>TF</th>
+          <th>Status</th>
+          <th>Price</th>
+          <th title="The line that confirms the pattern — neckline / flag high / triangle edge">Trigger</th>
+          <th title="Signed distance of last close from the trigger">Dist</th>
+          <th title="Measured-move objective">Target</th>
+          <th title="Upside/downside to target from the last close, in the trade's direction">To Tgt</th>
+          <th title="Where the structure is broken (head / flag low / last low)">Invalid</th>
+          <th title="Relative strength 1–99 vs the screener universe">RS</th>
+          <th title="Pattern quality 0–100: depth, higher-low margin, symmetry, volume, proximity">Score</th>
+          <th title="Days this structure has been on the list">Age</th>
+        </tr></thead>
+        <tbody id="pat-body"></tbody>
+      </table>
+      <div id="pat-empty" class="empty" style="display:none">No live patterns match — the scan runs daily at 6:45 AM ET.</div>
+    </div>
+  </section>
+
   <!-- ── VANTAGE ── -->
   <section id="tab-vantage" class="tabpane">
     <div class="gems-intro">
@@ -882,8 +939,8 @@
 <script>
 "use strict";
 
-const BULL = new Set(["GAP_AND_GO","INTRADAY_BREAKOUT","VWAP_BREAKOUT","FLUSH_REVERSAL","GAP_REVERSAL","LEVEL_BREAKOUT"]);
-const BEAR = new Set(["VWAP_REJECTION","INTRADAY_BREAKDOWN","GAP_DOWN_CONFIRM","DISTRIBUTION","LEVEL_BREAKDOWN"]);
+const BULL = new Set(["GAP_AND_GO","INTRADAY_BREAKOUT","VWAP_BREAKOUT","FLUSH_REVERSAL","GAP_REVERSAL","LEVEL_BREAKOUT","PATTERN_BREAKOUT"]);
+const BEAR = new Set(["VWAP_REJECTION","INTRADAY_BREAKDOWN","GAP_DOWN_CONFIRM","DISTRIBUTION","LEVEL_BREAKDOWN","PATTERN_BREAKDOWN"]);
 
 let state = {
   snapshot: null,
@@ -1081,6 +1138,73 @@ document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
   b.classList.add("on"); state.scr.cap = b.dataset.cap; loadScreener();
 });
 
+/* ── chart patterns ── */
+state.pat = { tf: "all", status: "forming", dir: "all", search: "" };
+const PATTERN_LABELS = {
+  inverse_hs: "Inv H&S", hs_top: "H&S Top",
+  double_bottom: "Double Bottom", double_top: "Double Top",
+  bull_flag: "Bull Flag", bear_flag: "Bear Flag",
+  asc_triangle: "Asc Triangle", desc_triangle: "Desc Triangle",
+  falling_wedge: "Falling Wedge", rising_wedge: "Rising Wedge",
+};
+async function loadPatterns() {
+  const p = state.pat;
+  const tok = seqTake("patterns");
+  let d;
+  try {
+    d = await api(`/api/patterns?tf=${encodeURIComponent(p.tf)}&status=${encodeURIComponent(p.status)}&direction=${encodeURIComponent(p.dir)}`);
+  } catch { return; }
+  if (seqStale("patterns", tok)) return;
+  state.patRows = d.rows || [];
+  renderPatterns();
+}
+function renderPatterns() {
+  const q = (state.pat.search || "").trim().toUpperCase();
+  const rows = (state.patRows || []).filter(r => !q || r.ticker.includes(q));
+  const body = $("pat-body");
+  $("pat-empty").style.display = rows.length ? "none" : "";
+  $("pat-count").textContent = rows.length ? `${rows.length} setups` : "";
+  const tfLabel = { weekly: "W", daily: "D", "4h": "4H" };
+  body.innerHTML = rows.map(r => {
+    const bull = r.direction === "bullish";
+    const name = PATTERN_LABELS[r.pattern] || r.pattern;
+    const toTgt = (r.target != null && r.last_close)
+      ? (r.target - r.last_close) / r.last_close * 100 * (bull ? 1 : -1) : null;
+    const age = r.detected_at
+      ? Math.max(0, Math.round((Date.now() - new Date(r.detected_at).getTime()) / 86400000)) : null;
+    const stCls = r.status === "breakout" ? "pos" : "";
+    return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
+      <td class="left"><b>${esc(r.ticker)}</b></td>
+      <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> ${esc(name)}</td>
+      <td class="num">${esc(tfLabel[r.timeframe] || r.timeframe)}</td>
+      <td class="num"><span class="${stCls}">${esc(r.status)}</span></td>
+      <td class="num">${r.last_close != null ? "$" + r.last_close.toFixed(2) : "—"}</td>
+      <td class="num">${r.trigger != null ? "$" + r.trigger.toFixed(2) : "—"}</td>
+      <td class="num">${r.dist_pct != null ? (r.dist_pct > 0 ? "+" : "") + r.dist_pct.toFixed(1) + "%" : "—"}</td>
+      <td class="num">${r.target != null ? "$" + r.target.toFixed(2) : "—"}</td>
+      <td class="num">${toTgt != null ? `<span class="${toTgt >= 0 ? "pos" : "neg"}">${toTgt >= 0 ? "+" : ""}${toTgt.toFixed(1)}%</span>` : "—"}</td>
+      <td class="num">${r.invalid != null ? "$" + r.invalid.toFixed(2) : "—"}</td>
+      <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
+      <td class="num"><b>${r.score != null ? r.score.toFixed(0) : "—"}</b></td>
+      <td class="num">${age != null ? (age === 0 ? "new" : age + "d") : "—"}</td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
+}
+document.querySelectorAll("#pat-tf button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#pat-tf button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.pat.tf = b.dataset.tf; loadPatterns();
+});
+document.querySelectorAll("#pat-status button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#pat-status button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.pat.status = b.dataset.st; loadPatterns();
+});
+document.querySelectorAll("#pat-dir button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#pat-dir button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.pat.dir = b.dataset.dir; loadPatterns();
+});
+$("pat-search").addEventListener("input", e => { state.pat.search = e.target.value; renderPatterns(); });
+
 /* ── fetch-race guards ─────────────────────────────────────────────────────
    Click ticker A then B quickly and whichever /api response lands LAST used
    to paint the UI — A's numbers under B's header, or a heat map showing the
@@ -1103,6 +1227,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "gems") loadGems();
   if (b.dataset.tab === "themes") loadThemes();
   if (b.dataset.tab === "screener") loadScreener();
+  if (b.dataset.tab === "patterns") loadPatterns();
   if (b.dataset.tab === "vantage") loadVantage();
   if (b.dataset.tab === "calendar") loadCalendar();
 });
@@ -2413,6 +2538,7 @@ const TAB_REFRESHERS = {
   gems: () => loadGems(),
   themes: () => loadThemes(),
   screener: () => loadScreener(),
+  patterns: () => loadPatterns(),
   vantage: () => loadVantage(),
   news: () => { /* news rides the scanner snapshot via loadLatest() */ },
   calendar: () => loadCalendar(),

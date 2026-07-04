@@ -1244,6 +1244,68 @@ def _ticker_memberships(ticker: str) -> dict:
     return out
 
 
+def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") -> dict:
+    """Live chart-pattern detections (pattern_scan, migration 0061) with the
+    screener's RS/sector context joined in. The scan only ever keeps live
+    patterns, so no recency filtering is needed here."""
+    tf = tf if tf in ("weekly", "daily", "4h") else "all"
+    status = status if status in ("forming", "breakout") else "all"
+    direction = direction if direction in ("bullish", "bearish") else "all"
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.ticker, p.timeframe, p.pattern, p.direction, p.status,
+                       p.trigger_price, p.target, p.invalid_level, p.last_close,
+                       p.dist_to_trigger_pct, p.score, p.points, p.anchor_date,
+                       p.detected_at, p.scanned_at,
+                       s.company_name, s.sector, s.rs_pct
+                FROM pattern_scan p
+                LEFT JOIN screener_snapshot s ON s.ticker = p.ticker
+                WHERE (%(tf)s = 'all' OR p.timeframe = %(tf)s)
+                  AND (%(st)s = 'all' OR p.status = %(st)s)
+                  AND (%(dir)s = 'all' OR p.direction = %(dir)s)
+                ORDER BY p.score DESC NULLS LAST, p.ticker
+                LIMIT 800
+                """,
+                {"tf": tf, "st": status, "dir": direction},
+            )
+            rows = cur.fetchall()
+            cur.execute("""
+                SELECT timeframe, status, count(*), max(scanned_at)
+                FROM pattern_scan GROUP BY timeframe, status
+            """)
+            agg = cur.fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _f(v):
+        return float(v) if v is not None else None
+    out = [{
+        "ticker": r[0], "timeframe": r[1], "pattern": r[2], "direction": r[3],
+        "status": r[4], "trigger": _f(r[5]), "target": _f(r[6]),
+        "invalid": _f(r[7]), "last_close": _f(r[8]), "dist_pct": _f(r[9]),
+        "score": _f(r[10]), "points": r[11] or {},
+        "anchor_date": r[12].isoformat() if r[12] else None,
+        "detected_at": r[13].isoformat() if r[13] else None,
+        "company_name": r[15] or "", "sector": r[16] or "",
+        "rs_pct": int(r[17]) if r[17] is not None else None,
+    } for r in rows]
+    counts = {}
+    as_of = None
+    for tf_k, st_k, n, ts in agg:
+        counts[f"{tf_k}:{st_k}"] = int(n)
+        if ts is not None and (as_of is None or ts > as_of):
+            as_of = ts
+    return {"rows": out, "count": len(out), "counts": counts,
+            "as_of": as_of.isoformat() if as_of else None}
+
+
 def _fmp_description(ticker: str) -> str:
     """One-shot FMP /profile fetch for a company's business description."""
     api_key = os.environ.get("FMP_API_KEY", "").strip()
@@ -1718,6 +1780,20 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_theme_members, theme, window)
         except Exception as e:
             return JSONResponse({"theme": theme, "rows": [], "count": 0, "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/patterns", methods=["GET"])
+    async def patterns(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        tf = (request.query_params.get("tf") or "all").lower()
+        status = (request.query_params.get("status") or "all").lower()
+        direction = (request.query_params.get("direction") or "all").lower()
+        try:
+            data = await asyncio.to_thread(_pattern_rows, tf, status, direction)
+        except Exception as e:
+            return JSONResponse({"rows": [], "count": 0, "counts": {},
+                                 "as_of": None, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/screener", methods=["GET"])
