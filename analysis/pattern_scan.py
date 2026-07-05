@@ -973,12 +973,22 @@ def scan_db_timeframes() -> dict:
     conn = _conn()
     found = {"weekly": [], "daily": []}
     try:
+        # The weekly GROUP BY over ~3y of a multi-million-row table is heavy;
+        # give this batch job real headroom over the default 120s per-statement
+        # cap (a single slow batch used to trip it and abort the whole scan).
+        try:
+            with conn.cursor() as _c:
+                _c.execute("SET statement_timeout = '600s'")
+            conn.commit()
+        except Exception:
+            pass
         run_started = datetime.now(timezone.utc)
         tickers = _universe(conn)
         log.info(f"[patterns] daily/weekly scan over {len(tickers)} names")
         rows_daily, rows_weekly = [], []
-        for i in range(0, len(tickers), 250):
-            batch = tickers[i:i + 250]
+        # Smaller batches keep each aggregation query well inside the timeout.
+        for i in range(0, len(tickers), 120):
+            batch = tickers[i:i + 120]
             daily_map = _fetch_daily(conn, batch)
             weekly_map = _fetch_weekly(conn, batch)
             for t in batch:
