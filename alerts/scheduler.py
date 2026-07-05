@@ -589,8 +589,29 @@ def _seed_pattern_scan_if_stale():
         if not need:
             return
         log.info("[scheduler] pattern_scan empty or engine updated — full rescan...")
-        counts = run_pattern_scan()
-        log.info(f"[scheduler] Pattern seed scan done: {counts}")
+        try:
+            counts = run_pattern_scan()
+            log.info(f"[scheduler] Pattern seed scan done: {counts}")
+        except Exception as e:
+            # The version marker was claimed BEFORE the run (so sibling
+            # containers don't double-scan). If the run itself fails — a slow
+            # query tripping the statement timeout, a transient DB error — the
+            # claim would otherwise permanently block this version from ever
+            # retrying on a later deploy. Release it so the next boot retries.
+            log.error(f"[scheduler] Pattern seed scan failed, releasing claim: {e}")
+            try:
+                from analysis.pattern_scan import ENGINE_VERSION as _ev
+                c2 = _conn()
+                try:
+                    with c2.cursor() as cur:
+                        cur.execute("DELETE FROM scheduler_job_claims "
+                                    "WHERE job_name = %s AND run_date = DATE '2000-01-01'",
+                                    (f"pattern_engine_v{_ev}",))
+                    c2.commit()
+                finally:
+                    c2.close()
+            except Exception as e2:
+                log.warning(f"[scheduler] claim release failed: {e2}")
     except Exception as e:
         log.warning(f"[scheduler] Pattern seed scan skipped: {e}")
 
