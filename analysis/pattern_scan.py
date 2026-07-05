@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 2
+ENGINE_VERSION = 3
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -116,6 +116,38 @@ def _pivots(vals: list, k: int, kind: str) -> list:
             continue
         out.append((i, v))
     return out
+
+
+def _plows_live(ctx):
+    """Confirmed pivot lows PLUS one provisional recent low.
+
+    A fractal pivot needs `pivot_k` bars after it to confirm, so the second
+    low of a double bottom (or the right shoulder of an inverse H&S) is
+    invisible for a week or two after it prints — exactly when the setup is
+    most actionable. This adds the most recent bar that has already turned up
+    (a local min over its left window, undercut by nothing since, price now
+    bouncing above it) even though it lacks full right-side confirmation. The
+    downstream depth / prior-decline / higher-low checks still gate it, and if
+    a later bar undercuts it the next scan simply drops the pattern — so a
+    provisional low can only surface a real setup earlier, never invent one."""
+    plows = list(ctx["plows"])
+    k, n, lows, last = ctx["cfg"]["pivot_k"], ctx["n"], ctx["lows"], ctx["last"]
+    last_conf = plows[-1][0] if plows else -1
+    best = None
+    for i in range(max(last_conf + 1, k), n - 1):   # need >=1 bar after
+        lo = lows[i]
+        if lo is None:
+            continue
+        left = [x for x in lows[max(0, i - k):i] if x is not None]
+        right = [x for x in lows[i + 1:] if x is not None]
+        if not right or min(right) < lo or last <= lo:
+            continue                                # undercut since, or no bounce
+        if left and min(left) < lo:
+            continue                                # not a local min vs its left
+        best = (i, lo)                              # keep the most recent
+    if best and best[0] > last_conf and (n - 1) - best[0] <= ctx["cfg"]["recent"]:
+        plows.append(best)
+    return plows
 
 
 def _ctx(bars: list, timeframe: str):
@@ -233,7 +265,7 @@ def _det_inverse_hs(ctx):
     The one that matters most: the higher low off the head IS the signal."""
     cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
     min_hl, min_depth = 0.020 * s, 0.06 * s
-    plows = ctx["plows"]
+    plows = _plows_live(ctx)
     if len(plows) < 3:
         return None
     l3_idx, l3 = plows[-1]
@@ -335,7 +367,7 @@ def _det_hs_top(ctx):
 def _det_double_bottom(ctx):
     cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
     tol, min_depth = 0.020 * s, 0.06 * s
-    plows = ctx["plows"]
+    plows = _plows_live(ctx)
     if len(plows) < 2:
         return None
     l2_idx, l2 = plows[-1]
@@ -863,10 +895,13 @@ def _rows_to_bars(rows) -> dict:
 
 
 def _fetch_daily(conn, tickers: list) -> dict:
-    """~1y of close-basis daily bars per ticker, oldest → newest."""
+    """~1y of daily OHLC bars per ticker, oldest → newest. high/low fall back
+    to close for rows not yet OHLC-backfilled (migration 0062), so the series
+    is a clean mix of wick bars and close-only bars."""
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT ticker, trade_date, close, close, close, volume
+            SELECT ticker, trade_date,
+                   COALESCE(high, close), COALESCE(low, close), close, volume
             FROM daily_prices
             WHERE ticker = ANY(%s) AND trade_date >= CURRENT_DATE - 400
             ORDER BY ticker, trade_date
@@ -875,12 +910,13 @@ def _fetch_daily(conn, tickers: list) -> dict:
 
 
 def _fetch_weekly(conn, tickers: list) -> dict:
-    """~3y of weekly bars aggregated in SQL (close-basis highs/lows), oldest
-    → newest. The current (partial) week rides along as the live bar."""
+    """~3y of weekly OHLC bars aggregated in SQL (true wick high/low when
+    present, else close), oldest → newest. The current (partial) week rides
+    along as the live bar."""
     with conn.cursor() as cur:
         cur.execute("""
             SELECT ticker, date_trunc('week', trade_date)::date AS wk,
-                   max(close), min(close),
+                   max(COALESCE(high, close)), min(COALESCE(low, close)),
                    (array_agg(close ORDER BY trade_date DESC))[1],
                    sum(volume)
             FROM daily_prices
