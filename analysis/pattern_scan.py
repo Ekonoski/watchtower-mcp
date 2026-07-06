@@ -942,7 +942,7 @@ def _upsert_rows(conn, rows: list, timeframe: str, run_started) -> None:
                 VALUES (%(ticker)s, %(timeframe)s, %(pattern)s, %(direction)s, %(status)s,
                         %(trigger_price)s, %(target)s, %(invalid_level)s, %(anchor_price)s,
                         %(anchor_date)s, %(points_json)s::jsonb, %(last_close)s,
-                        %(dist_to_trigger_pct)s, %(score)s, now(), now())
+                        %(dist_to_trigger_pct)s, %(score)s, now(), clock_timestamp())
                 ON CONFLICT (ticker, timeframe, pattern) DO UPDATE SET
                     direction = EXCLUDED.direction,
                     status = EXCLUDED.status,
@@ -958,7 +958,7 @@ def _upsert_rows(conn, rows: list, timeframe: str, run_started) -> None:
                     detected_at = CASE
                         WHEN pattern_scan.anchor_date = EXCLUDED.anchor_date
                         THEN pattern_scan.detected_at ELSE now() END,
-                    scanned_at = now()
+                    scanned_at = clock_timestamp()
             """, {**r, "points_json": json.dumps(r.get("points") or {}, default=str)})
         cur.execute("DELETE FROM pattern_scan WHERE timeframe = %s AND scanned_at < %s",
                     (timeframe, run_started))
@@ -982,7 +982,14 @@ def scan_db_timeframes() -> dict:
             conn.commit()
         except Exception:
             pass
-        run_started = datetime.now(timezone.utc)
+        # Cutoff for the stale-row sweep MUST come from the DB clock, not the
+        # app clock: rows are stamped scanned_at = clock_timestamp() (DB), and
+        # comparing those against an app-captured time is subject to app/DB
+        # clock skew — which was silently deleting the daily rows this scan had
+        # just inserted while weekly (a later transaction) survived.
+        with conn.cursor() as _c:
+            _c.execute("SELECT clock_timestamp()")
+            run_started = _c.fetchone()[0]
         tickers = _universe(conn)
         log.info(f"[patterns] daily/weekly scan over {len(tickers)} names")
         rows_daily, rows_weekly = [], []
@@ -1039,7 +1046,9 @@ def scan_4h(hits: dict = None) -> int:
 
     conn = _conn()
     try:
-        run_started = datetime.now(timezone.utc)
+        with conn.cursor() as _c:
+            _c.execute("SELECT clock_timestamp()")   # DB clock — see scan_db_timeframes
+            run_started = _c.fetchone()[0]
         cands = _four_h_candidates(conn, hits or {})
         log.info(f"[patterns] 4h scan over {len(cands)} candidates")
 
