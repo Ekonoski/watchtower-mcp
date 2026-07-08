@@ -1105,6 +1105,93 @@ def watchtower_get_early_turn() -> str:
 
 
 @mcp.tool()
+def watchtower_get_bearish_rotation(top_n: int = 10, with_put_chains: bool = False) -> str:
+    """
+    Early BEARISH rotation — the mirror of the early-turn radar.
+
+    Three reads in one call:
+    1. Cooling industries: 2-week median <= -4% while the 3-month is still
+       positive ("was working, now cracking"), ranked by a fade score that
+       weights decline-on-volume (distribution) and breadth collapse.
+    2. Risk gauge: defensives (GLD/XLU/XLP/XLV) vs offense (XLK/XLY/QQQ/SMH/
+       IWM) weekly spread + HYG credit read + market regime — tells you if
+       the cooling is risk-off rotation or sector noise.
+    3. Put candidates: weak, liquid names ($2B+ cap) inside the cooling
+       groups, flagged when a live bearish chart pattern backs the read.
+
+    Args:
+        top_n:           max cooling industries / candidates shown (default 10)
+        with_put_chains: fetch live put chains for the top 3 candidates
+                         (Polygon options — slower)
+    """
+    try:
+        from dashboard.api import _bearish_rotation_rows
+        from analysis.pattern_scan import PATTERN_NAMES
+        data = _bearish_rotation_rows()
+        rk = data.get("risk") or {}
+        lines = ["**Early Turn ↓ — bearish rotation radar**", ""]
+        if rk.get("state"):
+            lbl = {"risk_off": "RISK-OFF", "risk_on": "RISK-ON",
+                   "neutral": "NEUTRAL"}.get(rk["state"], rk["state"])
+            lines.append(
+                f"Risk gauge: **{lbl}** (defensives {rk.get('defensive_w', 0):+.1f}% vs "
+                f"offense {rk.get('offense_w', 0):+.1f}% weekly, spread "
+                f"{rk.get('spread', 0):+.1f}pt) · SPY {rk.get('spy_w', 0):+.1f}% · "
+                f"HYG {rk.get('hyg_w', 0):+.1f}%"
+                + (f" · regime: {rk['regime']}" if rk.get("regime") else ""))
+            lines.append("")
+        cooling = (data.get("cooling") or [])[:top_n]
+        if cooling:
+            lines.append(f"**Cooling industries** ({len(cooling)}):")
+            for c in cooling:
+                lines.append(
+                    f"- **{c['industry']}** ({c['sector']}, {c['n']} names) — "
+                    f"2wk {c['r2w']*100:+.1f}% / 3mo {c['r3m']*100:+.1f}%, "
+                    f"breadth {c['breadth']*100:.0f}%, vol {c['vol_surge']:.2f}x "
+                    f"· fade {c['fade_score']:.0f}")
+            lines.append("")
+        puts = (data.get("puts") or [])[:top_n]
+        if puts:
+            lines.append("**Put candidates** (weak + liquid inside cooling groups):")
+            for p in puts:
+                pat = ""
+                if p.get("bear_patterns"):
+                    nm = PATTERN_NAMES.get(p.get("top_pattern"), p.get("top_pattern") or "")
+                    pat = (f" · ▼ {nm} ({p.get('top_tf')}, {p.get('top_status')}"
+                           + (f", +{p['bear_patterns']-1} more" if p["bear_patterns"] > 1 else "")
+                           + ")")
+                lines.append(
+                    f"- **{p['ticker']}** {p['company_name']} — {p['industry']} · "
+                    f"RS {p['rs_pct']} · 1mo {p['ret_1m']*100:+.1f}% · "
+                    f"vs base {p['vs_sma']*100:+.1f}% · ${p['price']:,.2f} · "
+                    f"weak {p['weak_score']:.0f}{pat}")
+        if not cooling and not puts:
+            lines.append("No cooling industries right now — nothing rolling over early.")
+        if with_put_chains and puts:
+            from analysis.polygon_data import fetch_options_snapshot
+            lines.append("")
+            lines.append("**Live put chains (top 3):**")
+            for p in puts[:3]:
+                snap = fetch_options_snapshot(p["ticker"])
+                pl = snap.get("puts") or []
+                if pl:
+                    ps = ", ".join(
+                        f"{q.get('expiration','?')} ${q.get('strike')}p @ ${q.get('last_price')}"
+                        for q in pl[:4])
+                    lines.append(f"- {p['ticker']}: {ps}")
+                else:
+                    lines.append(f"- {p['ticker']}: no chain returned "
+                                 f"({snap.get('note') or snap.get('error') or 'n/a'})")
+        lines.append("")
+        lines.append("_Reminder: puts punish lateness — this list is for finding "
+                     "setups while IV is still cheap. Confirm IV/spreads before "
+                     "buying premium._")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error building bearish rotation: {e}"
+
+
+@mcp.tool()
 def watchtower_get_sector_heatmap(timeframe: str = "quarterly", weight: str = "median") -> str:
     """
     Sector Heat Map — all 11 GICS sectors ranked hottest→coldest by price

@@ -911,6 +911,143 @@ def _early_turn_rows(limit: int = 18) -> dict:
     return {"as_of": str(as_of) if as_of else None, "rows": out, "count": len(out)}
 
 
+# ── Bearish early rotation ───────────────────────────────────────────────────
+# The mirror of the Early-Turn radar. industry_pulse already computes a
+# 'cooling' state nightly (2-wk median <= -4% while the 3-month is still
+# positive — "was working, now cracking"); until now nothing surfaced it.
+
+_RISK_DEFENSIVE = ("GLD", "XLU", "XLP", "XLV")
+_RISK_OFFENSE = ("XLK", "XLY", "QQQ", "SMH", "IWM")
+
+
+def _bearish_rotation_rows(limit: int = 14) -> dict:
+    """Early Turn ↓: cooling industries ranked by a distribution-weighted fade
+    score, a defensives-vs-offense risk gauge, and the weak liquid names inside
+    the cooling groups (put-scouting list, flagged when a live bearish chart
+    pattern backs the fundamentals-of-the-tape read)."""
+    from statistics import median
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            # Cooling industries. Fade score favors: hard 2-wk drop, decay on
+            # ABOVE-average volume (distribution), collapsed breadth, and a
+            # 1-wk that's accelerating below the 2-wk pace.
+            cur.execute(
+                """
+                SELECT industry, sector, n, r1w_med, r2w_med, r1m_med, r3m_med,
+                       breadth_2w, vol_surge, leaders,
+                       round( (-r2w_med*100) * (1 + COALESCE(vol_surge,1)/2)
+                             + GREATEST(0, 0.55 - COALESCE(breadth_2w,0.5)) * 60
+                             + CASE WHEN r1w_med < r2w_med/2 THEN 10 ELSE 0 END, 1)
+                       AS fade_score
+                FROM industry_pulse WHERE state = 'cooling'
+                ORDER BY fade_score DESC LIMIT %s
+                """, (limit,),
+            )
+            cooling = [{
+                "industry": r[0], "sector": r[1], "n": int(r[2]),
+                "r1w": float(r[3]) if r[3] is not None else None,
+                "r2w": float(r[4]) if r[4] is not None else None,
+                "r1m": float(r[5]) if r[5] is not None else None,
+                "r3m": float(r[6]) if r[6] is not None else None,
+                "breadth": float(r[7]) if r[7] is not None else None,
+                "vol_surge": float(r[8]) if r[8] is not None else None,
+                "leaders": list(r[9] or []),
+                "fade_score": float(r[10]) if r[10] is not None else None,
+            } for r in cur.fetchall()]
+
+            # Risk gauge: defensives (GLD/XLU/XLP/XLV) vs offense
+            # (XLK/XLY/QQQ/SMH/IWM) on the weekly ETF heat window. Defensives
+            # leading = the cooling above is risk-off rotation, not noise.
+            cur.execute(
+                "SELECT ticker, ret FROM etf_heat_snapshot "
+                "WHERE tf = 'weekly' AND ticker = ANY(%s)",
+                (list(_RISK_DEFENSIVE + _RISK_OFFENSE + ("SPY", "HYG")),),
+            )
+            rets = {t: float(x) for t, x in cur.fetchall() if x is not None}
+            d_ = [rets[t] for t in _RISK_DEFENSIVE if t in rets]
+            o_ = [rets[t] for t in _RISK_OFFENSE if t in rets]
+            spread = (median(d_) - median(o_)) * 100 if d_ and o_ else None
+            risk_state = None
+            if spread is not None:
+                risk_state = ("risk_off" if spread >= 1.5
+                              else "risk_on" if spread <= -1.5 else "neutral")
+            cur.execute(
+                "SELECT market_regime FROM up_and_comers_cache "
+                "WHERE market_regime IS NOT NULL "
+                "ORDER BY scored_date DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            regime = row[0] if row else None
+            risk = {
+                "state": risk_state,
+                "spread": round(spread, 2) if spread is not None else None,
+                "defensive_w": round(median(d_) * 100, 2) if d_ else None,
+                "offense_w": round(median(o_) * 100, 2) if o_ else None,
+                "spy_w": round(rets["SPY"] * 100, 2) if "SPY" in rets else None,
+                "hyg_w": round(rets["HYG"] * 100, 2) if "HYG" in rets else None,
+                "regime": regime,
+            }
+
+            # Put candidates: weak + liquid names inside the cooling groups.
+            # Cap/price floors keep the options chains tradeable; the bearish
+            # pattern bonus (forming preferred — that's the early entry) ties
+            # this list to the Patterns engine.
+            cur.execute(
+                """
+                WITH cooling AS (
+                    SELECT industry FROM industry_pulse WHERE state = 'cooling'
+                ),
+                bear_pat AS (
+                    SELECT ticker, count(*) AS n,
+                           bool_or(status = 'forming') AS any_forming,
+                           (array_agg(pattern  ORDER BY score DESC NULLS LAST))[1] AS top_pattern,
+                           (array_agg(status   ORDER BY score DESC NULLS LAST))[1] AS top_status,
+                           (array_agg(timeframe ORDER BY score DESC NULLS LAST))[1] AS top_tf
+                    FROM pattern_scan WHERE direction = 'bearish'
+                    GROUP BY ticker
+                )
+                SELECT s.ticker, s.company_name, s.sector, s.industry,
+                       s.rs_pct, s.ret_1m, s.vs_sma, s.market_cap, s.price,
+                       bp.n, bp.top_pattern, bp.top_status, bp.top_tf,
+                       round( GREATEST(0, 60 - COALESCE(s.rs_pct, 50)) * 0.5
+                             + GREATEST(0, -s.ret_1m * 100) * 0.6
+                             + GREATEST(0, -s.vs_sma * 100) * 0.5
+                             + CASE WHEN bp.n IS NOT NULL THEN 15 ELSE 0 END
+                             + CASE WHEN bp.any_forming THEN 5 ELSE 0 END, 1)
+                       AS weak_score
+                FROM screener_snapshot s
+                JOIN cooling c ON c.industry = s.industry
+                LEFT JOIN bear_pat bp ON bp.ticker = s.ticker
+                WHERE s.market_cap > 2e9 AND s.price > 15
+                  AND COALESCE(s.rs_pct, 50) < 60
+                  AND s.ret_1m < 0 AND s.vs_sma < 0
+                  AND NOT s.is_recent_ipo
+                ORDER BY weak_score DESC
+                LIMIT 16
+                """
+            )
+            def _f(v):
+                return float(v) if v is not None else None
+            puts = [{
+                "ticker": r[0], "company_name": r[1] or "", "sector": r[2] or "",
+                "industry": r[3] or "",
+                "rs_pct": int(r[4]) if r[4] is not None else None,
+                "ret_1m": _f(r[5]), "vs_sma": _f(r[6]),
+                "market_cap": _f(r[7]), "price": _f(r[8]),
+                "bear_patterns": int(r[9]) if r[9] is not None else 0,
+                "top_pattern": r[10], "top_status": r[11], "top_tf": r[12],
+                "weak_score": _f(r[13]),
+            } for r in cur.fetchall()]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return {"cooling": cooling, "risk": risk, "puts": puts}
+
+
 # Window key -> materialized-view column stem. Ladder: 1w 2w 1m 3m 6m ytd.
 _THEME_WINDOWS = {"1w": "r1w", "2w": "r2w", "1m": "r1m",
                   "3m": "r3m", "6m": "r6m", "ytd": "rytd"}
@@ -1754,6 +1891,14 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_early_turn_rows)
         except Exception as e:
             return JSONResponse({"as_of": None, "rows": [], "count": 0, "error": str(e)[:120]})
+        # Bearish mirror rides the same payload: cooling industries, the
+        # risk-off gauge, and the put-scouting list. Non-fatal if it fails —
+        # the bullish radar still renders.
+        try:
+            data.update(await asyncio.to_thread(_bearish_rotation_rows))
+        except Exception as e:
+            log.warning(f"[api] bearish rotation error (non-fatal): {e}")
+            data.update({"cooling": [], "risk": {}, "puts": []})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/themes", methods=["GET"])
