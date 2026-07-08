@@ -498,6 +498,28 @@
       </div>
     </div>
 
+    <div class="heat-wrap" id="etd-wrap" style="display:none">
+      <div class="heat-head">
+        <span class="heat-title">Early Turn ↓ <span class="heat-sub">— industries cracking (2-wk ≤ −4%) while still 3-month positive: distribution before the heat map goes red. Put-scouting territory, not a trigger.</span></span>
+        <span id="riskoff-chip"></span>
+      </div>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th class="left">Industry</th><th class="left">Sector</th><th>1-Wk</th><th>2-Wk</th><th>1-Mo</th><th>3-Mo</th><th title="% of names up over 2 weeks — low = broad selling, not one bad name">Breadth</th><th title="recent vs prior volume — >1 on a decline = distribution">Vol</th><th title="fade score: 2-wk drop weighted by volume + breadth collapse + 1-wk acceleration">Fade</th><th class="left" title="the group's strongest names — what's left holding it up, and often the last to crack">Watch</th></tr></thead>
+          <tbody id="etd-body"></tbody>
+        </table>
+      </div>
+      <div class="heat-head" style="margin-top:12px">
+        <span class="heat-title" style="font-size:13px">Put Candidates <span class="heat-sub">— weak, liquid names ($2B+ cap, $15+ px) inside the cooling groups. ▼ = live bearish chart pattern (forming = early). Click for the drawer; confirm IV before buying premium.</span></span>
+      </div>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th class="left">Ticker</th><th class="left">Company</th><th class="left">Industry</th><th>RS</th><th>1M</th><th title="vs 30-week base">vs Base</th><th>Mkt Cap</th><th>Price</th><th class="left" title="best live bearish pattern on this name">Pattern</th><th title="weakness composite: RS deficit + 1-mo decline + below-base + pattern bonus">Weak</th></tr></thead>
+          <tbody id="putc-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="heat-wrap">
       <div class="heat-head">
         <span class="heat-title">Sector Heat Map <span class="heat-sub" id="heat-sub">— 3-month median, hottest → coldest</span></span>
@@ -1610,15 +1632,17 @@ async function loadGems() {
 async function loadEarlyTurn() {
   let d;
   try { d = await api("/api/early-turn"); } catch { return; }
-  const wrap = $("et-wrap");
-  const rows = (d && d.rows) || [];
-  if (!rows.length) { wrap.style.display = "none"; return; }
-  wrap.style.display = "";
   const pct = (v) => {
     if (v == null) return `<span style="color:var(--muted)">—</span>`;
     const p = v * 100, cls = p >= 0 ? "pos" : "neg", s = p >= 0 ? "+" : "";
     return `<span class="${cls}">${s}${p.toFixed(0)}%</span>`;
   };
+  const wrap = $("et-wrap");
+  const rows = (d && d.rows) || [];
+  // The ↓ panel renders regardless — in a downtrend there's often nothing
+  // turning UP, which is exactly when the bearish radar matters most.
+  if (!rows.length) { wrap.style.display = "none"; renderEarlyTurnDown(d, pct); return; }
+  wrap.style.display = "";
   const etb = $("et-body");
   etb.innerHTML = rows.map(r => `<tr>
       <td class="left"><b class="et-ind" data-industry="${esc(r.industry)}" style="cursor:pointer;text-decoration:underline dotted" title="See every stock in this industry">${esc(r.industry)}</b></td>
@@ -1632,6 +1656,62 @@ async function loadEarlyTurn() {
       <td class="left">${(r.leaders || []).slice(0, 4).map(t => `<span class="tkr" style="cursor:pointer" onclick="openDrawer('${esc(t)}')">${esc(t)}</span>`).join(" ")}</td>
     </tr>`).join("");
   etb.querySelectorAll(".et-ind").forEach(el => el.onclick = () => screenerJump(el.dataset.industry));
+  renderEarlyTurnDown(d, pct);
+}
+function renderEarlyTurnDown(d, pct) {
+  const wrap = $("etd-wrap");
+  const cooling = (d && d.cooling) || [];
+  const puts = (d && d.puts) || [];
+  if (!cooling.length && !puts.length) { wrap.style.display = "none"; return; }
+  wrap.style.display = "";
+
+  // Risk gauge chip: defensives (GLD/XLU/XLP/XLV) vs offense (XLK/XLY/QQQ/SMH/IWM), weekly.
+  const rk = (d && d.risk) || {};
+  const chipEl = $("riskoff-chip");
+  if (rk.state) {
+    const lbl = rk.state === "risk_off" ? "RISK-OFF" : rk.state === "risk_on" ? "RISK-ON" : "NEUTRAL";
+    const cls = rk.state === "risk_off" ? "out" : rk.state === "risk_on" ? "in" : "";
+    const sp = rk.spread != null ? `${rk.spread >= 0 ? "+" : ""}${rk.spread.toFixed(1)}pt` : "";
+    const bits = [];
+    if (rk.defensive_w != null) bits.push(`def ${rk.defensive_w >= 0 ? "+" : ""}${rk.defensive_w.toFixed(1)}%`);
+    if (rk.offense_w != null) bits.push(`off ${rk.offense_w >= 0 ? "+" : ""}${rk.offense_w.toFixed(1)}%`);
+    if (rk.hyg_w != null) bits.push(`HYG ${rk.hyg_w >= 0 ? "+" : ""}${rk.hyg_w.toFixed(1)}%`);
+    chipEl.innerHTML = `<span class="rot-chip ${cls}" title="defensives (GLD/XLU/XLP/XLV) minus offense (XLK/XLY/QQQ/SMH/IWM), weekly median. Defensives leading = the cooling below is risk-off rotation, not noise.${rk.regime ? " Market regime: " + escAttr(rk.regime) : ""}">${lbl} ${sp}</span> <span style="color:var(--muted);font-size:11px">${bits.join(" · ")}</span>`;
+  } else { chipEl.innerHTML = ""; }
+
+  $("etd-body").innerHTML = cooling.map(r => `<tr>
+      <td class="left"><b class="etd-ind" data-industry="${escAttr(r.industry)}" style="cursor:pointer;text-decoration:underline dotted" title="See every stock in this industry">${esc(r.industry)}</b></td>
+      <td class="left" style="color:var(--muted)">${esc(r.sector)}</td>
+      <td class="num">${pct(r.r1w)}</td>
+      <td class="num">${pct(r.r2w)}</td>
+      <td class="num">${pct(r.r1m)}</td>
+      <td class="num">${pct(r.r3m)}</td>
+      <td class="num">${r.breadth != null ? (r.breadth * 100).toFixed(0) + "%" : "—"}</td>
+      <td class="num">${r.vol_surge != null ? r.vol_surge.toFixed(2) + "×" : "—"}</td>
+      <td class="num"><b>${r.fade_score != null ? r.fade_score.toFixed(0) : "—"}</b></td>
+      <td class="left">${(r.leaders || []).slice(0, 4).map(t => `<span class="tkr" style="cursor:pointer" onclick="openDrawer('${esc(t)}')">${esc(t)}</span>`).join(" ")}</td>
+    </tr>`).join("");
+  document.querySelectorAll("#etd-body .etd-ind").forEach(el => el.onclick = () => screenerJump(el.dataset.industry));
+
+  $("putc-body").innerHTML = puts.map(r => {
+    const pat = r.bear_patterns
+      ? `<span class="neg">▼</span> ${esc(PATTERN_LABELS[r.top_pattern] || r.top_pattern || "")}` +
+        ` <span style="color:var(--muted);font-size:10px">${esc(r.top_tf || "")} ${esc(r.top_status || "")}${r.bear_patterns > 1 ? " +" + (r.bear_patterns - 1) : ""}</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
+      <td class="left"><b>${esc(r.ticker)}</b></td>
+      <td class="left">${esc((r.company_name || "").slice(0, 22))}</td>
+      <td class="left" style="color:var(--muted)">${esc((r.industry || "").slice(0, 22))}</td>
+      <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
+      <td class="num">${pct(r.ret_1m)}</td>
+      <td class="num">${pct(r.vs_sma)}</td>
+      <td class="num">${fmtCap(r.market_cap)}</td>
+      <td class="num">${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
+      <td class="left">${pat}</td>
+      <td class="num"><b>${r.weak_score != null ? r.weak_score.toFixed(0) : "—"}</b></td>
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("#putc-body tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
 }
 /* ── Market Themes board ── */
 state.themes = { window: "ytd", weight: "median" };
