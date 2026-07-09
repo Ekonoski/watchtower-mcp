@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 3
+ENGINE_VERSION = 4
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -175,12 +175,24 @@ def _ctx(bars: list, timeframe: str):
     }
 
 
-def _status(ctx, start_idx: int, trigger: float, direction: str):
+def _status(ctx, start_idx: int, trigger: float, direction: str, target=None):
     """'forming' / 'breakout' / None (stale or extended break — not listable).
     A break that has already retreated back through the trigger counts as
-    forming again (retest)."""
+    forming again (retest) — UNLESS the measured move already played out:
+    if price reached the target after the structure completed, the pattern
+    is spent, not forming (AMC weekly spiked through its target and round-
+    tripped below the neckline; that's a finished trade, not an entry)."""
     closes, n, cfg = ctx["closes"], ctx["n"], ctx["cfg"]
     last = ctx["last"]
+    if target is not None:
+        if direction == "bullish":
+            hs = [h for h in ctx["highs"][start_idx + 1:] if h is not None]
+            if hs and max(hs) >= target:
+                return None
+        else:
+            ls = [x for x in ctx["lows"][start_idx + 1:] if x is not None]
+            if ls and min(ls) <= target:
+                return None
     if direction == "bullish":
         cross = next((i for i in range(start_idx + 1, n)
                       if closes[i] is not None and closes[i] > trigger), None)
@@ -296,7 +308,7 @@ def _det_inverse_hs(ctx):
         return None  # didn't come DOWN into this — basing noise, not a reversal
     if ctx["last"] <= l3:
         return None  # higher low already violated
-    status = _status(ctx, l3_idx, neck, "bullish")
+    status = _status(ctx, l3_idx, neck, "bullish", target=neck + (neck - l2))
     if status is None:
         return None
     hl = (l3 - l2) / l2
@@ -347,7 +359,7 @@ def _det_hs_top(ctx):
         return None  # didn't come UP into this
     if ctx["last"] >= h3:
         return None  # lower high already violated
-    status = _status(ctx, h3_idx, neck, "bearish")
+    status = _status(ctx, h3_idx, neck, "bearish", target=neck - (h2 - neck))
     if status is None:
         return None
     lh = (h2 - h3) / h2
@@ -398,7 +410,7 @@ def _det_double_bottom(ctx):
     # triangles / plain chop from masquerading as one.
     if ctx["last"] < bottom + 0.25 * (trigger - bottom):
         return None
-    status = _status(ctx, l2_idx, trigger, "bullish")
+    status = _status(ctx, l2_idx, trigger, "bullish", target=trigger + (trigger - bottom))
     if status is None:
         return None
     closeness = abs(l2 - l1) / l1
@@ -443,7 +455,7 @@ def _det_double_top(ctx):
     # otherwise a flat-bottom triangle or chop reads as a double top.
     if ctx["last"] > top - 0.25 * (top - trigger):
         return None
-    status = _status(ctx, h2_idx, trigger, "bearish")
+    status = _status(ctx, h2_idx, trigger, "bearish", target=trigger - (top - trigger))
     if status is None:
         return None
     closeness = abs(h2 - h1) / h1
@@ -564,7 +576,7 @@ def _det_asc_triangle(ctx):
         return None
     if ctx["last"] <= last_low:
         return None
-    status = _status(ctx, lows_in[-1][0], r, "bullish")
+    status = _status(ctx, lows_in[-1][0], r, "bullish", target=r + (r - first_low))
     if status is None:
         return None
     contraction = (r - last_low) / (r - first_low)
@@ -606,7 +618,7 @@ def _det_desc_triangle(ctx):
         return None
     if ctx["last"] >= last_high:
         return None
-    status = _status(ctx, highs_in[-1][0], sup, "bearish")
+    status = _status(ctx, highs_in[-1][0], sup, "bearish", target=sup - (first_high - sup))
     if status is None:
         return None
     contraction = (last_high - sup) / (first_high - sup)
@@ -649,7 +661,7 @@ def _det_falling_wedge(ctx):
     trigger = phs[-1][1]
     if ctx["last"] <= pls[-1][1]:
         return None
-    status = _status(ctx, phs[-1][0], trigger, "bullish")
+    status = _status(ctx, phs[-1][0], trigger, "bullish", target=phs[0][1])
     if status is None:
         return None
     quality = min(10.0, 3.0 * (len(phs) + len(pls) - 4)) \
@@ -689,7 +701,7 @@ def _det_rising_wedge(ctx):
     trigger = pls[-1][1]
     if ctx["last"] >= phs[-1][1]:
         return None
-    status = _status(ctx, pls[-1][0], trigger, "bearish")
+    status = _status(ctx, pls[-1][0], trigger, "bearish", target=pls[0][1])
     if status is None:
         return None
     quality = min(10.0, 3.0 * (len(phs) + len(pls) - 4)) \
@@ -744,7 +756,7 @@ def _det_cup_handle(ctx):
         return None  # handle too deep — that's just the cup refilling
     if ctx["last"] <= h_low:
         return None
-    status = _status(ctx, r_idx, rim, "bullish")
+    status = _status(ctx, r_idx, rim, "bullish", target=rim + (rim - bottom))
     if status is None:
         return None
     handle_ret = (rim - h_low) / (rim - bottom) if rim > bottom else 1.0
