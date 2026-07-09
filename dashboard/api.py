@@ -818,6 +818,11 @@ def _screener_rows(sector: str = "ALL", sort: str = "score", gems_only: bool = F
     order = _SCREENER_SORTS.get(sort, _SCREENER_SORTS["score"])
     cap_ceiling = _SCREENER_CAPS.get(cap, _SCREENER_CAPS["gem"])
     industry = (industry or "").strip()
+    # An explicit ticker/name search overrides the cap band: "KMI" typed into
+    # the filter box means "find me KMI", not "find KMI if it's under $10B" —
+    # the old behavior returned nothing and read as the name being missing.
+    if (search or "").strip():
+        cap_ceiling = None
     qpat = "%" + (search or "").strip() + "%"   # '%%' when blank → matches all
     from screen.reversal_screen import _conn
     conn = _conn()
