@@ -775,11 +775,17 @@ def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
             sec = f" · {r['sector']}" if r.get("sector") else ""
             dist = r.get("dist_pct")
             dist_s = f"{dist:+.1f}% vs trigger" if dist is not None else ""
+            est = r.get("est") or {}
+            est_s = ""
+            if est.get("dte"):
+                tag = "measured" if est.get("source") == "measured" else "est"
+                est_s = (f" · resolves ~{est['weeks_lo']}-{est['weeks_hi']}w "
+                         f"({tag}) → ≥{est['dte']} DTE")
             lines.append(
                 f"- **{r['ticker']}** {arrow} {name} ({r['timeframe']}, {r['status']}) — "
                 f"px ${r['last_close']:,.2f}, trigger ${r['trigger']:,.2f} ({dist_s}), "
                 f"target ${r['target']:,.2f}, invalid ${r['invalid']:,.2f} · "
-                f"score {r['score']:.0f}{rs}{sec}")
+                f"score {r['score']:.0f}{rs}{sec}{est_s}")
         return "\n".join(lines)
     except Exception as e:
         return f"Error fetching patterns: {e}"
@@ -918,6 +924,59 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
         return "\n".join(lines)
     except Exception as e:
         return f"Error screening oscillator: {e}"
+
+
+@mcp.tool()
+def watchtower_pattern_timing(rerun: bool = False) -> str:
+    """
+    How long each chart pattern takes to play out, measured from the
+    historical replay (same detectors as the live scanner, no lookahead):
+    per pattern — sample size, target-vs-invalidation hit rate, and the
+    25th/50th/75th-percentile BARS from breakout to target touch. This is
+    the empirical basis for picking option expiries: buy at least 2x the
+    75th-percentile time.
+
+    Args:
+        rerun: re-run the replay in the background (~10 min) before reading.
+    """
+    try:
+        from analysis.pattern_backtest import timing_stats, run_pattern_backtest
+        from analysis.pattern_scan import PATTERN_NAMES
+        if rerun:
+            import threading
+            threading.Thread(target=run_pattern_backtest,
+                             name="pattern-backtest", daemon=True).start()
+            return ("Pattern timing replay started in the background (~10 "
+                    "minutes). Call again with rerun=False to read results.")
+        stats = timing_stats()
+        if not stats:
+            return ("No pattern timing results yet — the replay seeds "
+                    "automatically a few minutes after deploy, or pass "
+                    "rerun=True.")
+        lines = ["**Pattern time-to-target** (daily bars from breakout to "
+                 "measured-move touch; winners only for the time columns)", "",
+                 "| Pattern | N | Target hit % | p25 | Median | p75 | "
+                 "Suggested min DTE |", "|---|---|---|---|---|---|---|"]
+        for p, s in sorted(stats.items(), key=lambda kv: -(kv[1]["n"] or 0)):
+            name = PATTERN_NAMES.get(p, p)
+            if s.get("med") is None:
+                lines.append(f"| {name} | {s['n']} | "
+                             f"{s['hit_rate'] if s['hit_rate'] is not None else 'n/a'}% "
+                             f"| n/a | n/a | n/a | n/a |")
+                continue
+            dte = int(round(s["p75"] / 5 * 7 * 2))
+            lines.append(
+                f"| {name} | {s['n']:,} | {s['hit_rate']:.1f}% | "
+                f"{s['p25']:.0f} | {s['med']:.0f} | {s['p75']:.0f} | "
+                f"~{dte}d |")
+        lines.append("")
+        lines.append("Bars are daily sessions (÷5 ≈ weeks). Weekly patterns "
+                     "take a similar BAR count — read the median as weeks; "
+                     "4h patterns as ~12 bars/week. The Patterns tab's "
+                     "Est (DTE) column applies this automatically.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error reading pattern timing: {e}"
 
 
 @mcp.tool()
