@@ -882,7 +882,9 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 
     Args:
         setup: entry_grade | high_confluence | coil | wt_extreme_cross |
-               pctr_hook | divergence | mf_curl | any_signal
+               pctr_hook | divergence (price vs wave, confirmed pivots) |
+               mf_round (smooth rounded money-flow turn — the arc, not a
+               one-bar curl) | mf_curl | any_signal
         timeframe: daily | weekly | 4h | 1h
         direction: bullish | bearish | all   (default bullish)
         top_n: max rows (default 15)

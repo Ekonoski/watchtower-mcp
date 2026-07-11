@@ -90,13 +90,52 @@ def _events_for_ticker(daily: pd.DataFrame) -> pd.DataFrame:
     c_bull = c_bull & ~c_bull.shift(1).fillna(False).astype(bool)
     c_bear = c_bear & ~c_bear.shift(1).fillna(False).astype(bool)
 
+    # Money-flow rounding: 5th consecutive bar in the turn direction after a
+    # meaningful swing, with the flow moving the other way before the turn —
+    # one event per arc (the streak==5 bar), the vectorized cousin of the
+    # live mf_round signal.
+    mf = o["mf_candle"]
+    inc = mf.diff() > 0
+    up_streak = inc.groupby((~inc).cumsum()).cumsum()
+    dec = mf.diff() < 0
+    dn_streak = dec.groupby((~dec).cumsum()).cumsum()
+    r_bull = (up_streak == 5) & (mf - mf.shift(5) >= 3.0) \
+        & (mf.shift(5) <= mf.shift(10))
+    r_bear = (dn_streak == 5) & (mf.shift(5) - mf >= 3.0) \
+        & (mf.shift(5) >= mf.shift(10))
+
+    # Wave divergences on confirmed pivots (k=3 both sides — the signal
+    # becomes visible 3 bars after the second pivot, so the event is stamped
+    # there; no lookahead).
+    from analysis.oscillator import _pivot_idx
+    lows_v = daily["low"].values
+    highs_v = daily["high"].values
+    wt = o["wt1"].values
+    n = len(o)
+    d_bull = pd.Series(False, index=o.index)
+    d_bear = pd.Series(False, index=o.index)
+    pl = _pivot_idx(lows_v, 3, "low")
+    for a, b in zip(pl, pl[1:]):
+        if b - a <= 60 and b + 3 < n and lows_v[b] < lows_v[a] \
+                and wt[b] > wt[a] and wt[a] < 0:
+            d_bull.iloc[b + 3] = True
+    ph = _pivot_idx(highs_v, 3, "high")
+    for a, b in zip(ph, ph[1:]):
+        if b - a <= 60 and b + 3 < n and highs_v[b] > highs_v[a] \
+                and wt[b] < wt[a] and wt[a] > 0:
+            d_bear.iloc[b + 3] = True
+
     frames = []
     for mask, sig, direction in ((x_bull, "wt_extreme_cross", "bullish"),
                                  (x_bear, "wt_extreme_cross", "bearish"),
                                  (h_bull, "pctr_hook", "bullish"),
                                  (h_bear, "pctr_hook", "bearish"),
                                  (c_bull, "coil", "bullish"),
-                                 (c_bear, "coil", "bearish")):
+                                 (c_bear, "coil", "bearish"),
+                                 (r_bull, "mf_round", "bullish"),
+                                 (r_bear, "mf_round", "bearish"),
+                                 (d_bull, "divergence", "bullish"),
+                                 (d_bear, "divergence", "bearish")):
         idx = o.index[mask.fillna(False)]
         if not len(idx):
             continue
