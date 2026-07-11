@@ -859,20 +859,26 @@ def watchtower_get_oscillator(ticker: str, timeframe: str = "all") -> str:
 
 
 @mcp.tool()
-def watchtower_screen_oscillator(setup: str = "high_confluence",
+def watchtower_screen_oscillator(setup: str = "entry_grade",
                                  timeframe: str = "daily",
                                  direction: str = "bullish",
                                  top_n: int = 15) -> str:
     """
-    Pull names whose Watchtower Oscillator is flashing a setup — the entry
-    screen. Reads the fleet scan (refreshed after each pattern scan: full at
-    6:45 AM ET, 4h/1h again at 12:45 PM ET).
+    Pull names whose Watchtower Oscillator is flashing a setup. Reads the
+    fleet scan (refreshed after each pattern scan: full at 6:45 AM ET,
+    4h/1h again at 12:45 PM ET).
+
+    entry_grade (default) = ENTRIES: supportive oscillator PLUS a live
+    pattern in the trade direction near its trigger, a weekly that isn't
+    fighting the trade, and a relative-strength floor. high_confluence =
+    the raw washout watchlist (most stretched names in the market — where
+    turns START; stalk for the higher low, don't buy the first green dot).
 
     Args:
-        setup: high_confluence | coil | wt_extreme_cross | pctr_hook |
-               divergence | mf_curl | any_signal
+        setup: entry_grade | high_confluence | coil | wt_extreme_cross |
+               pctr_hook | divergence | mf_curl | any_signal
         timeframe: daily | weekly | 4h | 1h
-        direction: bullish | bearish | all   (default bullish — entries)
+        direction: bullish | bearish | all   (default bullish)
         top_n: max rows (default 15)
     """
     try:
@@ -895,16 +901,74 @@ def watchtower_screen_oscillator(setup: str = "high_confluence",
             sec = f" · {r['sector']}" if r.get("sector") else ""
             rs = f" · RS {r['rs_pct']}" if r.get("rs_pct") is not None else ""
             px = f"px ${r['close']:,.2f}, " if r.get("close") is not None else ""
+            wk = f" · wkly {r['weekly_dir']}" if r.get("weekly_dir") else ""
+            pat = ""
+            if r.get("pattern"):
+                d = r.get("pattern_dist")
+                pat = (f" · {r['pattern']} ({r.get('pattern_tf','')} "
+                       f"{r.get('pattern_status','')}"
+                       + (f", {d:+.1f}% vs trigger" if d is not None else "") + ")")
             lines.append(
                 f"- **{r['ticker']}** {arrow} {_n(r['confluence_score'], '.0f')}/100 — "
                 f"{px}wt2 {_n(r['wt2'], '+.0f')}, "
                 f"MF {_n(r['mf'], '+.1f')}, %R {_n(r['pctr'], '.0f')}, "
-                f"MACDh {_n(r['macd_hist'], '+.2f')} · {sigs}{rs}{sec}")
+                f"MACDh {_n(r['macd_hist'], '+.2f')}{wk}{pat} · {sigs}{rs}{sec}")
         lines.append("")
         lines.append("Deep dive any name with watchtower_get_oscillator(ticker).")
         return "\n".join(lines)
     except Exception as e:
         return f"Error screening oscillator: {e}"
+
+
+@mcp.tool()
+def watchtower_oscillator_backtest(rerun: bool = False) -> str:
+    """
+    Historical backtest of the oscillator entry signals: every
+    wt_extreme_cross and pctr_hook the scanner WOULD have fired on each
+    historical bar (confirmed bars, no repaint — the replay is honest),
+    with 21/63-session forward returns, split by whether the entry-grade
+    quality gates (weekly wave agreeing + relative-strength floor) passed.
+    Use this to judge which setups actually pay and how much the gates add.
+
+    Args:
+        rerun: re-run the replay in the background first (a few minutes)
+               before reading; default False = read stored results.
+    """
+    try:
+        from analysis.oscillator_backtest import backtest_report, run_backtest
+        if rerun:
+            import threading
+            threading.Thread(target=run_backtest, name="osc-backtest",
+                             daemon=True).start()
+            return ("Backtest replay started in the background — takes a few "
+                    "minutes over the full universe. Call this tool again "
+                    "(rerun=False) shortly to read the refreshed results.")
+        rep = backtest_report()
+        if not rep["total_events"]:
+            return ("No backtest results stored yet — it seeds automatically "
+                    "a few minutes after deploy, or pass rerun=True.")
+        lines = [f"**Oscillator backtest** — {rep['total_events']:,} events, "
+                 f"{rep['window'][0]} → {rep['window'][1]} "
+                 "(returns measured in the trade's direction)", ""]
+        lines.append("| Signal | Dir | Gates | N | Win% (21d) | Avg 21d | "
+                     "Med 21d | Excess vs SPY | Avg 63d |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
+        for r in rep["rows"]:
+            def p(v):
+                return f"{v:+.2f}%" if v is not None else "n/a"
+            lines.append(
+                f"| {r['signal_type']} | {r['direction']} | "
+                f"{'✅ gated' if r['gated'] else 'raw'} | {r['n']:,} | "
+                f"{r['win_rate_21d_pct']:.1f}% | {p(r['avg_fwd21_pct'])} | "
+                f"{p(r['med_fwd21_pct'])} | {p(r['avg_excess21_vs_spy_pct'])} | "
+                f"{p(r['avg_fwd63_pct'])} |")
+        lines.append("")
+        lines.append("Gates = weekly wave rising with the trade + RS floor "
+                     "(≥25 bullish / ≤75 bearish). The live entry-grade view "
+                     "additionally requires a chart pattern near its trigger.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error reading oscillator backtest: {e}"
 
 
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────

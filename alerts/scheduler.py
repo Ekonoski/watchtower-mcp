@@ -588,6 +588,29 @@ def _seed_oscillator_if_empty():
         log.warning(f"[oscillator] seed skipped: {e}")
 
 
+def _seed_oscillator_backtest_if_empty():
+    """One-time historical backtest of the oscillator entry signals (runs at
+    deploy while the table is empty; a few minutes over the full universe).
+    Signals are confirmed-bar/no-repaint, so the replay is honest — it sees
+    exactly what the live scanner would have fired on each historical bar."""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM oscillator_backtest LIMIT 1")
+                need = cur.fetchone() is None
+        finally:
+            conn.close()
+        if need:
+            from analysis.oscillator_backtest import run_backtest
+            log.info("[oscillator] backtest table empty — running replay...")
+            res = run_backtest()
+            log.info(f"[oscillator] backtest done: {res}")
+    except Exception as e:
+        log.warning(f"[oscillator] backtest seed skipped: {e}")
+
+
 def _seed_pattern_scan_if_stale():
     """Deploy-time seeding: run a full pattern scan right away (even on a
     weekend) when the table has never been populated OR this deploy ships a
@@ -772,6 +795,7 @@ def start_scheduler():
     def _seed_all():
         _seed_pattern_scan_if_stale()
         _seed_oscillator_if_empty()
+        _seed_oscillator_backtest_if_empty()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
