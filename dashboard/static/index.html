@@ -724,6 +724,7 @@
           <th title="Relative strength 1–99 vs the screener universe">RS</th>
           <th title="Pattern quality 0–100: depth, higher-low margin, symmetry, volume, proximity">Score</th>
           <th title="Days this structure has been on the list">Age</th>
+          <th title="Estimated time for the measured move to play out after the trigger, and a suggested option expiry (2× the upper estimate). Bold = measured from the historical backtest; plain = width heuristic (a base resolves in ⅓–1× its build time).">Est (DTE)</th>
         </tr></thead>
         <tbody id="pat-body"></tbody>
       </table>
@@ -1315,6 +1316,9 @@ function renderPatterns() {
       <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
       <td class="num"><b>${r.score != null ? r.score.toFixed(0) : "—"}</b></td>
       <td class="num">${age != null ? (age === 0 ? "new" : age + "d") : "—"}</td>
+      <td class="num" style="font-size:11px">${r.est && r.est.dte
+        ? `${r.est.source === "measured" ? "<b>" : ""}${r.est.weeks_lo}–${r.est.weeks_hi}w · ${r.est.dte}D${r.est.source === "measured" ? "</b>" : ""}`
+        : "—"}</td>
     </tr>`;
   }).join("");
   body.querySelectorAll("tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));

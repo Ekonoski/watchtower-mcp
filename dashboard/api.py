@@ -1386,6 +1386,25 @@ def _ticker_memberships(ticker: str) -> dict:
     return out
 
 
+_PATTERN_TIMING_CACHE = {"at": 0.0, "stats": {}}
+
+
+def _pattern_timing_cached() -> dict:
+    """Backtest timing stats (bars from breakout to target per pattern),
+    cached for 6h — they only change when the replay re-runs."""
+    import time as _time
+    now = _time.time()
+    if now - _PATTERN_TIMING_CACHE["at"] > 6 * 3600:
+        try:
+            from analysis.pattern_backtest import timing_stats
+            _PATTERN_TIMING_CACHE["stats"] = timing_stats()
+        except Exception as e:
+            log.debug(f"[dashboard.api] pattern timing stats unavailable: {e}")
+            _PATTERN_TIMING_CACHE["stats"] = {}
+        _PATTERN_TIMING_CACHE["at"] = now
+    return _PATTERN_TIMING_CACHE["stats"]
+
+
 def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") -> dict:
     """Live chart-pattern detections (pattern_scan, migration 0061) with the
     screener's RS/sector context joined in. The scan only ever keeps live
@@ -1428,16 +1447,26 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
 
     def _f(v):
         return float(v) if v is not None else None
-    out = [{
-        "ticker": r[0], "timeframe": r[1], "pattern": r[2], "direction": r[3],
-        "status": r[4], "trigger": _f(r[5]), "target": _f(r[6]),
-        "invalid": _f(r[7]), "last_close": _f(r[8]), "dist_pct": _f(r[9]),
-        "score": _f(r[10]), "points": r[11] or {},
-        "anchor_date": r[12].isoformat() if r[12] else None,
-        "detected_at": r[13].isoformat() if r[13] else None,
-        "company_name": r[15] or "", "sector": r[16] or "",
-        "rs_pct": int(r[17]) if r[17] is not None else None,
-    } for r in rows]
+    try:
+        from analysis.pattern_backtest import estimate_resolution
+        timing = _pattern_timing_cached()
+    except Exception:
+        timing, estimate_resolution = {}, None
+    out = []
+    for r in rows:
+        row = {
+            "ticker": r[0], "timeframe": r[1], "pattern": r[2], "direction": r[3],
+            "status": r[4], "trigger": _f(r[5]), "target": _f(r[6]),
+            "invalid": _f(r[7]), "last_close": _f(r[8]), "dist_pct": _f(r[9]),
+            "score": _f(r[10]), "points": r[11] or {},
+            "anchor_date": r[12].isoformat() if r[12] else None,
+            "detected_at": r[13].isoformat() if r[13] else None,
+            "company_name": r[15] or "", "sector": r[16] or "",
+            "rs_pct": int(r[17]) if r[17] is not None else None,
+        }
+        if estimate_resolution is not None:
+            row["est"] = estimate_resolution(r[2], r[1], r[12], timing)
+        out.append(row)
     counts = {}
     as_of = None
     for tf_k, st_k, n, ts in agg:
@@ -1504,6 +1533,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
               AND timeframe IN (o.timeframe, 'weekly')
             ORDER BY score DESC NULLS LAST LIMIT 1) p ON true
         WHERE o.timeframe = %(tf)s
+          AND o.bar_ts > clock_timestamp() - make_interval(days => %(fresh)s)
           AND (%(dir)s = 'all' OR o.direction = %(dir)s)
           AND o.direction IN ('bullish', 'bearish')
           AND o.confluence_score >= 35
@@ -1541,6 +1571,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
         LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
         WHERE o.timeframe = %(tf)s
+          AND o.bar_ts > clock_timestamp() - make_interval(days => %(fresh)s)
           AND (%(dir)s = 'all' OR o.direction = %(dir)s)
           AND ({setup_sql})
         ORDER BY o.confluence_score DESC NULLS LAST, o.ticker
@@ -1551,7 +1582,10 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
     conn = _conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(query, {"tf": tf, "dir": direction})
+            # Freshness gate: a stale intraday series (truncated Polygon
+            # response) must never surface as a current pick.
+            fresh_days = 4 if tf in ("4h", "1h") else 30
+            cur.execute(query, {"tf": tf, "dir": direction, "fresh": fresh_days})
             rows = cur.fetchall()
             cur.execute("SELECT max(scanned_at) FROM oscillator_scan "
                         "WHERE timeframe = %s", (tf,))

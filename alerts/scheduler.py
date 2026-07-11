@@ -598,17 +598,42 @@ def _seed_oscillator_backtest_if_empty():
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM oscillator_backtest LIMIT 1")
+                # Re-run when empty OR when the event set predates the coil/
+                # RSI-range upgrade (idempotent upsert refreshes old rows too).
+                cur.execute("SELECT 1 FROM oscillator_backtest "
+                            "WHERE signal_type = 'coil' LIMIT 1")
                 need = cur.fetchone() is None
         finally:
             conn.close()
         if need:
             from analysis.oscillator_backtest import run_backtest
-            log.info("[oscillator] backtest table empty — running replay...")
+            log.info("[oscillator] backtest missing coil events — replaying...")
             res = run_backtest()
             log.info(f"[oscillator] backtest done: {res}")
     except Exception as e:
         log.warning(f"[oscillator] backtest seed skipped: {e}")
+
+
+def _seed_pattern_backtest_if_empty():
+    """One-time pattern time-to-target replay (runs at deploy while the
+    table is empty; ~10 minutes over a 1,500-name sample). Feeds the
+    'Est. resolution / DTE' column on the Patterns tab."""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pattern_backtest LIMIT 1")
+                need = cur.fetchone() is None
+        finally:
+            conn.close()
+        if need:
+            from analysis.pattern_backtest import run_pattern_backtest
+            log.info("[patterns] backtest table empty — running replay...")
+            res = run_pattern_backtest()
+            log.info(f"[patterns] timing backtest done: {res}")
+    except Exception as e:
+        log.warning(f"[patterns] backtest seed skipped: {e}")
 
 
 def _seed_pattern_scan_if_stale():
@@ -796,6 +821,7 @@ def start_scheduler():
         _seed_pattern_scan_if_stale()
         _seed_oscillator_if_empty()
         _seed_oscillator_backtest_if_empty()
+        _seed_pattern_backtest_if_empty()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
