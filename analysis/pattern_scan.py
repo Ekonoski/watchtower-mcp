@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 4
+ENGINE_VERSION = 5
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -719,7 +719,10 @@ def _det_cup_handle(ctx):
     """Rounded base between two rims at the same level, then a shallow handle
     pause under the rim — breakout over the rim completes it."""
     cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
-    rim_tol, min_depth, max_depth = 0.04 * s, 0.10 * s, 0.55
+    # Rim tolerance 2.5%·scale: at 4% the detector paired MRK's Feb $125.14
+    # high with the July $130.29 high — a tilted "cup" whose left rim was
+    # really an inverse-H&S neckline touch. Rims must actually be level.
+    rim_tol, min_depth, max_depth = 0.025 * s, 0.10 * s, 0.55
     phighs = ctx["phighs"]
     # Right rim: latest pivot high with a 3..handle_max bar handle after it.
     cands = [(i, p) for i, p in phighs if 3 <= (n - 1) - i <= cfg["handle_max"]]
