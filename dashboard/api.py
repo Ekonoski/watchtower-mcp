@@ -1478,7 +1478,7 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
 
 
 _OSC_SETUPS = ("entry_grade", "high_confluence", "coil", "wt_extreme_cross",
-               "pctr_hook", "divergence", "mf_curl", "any_signal")
+               "pctr_hook", "divergence", "mf_round", "mf_curl", "any_signal")
 
 
 def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
@@ -1562,7 +1562,12 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
             "pctr_hook": "o.signals ? 'pctr_hook'",
-            "divergence": "o.signals ? 'divergence'",
+            "divergence": "o.signals ? 'divergence'"
+                          + ("" if direction == "all" else
+                             f" AND o.signals->'divergence'->>'dir' = '{direction}'"),
+            "mf_round": "o.signals ? 'mf_round'"
+                        + ("" if direction == "all" else
+                           f" AND o.signals->'mf_round'->>'dir' = '{sig_dir}'"),
             "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
             "any_signal": "o.signals != '{}'::jsonb",
         }[setup]

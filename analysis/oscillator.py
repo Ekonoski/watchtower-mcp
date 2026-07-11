@@ -344,6 +344,41 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                               "volume_backed": hot,
                               "mf": round(float(mf[-1]), 2)}
 
+    # 5b) Money-flow ROUNDING — Eric's "beautiful curvature" read made
+    # precise: a smooth U-turn (bullish) or ∩-turn (bearish) in the flow
+    # line. Unlike mf_curl (a one-bar inflection), this wants a real arc:
+    # the flow declined into a turn, then rose smoothly (>=80% of bars in
+    # the turn direction) with a meaningful swing. Thresholds are on the
+    # mf_candle scale (typical range ±15).
+    mfw = df[MF_DEFAULT].iloc[-20:]
+    if len(mfw) == 20 and not mfw.isna().any():
+        vals = mfw.values
+
+        def _smooth_turn(v, t_i, up):
+            run = v[t_i:]
+            if len(run) < 5 or t_i < 3:
+                return None                      # need lead-in + follow-through
+            d_run = np.diff(run)
+            ok = (d_run > 0) if up else (d_run < 0)
+            if ok.mean() < 0.8:
+                return None                      # not smooth — choppy turn
+            pre = np.diff(v[:t_i + 1])
+            pre_ok = (pre < 0) if up else (pre > 0)
+            if pre_ok.mean() < 0.6:
+                return None                      # no arc — it wasn't falling/rising in
+            swing = abs(float(run[-1] - run[0]))
+            if swing < 3.0:
+                return None
+            return {"dir": "up" if up else "down",
+                    "turn_bars_ago": int(len(v) - 1 - t_i),
+                    "swing": round(swing, 2),
+                    "mf": round(float(v[-1]), 2)}
+
+        r_round = _smooth_turn(vals, int(np.argmin(vals)), True) \
+            or _smooth_turn(vals, int(np.argmax(vals)), False)
+        if r_round:
+            sig["mf_round"] = r_round
+
     # 6) Divergence on confirmed swing pivots (price vs wt1), 60-bar window.
     look = df.iloc[-60:]
     ph = _pivot_idx(look["high"].values, 3, "high")

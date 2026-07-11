@@ -598,10 +598,10 @@ def _seed_oscillator_backtest_if_empty():
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                # Re-run when empty OR when the event set predates the coil/
-                # RSI-range upgrade (idempotent upsert refreshes old rows too).
+                # Re-run when empty OR when the event set predates the newest
+                # event type (idempotent upsert refreshes old rows too).
                 cur.execute("SELECT 1 FROM oscillator_backtest "
-                            "WHERE signal_type = 'coil' LIMIT 1")
+                            "WHERE signal_type = 'mf_round' LIMIT 1")
                 need = cur.fetchone() is None
         finally:
             conn.close()
