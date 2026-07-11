@@ -1343,7 +1343,11 @@ async function loadOscillator() {
   let d;
   try {
     d = await api(`/api/oscillator?tf=${encodeURIComponent(o.tf)}&direction=${encodeURIComponent(o.dir)}&setup=${encodeURIComponent(o.setup)}`);
-  } catch { return; }
+  } catch {
+    // Render the empty state rather than leaving a silently blank table
+    if (!seqStale("oscillator", tok)) { state.oscRows = []; state.oscAsOf = ""; renderOscillator(); }
+    return;
+  }
   if (seqStale("oscillator", tok)) return;
   state.oscRows = d.rows || [];
   state.oscAsOf = d.as_of_et || "";

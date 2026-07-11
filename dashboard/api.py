@@ -1587,7 +1587,9 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "rs_pct": int(r[15]) if r[15] is not None else None,
             "close": _f(r[16]),
             "weekly_dir": r[17],
-            "vs_sma_pct": round(r[18] * 100, 1) if r[18] is not None else None,
+            # float() before round — the raw DB Decimal survives round() and
+            # then blows up JSON serialization AFTER the route's error guard
+            "vs_sma_pct": round(float(r[18]) * 100, 1) if r[18] is not None else None,
         }
         if setup == "entry_grade":
             row.update({
