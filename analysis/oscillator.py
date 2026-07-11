@@ -60,6 +60,13 @@ INTRADAY_SPEC = {
 # only logs to alert_log when the bar's confluence clears this.
 PERF_MIN_CONFLUENCE = 60
 
+# Bump when signal DEFINITIONS change (new signal types, changed payloads).
+# The deploy-time seed sees an unclaimed version and re-runs the full scan,
+# so stored signals never lag the code — without this, a new signal shows
+# an empty screen until the next scheduled scan.
+# v2: stacked divergence (4 indicators + count), mf_round, power coils.
+SIGNALS_VERSION = 2
+
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
 
@@ -379,30 +386,50 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
         if r_round:
             sig["mf_round"] = r_round
 
-    # 6) Divergence on confirmed swing pivots (price vs wt1), 60-bar window.
+    # 6) STACKED divergence on confirmed swing pivots, 60-bar window: the
+    # same two price pivots are checked against FOUR series — the wave
+    # (wt1), RSI, money flow, and MACD histogram. Each diverges for a
+    # different reason (momentum exhaustion / weaker closes / distribution
+    # / thrust decay), so agreement is information: count says how many.
+    # The first pivot must sit on the elevated (bearish) / depressed
+    # (bullish) side of each series' midline — a divergence from nowhere
+    # isn't one.
     look = df.iloc[-60:]
+    DIV_SERIES = (("wave", "wt1", 0.0), ("rsi", "rsi", 50.0),
+                  ("mf", MF_DEFAULT, 0.0), ("macd", "macd_hist", 0.0))
+
+    def _div_hits(a, b, bearish):
+        hits = []
+        for nm, col, mid in DIV_SERIES:
+            va, vb = look[col].values[a], look[col].values[b]
+            if np.isnan(va) or np.isnan(vb):
+                continue
+            if bearish and va > mid and vb < va:
+                hits.append(nm)
+            elif not bearish and va < mid and vb > va:
+                hits.append(nm)
+        return hits
+
     ph = _pivot_idx(look["high"].values, 3, "high")
     pl = _pivot_idx(look["low"].values, 3, "low")
     if len(ph) >= 2:
         a, b = ph[-2], ph[-1]
-        if look["high"].values[b] > look["high"].values[a] \
-                and look["wt1"].values[b] < look["wt1"].values[a] \
-                and look["wt1"].values[a] > 0:
-            sig["divergence"] = {"dir": "bearish",
-                                 "price": [round(float(look["high"].values[a]), 2),
-                                           round(float(look["high"].values[b]), 2)],
-                                 "wt1": [round(float(look["wt1"].values[a]), 1),
-                                         round(float(look["wt1"].values[b]), 1)]}
+        if look["high"].values[b] > look["high"].values[a]:
+            hits = _div_hits(a, b, bearish=True)
+            if hits:
+                sig["divergence"] = {"dir": "bearish", "count": len(hits),
+                                     "indicators": hits,
+                                     "price": [round(float(look["high"].values[a]), 2),
+                                               round(float(look["high"].values[b]), 2)]}
     if "divergence" not in sig and len(pl) >= 2:
         a, b = pl[-2], pl[-1]
-        if look["low"].values[b] < look["low"].values[a] \
-                and look["wt1"].values[b] > look["wt1"].values[a] \
-                and look["wt1"].values[a] < 0:
-            sig["divergence"] = {"dir": "bullish",
-                                 "price": [round(float(look["low"].values[a]), 2),
-                                           round(float(look["low"].values[b]), 2)],
-                                 "wt1": [round(float(look["wt1"].values[a]), 1),
-                                         round(float(look["wt1"].values[b]), 1)]}
+        if look["low"].values[b] < look["low"].values[a]:
+            hits = _div_hits(a, b, bearish=False)
+            if hits:
+                sig["divergence"] = {"dir": "bullish", "count": len(hits),
+                                     "indicators": hits,
+                                     "price": [round(float(look["low"].values[a]), 2),
+                                               round(float(look["low"].values[b]), 2)]}
 
     score, direction = _confluence(df, sig, pattern_ctx)
     return {"signals": sig, "confluence_score": score, "direction": direction}
@@ -821,6 +848,8 @@ def describe_read(r: dict) -> str:
                 tag += " (extreme)"
             if isinstance(v, dict) and v.get("volume_backed"):
                 tag += " (vol-backed)"
+            if isinstance(v, dict) and v.get("count") and v.get("indicators"):
+                tag += f" ({v['count']}/4: {'+'.join(v['indicators'])})"
             names.append(tag)
         parts.append("fired: " + ", ".join(names))
     head = ""
