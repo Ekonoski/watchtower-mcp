@@ -41,6 +41,7 @@ TRACK_DAYS: Dict[str, int] = {
     "breakdown": 60,
     "insider":   60,
     "master":    90,
+    "oscillator": 90,
 }
 
 # Win thresholds (always in the direction of the trade):

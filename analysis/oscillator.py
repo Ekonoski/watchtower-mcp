@@ -1,0 +1,758 @@
+"""
+Watchtower — the Watchtower Oscillator.
+
+A composite momentum/flow engine built from public-domain math: LazyBear's
+WaveTrend (the wave pair), dual money-flow reads, RSI/StochRSI, Williams %R
+with an EMA guide, and MACD as a confirmation layer. Everything is computed
+on CONFIRMED bars only — the live, still-forming bar is never used, so a
+signal that exists at bar close can never repaint away later.
+
+Timeframes: daily and weekly (resampled) from daily_prices, 4h from Polygon
+(same bounded candidate set the pattern scan uses), plus 2-day/3-day
+resamples of the daily series (computed on demand for single-ticker reads).
+Multi-day groups are anchored at the END of the series so the newest group
+always contains exactly N sessions — complete by construction. (TradingView
+anchors multi-day bars at the start of its history, so a 2D/3D panel there
+can be phase-shifted by one session vs ours; wave shape and levels match,
+individual cross bars may differ by one.)
+
+Outputs land in two tables (migration 0065):
+  oscillator_scan     — current snapshot per (ticker, timeframe), upserted
+  oscillator_signals  — append-only history of fired signals, structured to
+                        feed the alert-performance pipeline (7/30/90-day
+                        forward returns) later.
+
+Indicator settings are fixed to Eric's TradingView panels: WaveTrend
+10/21/4 with ±53/±60 bands, %R length 28 with EMA 21, MACD 12/26/9,
+RSI 14 and StochRSI 14/14/3/3.
+"""
+import json
+import logging
+import time
+
+import numpy as np
+import pandas as pd
+
+log = logging.getLogger(__name__)
+
+# WaveTrend bands (Cipher-style): inner = actionable extreme, outer = blown out.
+WT_INNER = 53.0
+WT_OUTER = 60.0
+
+# Default money-flow variant shown in summaries. Both are always computed and
+# stored; validation against the TradingView fill picks which one leads.
+MF_DEFAULT = "mf_candle"
+
+TIMEFRAMES = ("daily", "weekly", "4h", "1h")    # scanned + stored
+RESAMPLE_TFS = ("2d", "3d")                     # on-demand, single-ticker reads
+ON_DEMAND_TFS = ("daily", "weekly", "2d", "3d", "4h", "1h", "5m")
+
+# Polygon aggregate settings per intraday timeframe: (multiplier, timespan,
+# calendar-days of history, seconds per bar). 5m is an execution timeframe —
+# never fleet-scanned, only computed live for a single ticker on request.
+INTRADAY_SPEC = {
+    "4h": (4, "hour", 200, 4 * 3600),
+    "1h": (1, "hour", 75, 3600),
+    "5m": (5, "minute", 10, 300),
+}
+
+# Fleet-scan quality gate for the alert-performance feed: a fired signal set
+# only logs to alert_log when the bar's confluence clears this.
+PERF_MIN_CONFLUENCE = 60
+
+
+# ── Math helpers (vectorized) ────────────────────────────────────────────────
+
+def _ema(s: pd.Series, span: int) -> pd.Series:
+    return s.ewm(span=span, adjust=False).mean()
+
+
+def _sma(s: pd.Series, n: int) -> pd.Series:
+    return s.rolling(n).mean()
+
+
+def compute_oscillator(df: pd.DataFrame) -> pd.DataFrame:
+    """All indicator columns for a confirmed-bars OHLCV frame.
+
+    df: columns open, high, low, close, volume; ascending index of bar
+    timestamps. Returns df with indicator columns appended (same index).
+    """
+    out = df.copy()
+    rng = (out["high"] - out["low"]).replace(0, np.nan)   # doji guard
+
+    # WaveTrend (LazyBear): hlc3 → esa/d → ci → wt1/wt2
+    ap = (out["high"] + out["low"] + out["close"]) / 3.0
+    esa = _ema(ap, 10)
+    d = _ema((ap - esa).abs(), 10)
+    ci = (ap - esa) / (0.015 * d.replace(0, np.nan))
+    out["wt1"] = _ema(ci, 21)
+    out["wt2"] = _sma(out["wt1"], 4)
+    out["wt_diff"] = out["wt1"] - out["wt2"]
+
+    # Money flow, candle-position style (visual match to the Cipher fill)
+    out["mf_candle"] = _sma(((out["close"] - out["open"]) / rng).fillna(0.0) * 150.0, 60)
+
+    # Money flow, volume-weighted close-location (true flow-of-money read)
+    clv = (((out["close"] - out["low"]) - (out["high"] - out["close"])) / rng).fillna(0.0)
+    vol = out["volume"].fillna(0.0)
+    out["mf_volume"] = _ema(clv * vol, 21) / _ema(vol, 21).replace(0, np.nan)
+
+    # RSI(14), Wilder smoothing
+    delta = out["close"].diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    rs = gain / loss.replace(0, np.nan)
+    out["rsi"] = (100 - 100 / (1 + rs)).fillna(100.0)
+
+    # StochRSI 14/14, %K smooth 3, %D 3
+    rmin = out["rsi"].rolling(14).min()
+    rmax = out["rsi"].rolling(14).max()
+    stoch = (out["rsi"] - rmin) / (rmax - rmin).replace(0, np.nan) * 100.0
+    out["stoch_k"] = _sma(stoch, 3)
+    out["stoch_d"] = _sma(out["stoch_k"], 3)
+
+    # Williams %R length 28 (+ EMA 21 guide) — Eric's TradingView settings
+    hh = out["high"].rolling(28).max()
+    ll = out["low"].rolling(28).min()
+    out["pctr"] = (out["close"] - hh) / (hh - ll).replace(0, np.nan) * 100.0
+    out["pctr_ema"] = _ema(out["pctr"], 21)
+
+    # MACD 12/26/9
+    macd = _ema(out["close"], 12) - _ema(out["close"], 26)
+    out["macd"] = macd
+    out["macd_signal"] = _ema(macd, 9)
+    out["macd_hist"] = macd - out["macd_signal"]
+
+    return out
+
+
+# ── Bar assembly (confirmed bars only) ───────────────────────────────────────
+
+def resample_days(daily: pd.DataFrame, k: int) -> pd.DataFrame:
+    """k-session bars anchored at the END of the series: the newest group has
+    exactly k sessions, so the last bar is complete by construction. A
+    leftover partial group at the START is dropped."""
+    n = len(daily)
+    if n < k:
+        return daily.iloc[0:0]
+    start = n % k
+    d = daily.iloc[start:]
+    grp = np.arange(len(d)) // k
+    agg = d.groupby(grp).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"),
+        close=("close", "last"), volume=("volume", "sum"))
+    agg.index = d.index[(np.arange(len(d)) % k) == k - 1]  # stamp = group's last session
+    return agg
+
+
+def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
+    """ISO-week bars from daily sessions. The current (possibly incomplete)
+    week is dropped by default — a weekly bar only exists once its week is
+    over, so weekly signals never repaint."""
+    iso = daily.index.to_series().apply(lambda d: (d.isocalendar()[0], d.isocalendar()[1]))
+    agg = daily.groupby(iso.values).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"),
+        close=("close", "last"), volume=("volume", "sum"))
+    last_dates = daily.index.to_series().groupby(iso.values).max()
+    agg.index = pd.Index(last_dates.values)
+    agg = agg.sort_index()
+    if drop_partial and len(agg):
+        agg = agg.iloc[:-1]
+    return agg
+
+
+def fetch_intraday_confirmed(ticker: str, tf: str = "4h",
+                             days: int = None) -> pd.DataFrame:
+    """Polygon intraday bars (4h / 1h / 5m) with REAL timestamps (the shared
+    helper collapses them to dates), final bar dropped while its window is
+    still open — so the newest bar is always confirmed."""
+    from datetime import date, datetime, timedelta, timezone
+    from analysis.polygon_data import get_client
+    mult, span, default_days, bar_secs = INTRADAY_SPEC[tf]
+    client = get_client()
+    empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    if not client:
+        return empty
+    try:
+        end = date.today()
+        start = end - timedelta(days=(days or default_days) + 10)
+        aggs = list(client.get_aggs(ticker, mult, span,
+                                    start.isoformat(), end.isoformat(), limit=50000))
+    except Exception as e:
+        log.debug(f"[oscillator] {tf} fetch {ticker} failed: {e}")
+        return empty
+    if not aggs:
+        return empty
+    rows = [(datetime.fromtimestamp(a.timestamp / 1000, tz=timezone.utc),
+             a.open, a.high, a.low, a.close, a.volume) for a in aggs]
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df = df.set_index("ts").astype(float)
+    if len(df) and df.index[-1] + pd.Timedelta(seconds=bar_secs) \
+            > pd.Timestamp.now(tz=timezone.utc):
+        df = df.iloc[:-1]
+    return df
+
+
+def fetch_4h_confirmed(ticker: str, days: int = 200) -> pd.DataFrame:
+    return fetch_intraday_confirmed(ticker, "4h", days)
+
+
+def _fetch_daily_ohlcv(conn, tickers: list, days: int = 700) -> dict:
+    """OHLCV daily bars per ticker (high/low/open fall back to close for any
+    row predating the 0062 backfill), oldest → newest."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ticker, trade_date,
+                   COALESCE(open, close), COALESCE(high, close),
+                   COALESCE(low, close), close, COALESCE(volume, 0)
+            FROM daily_prices
+            WHERE ticker = ANY(%s) AND trade_date >= CURRENT_DATE - %s
+            ORDER BY ticker, trade_date
+            """, (tickers, days),
+        )
+        rows = cur.fetchall()
+    out: dict = {}
+    for t, dt, o, h, lo, c, v in rows:
+        out.setdefault(t, []).append((dt, float(o), float(h), float(lo), float(c), float(v)))
+    frames = {}
+    for t, recs in out.items():
+        df = pd.DataFrame(recs, columns=["ts", "open", "high", "low", "close", "volume"])
+        frames[t] = df.set_index("ts")
+    return frames
+
+
+# ── Signal evaluation (last confirmed bar only) ──────────────────────────────
+
+def _pivot_idx(vals: np.ndarray, k: int, kind: str) -> list:
+    """Confirmed fractal pivots (need k bars on BOTH sides — no repaint)."""
+    out = []
+    n = len(vals)
+    for i in range(k, n - k):
+        w = vals[i - k:i + k + 1]
+        if kind == "low" and vals[i] <= w.min():
+            out.append(i)
+        elif kind == "high" and vals[i] >= w.max():
+            out.append(i)
+    return out
+
+
+def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
+    """Signals present AT the last confirmed bar. Returns
+    {signals: {...}, confluence_score, direction} — deterministic, and by
+    construction immutable once the bar has closed."""
+    if len(df) < 70:
+        return {"signals": {}, "confluence_score": 0, "direction": None}
+    sig: dict = {}
+    c = df.iloc[-1]
+    p = df.iloc[-2]
+
+    # 1) WaveTrend cross, tagged by zone. Crosses inside the ±53 bands are
+    # 'weak' — tradeable waves start from the bands.
+    if p["wt1"] <= p["wt2"] and c["wt1"] > c["wt2"]:
+        zone = "extreme" if c["wt2"] <= -WT_INNER else "weak"
+        sig["wt_cross"] = {"dir": "up", "zone": zone, "wt2": round(float(c["wt2"]), 1)}
+    elif p["wt1"] >= p["wt2"] and c["wt1"] < c["wt2"]:
+        zone = "extreme" if c["wt2"] >= WT_INNER else "weak"
+        sig["wt_cross"] = {"dir": "down", "zone": zone, "wt2": round(float(c["wt2"]), 1)}
+
+    # 2) Coil: 10 bars of tight closes while wt1 bleeds ≥15 points, with the
+    # band low holding above the nearest confirmed pivot-low shelf below it.
+    w10 = df.iloc[-10:]
+    band_lo, band_hi = float(w10["close"].min()), float(w10["close"].max())
+    if band_lo > 0 and (band_hi / band_lo - 1) <= 0.04 \
+            and (df["wt1"].iloc[-10] - c["wt1"]) >= 15:
+        lows = df["low"].values[:-10]
+        piv = _pivot_idx(lows, 3, "low")
+        shelf = max((lows[i] for i in piv[-12:] if lows[i] < band_lo), default=None)
+        if shelf is None or band_lo > shelf:
+            quality = 50.0
+            if pattern_ctx and pattern_ctx.get("direction") == "bullish" \
+                    and pattern_ctx.get("status") == "forming":
+                quality += 25.0
+                inv = pattern_ctx.get("invalid") or 0
+                trig = pattern_ctx.get("trigger") or 0
+                if inv and trig and inv < band_lo and band_hi < trig:
+                    quality += 25.0   # coiling inside the right-shoulder zone
+            sig["coil"] = {"band_pct": round((band_hi / band_lo - 1) * 100, 2),
+                           "wt1_bleed": round(float(df["wt1"].iloc[-10] - c["wt1"]), 1),
+                           "shelf": round(float(shelf), 2) if shelf else None,
+                           "coil_quality": quality}
+
+    # 3) %R hook out of the extreme band after ≥3 closes pinned there.
+    r = df["pctr"].values
+    if r[-1] > -80 and (r[-4:-1] <= -80).all():
+        sig["pctr_hook"] = {"dir": "up", "pctr": round(float(r[-1]), 1)}
+    elif r[-1] < -20 and (r[-4:-1] >= -20).all():
+        sig["pctr_hook"] = {"dir": "down", "pctr": round(float(r[-1]), 1)}
+
+    # 4) MACD histogram flip + signal-line cross.
+    if np.sign(c["macd_hist"]) != np.sign(p["macd_hist"]) and p["macd_hist"] != 0:
+        sig["macd_flip"] = {"dir": "up" if c["macd_hist"] > 0 else "down",
+                            "hist": round(float(c["macd_hist"]), 4)}
+    if p["macd"] <= p["macd_signal"] and c["macd"] > c["macd_signal"]:
+        sig["macd_cross"] = {"dir": "up"}
+    elif p["macd"] >= p["macd_signal"] and c["macd"] < c["macd_signal"]:
+        sig["macd_cross"] = {"dir": "down"}
+
+    # 5) Money-flow curl (default variant): slope sign change, flagged
+    # volume_backed when the driving bars ran hot — a curl without volume is
+    # usually just an old bar rolling out of the window.
+    mf = df[MF_DEFAULT].values
+    if len(mf) >= 4 and not np.isnan(mf[-4:]).any():
+        s_now, s_prev = mf[-1] - mf[-2], mf[-2] - mf[-3]
+        if np.sign(s_now) != np.sign(s_prev) and s_prev != 0:
+            v20 = df["volume"].rolling(20).mean().iloc[-2]
+            hot = bool(v20 and df["volume"].iloc[-2:].mean() > 1.5 * v20)
+            sig["mf_curl"] = {"dir": "up" if s_now > 0 else "down",
+                              "volume_backed": hot,
+                              "mf": round(float(mf[-1]), 2)}
+
+    # 6) Divergence on confirmed swing pivots (price vs wt1), 60-bar window.
+    look = df.iloc[-60:]
+    ph = _pivot_idx(look["high"].values, 3, "high")
+    pl = _pivot_idx(look["low"].values, 3, "low")
+    if len(ph) >= 2:
+        a, b = ph[-2], ph[-1]
+        if look["high"].values[b] > look["high"].values[a] \
+                and look["wt1"].values[b] < look["wt1"].values[a] \
+                and look["wt1"].values[a] > 0:
+            sig["divergence"] = {"dir": "bearish",
+                                 "price": [round(float(look["high"].values[a]), 2),
+                                           round(float(look["high"].values[b]), 2)],
+                                 "wt1": [round(float(look["wt1"].values[a]), 1),
+                                         round(float(look["wt1"].values[b]), 1)]}
+    if "divergence" not in sig and len(pl) >= 2:
+        a, b = pl[-2], pl[-1]
+        if look["low"].values[b] < look["low"].values[a] \
+                and look["wt1"].values[b] > look["wt1"].values[a] \
+                and look["wt1"].values[a] < 0:
+            sig["divergence"] = {"dir": "bullish",
+                                 "price": [round(float(look["low"].values[a]), 2),
+                                           round(float(look["low"].values[b]), 2)],
+                                 "wt1": [round(float(look["wt1"].values[a]), 1),
+                                         round(float(look["wt1"].values[b]), 1)]}
+
+    score, direction = _confluence(df, sig, pattern_ctx)
+    return {"signals": sig, "confluence_score": score, "direction": direction}
+
+
+def _confluence(df: pd.DataFrame, sig: dict, pattern_ctx: dict = None):
+    """0–100. Waves + money flow carry 50, %R 15, MACD 15, structural
+    confluence with pattern_scan 20. WaveTrend and MACD are mathematical
+    cousins (both EMA-difference machines), so they score in SEPARATE
+    buckets and can never double-count the same move. Scored for both
+    directions; the stronger side wins."""
+    c = df.iloc[-1]
+    mf = float(c[MF_DEFAULT]) if not np.isnan(c[MF_DEFAULT]) else 0.0
+    mf_slope = float(df[MF_DEFAULT].iloc[-1] - df[MF_DEFAULT].iloc[-2])
+    out = {}
+    for side in ("bullish", "bearish"):
+        up = side == "bullish"
+        s = 0.0
+        # Waves + money flow (50)
+        wt2 = float(c["wt2"])
+        if (up and wt2 <= -WT_INNER) or (not up and wt2 >= WT_INNER):
+            s += 15 + (5 if abs(wt2) >= WT_OUTER else 0)
+        x = sig.get("wt_cross")
+        if x and x["dir"] == ("up" if up else "down"):
+            s += 12 + (8 if x["zone"] == "extreme" else 0)
+        if (up and mf_slope > 0) or (not up and mf_slope < 0):
+            s += 5
+        if (up and mf < 0) or (not up and mf > 0):
+            s += 5   # flow washed out against the move = fuel for the turn
+        s = min(s, 50.0)
+        # %R (15)
+        r = float(c["pctr"])
+        if (up and r <= -80) or (not up and r >= -20):
+            s += 8
+        h = sig.get("pctr_hook")
+        if h and h["dir"] == ("up" if up else "down"):
+            s += 7
+        # MACD (15)
+        if (up and c["macd_hist"] > 0) or (not up and c["macd_hist"] < 0):
+            s += 5
+        f = sig.get("macd_flip")
+        if f and f["dir"] == ("up" if up else "down"):
+            s += 5
+        mx = sig.get("macd_cross")
+        if mx and mx["dir"] == ("up" if up else "down"):
+            s += 5
+        # Structure (20): a live pattern in the same direction, near its zone
+        if pattern_ctx and pattern_ctx.get("direction") == side:
+            s += 12
+            trig = pattern_ctx.get("trigger")
+            if trig and abs(float(c["close"]) / trig - 1) <= 0.05:
+                s += 8
+        out[side] = min(round(s), 100)
+    direction = max(out, key=out.get)
+    if out["bullish"] == out["bearish"]:
+        direction = None
+    return (out[direction] if direction else max(out.values())), direction
+
+
+# ── On-demand single-ticker read (any timeframe, always current) ────────────
+
+def compute_for_ticker(ticker: str, timeframe: str = "daily",
+                       conn=None) -> dict:
+    """Fresh oscillator read for ONE ticker on any supported timeframe.
+    daily/weekly/2d/3d come from daily_prices; 4h/1h/5m from Polygon.
+    Returns {} when there's not enough history. Always computed live —
+    single-ticker reads are cheap, so nothing here can be stale."""
+    ticker = ticker.upper().strip()
+    if timeframe not in ON_DEMAND_TFS:
+        return {}
+    own_conn = conn is None
+    if timeframe in INTRADAY_SPEC:
+        df = fetch_intraday_confirmed(ticker, timeframe)
+        pctx_tf = timeframe if timeframe == "4h" else None
+    else:
+        if own_conn:
+            from screen.reversal_screen import _conn
+            conn = _conn()
+        try:
+            frames = _fetch_daily_ohlcv(conn, [ticker])
+        finally:
+            if own_conn:
+                conn.close()
+                conn = None
+        daily = frames.get(ticker)
+        if daily is None:
+            return {}
+        if timeframe == "daily":
+            df = daily
+        elif timeframe == "weekly":
+            df = resample_weekly(daily)
+        else:
+            df = resample_days(daily, int(timeframe[0]))
+        pctx_tf = timeframe if timeframe in ("daily", "weekly") else None
+    if len(df) < 70:
+        return {}
+    dfo = compute_oscillator(df)
+    pctx = None
+    if pctx_tf:
+        try:
+            if own_conn:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT direction, status, trigger_price, invalid_level
+                    FROM pattern_scan WHERE ticker = %s AND timeframe = %s
+                    ORDER BY score DESC NULLS LAST LIMIT 1
+                """, (ticker, pctx_tf))
+                r = cur.fetchone()
+            if r:
+                pctx = {"direction": r[0], "status": r[1],
+                        "trigger": float(r[2]) if r[2] is not None else None,
+                        "invalid": float(r[3]) if r[3] is not None else None}
+        except Exception:
+            pass
+        finally:
+            if own_conn and conn is not None:
+                conn.close()
+    ev = evaluate_signals(dfo, pctx)
+    c = dfo.iloc[-1]
+
+    def f(v):
+        v = float(v)
+        return None if (np.isnan(v) or np.isinf(v)) else round(v, 4)
+    return {
+        "ticker": ticker, "timeframe": timeframe,
+        "bar_ts": dfo.index[-1], "close": f(c["close"]),
+        "wt1": f(c["wt1"]), "wt2": f(c["wt2"]), "wt_diff": f(c["wt_diff"]),
+        "mf": f(c[MF_DEFAULT]), "mf_candle": f(c["mf_candle"]),
+        "mf_volume": f(c["mf_volume"]), "rsi": f(c["rsi"]),
+        "stoch_k": f(c["stoch_k"]), "stoch_d": f(c["stoch_d"]),
+        "pctr": f(c["pctr"]), "pctr_ema": f(c["pctr_ema"]),
+        "macd": f(c["macd"]), "macd_signal": f(c["macd_signal"]),
+        "macd_hist": f(c["macd_hist"]),
+        "signals": ev["signals"], "confluence_score": ev["confluence_score"],
+        "direction": ev["direction"], "pattern_ctx": pctx,
+    }
+
+
+# ── Scan orchestration ───────────────────────────────────────────────────────
+
+def _pattern_context(conn) -> dict:
+    """(ticker, timeframe) -> best live pattern row, for coil boosts and the
+    structural-confluence bucket."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (ticker, timeframe)
+                   ticker, timeframe, direction, status, trigger_price,
+                   invalid_level
+            FROM pattern_scan
+            ORDER BY ticker, timeframe, score DESC NULLS LAST
+        """)
+        return {(t, tf): {"direction": d, "status": st,
+                          "trigger": float(tr) if tr is not None else None,
+                          "invalid": float(inv) if inv is not None else None}
+                for t, tf, d, st, tr, inv in cur.fetchall()}
+
+
+def _store(conn, ticker: str, timeframe: str, df: pd.DataFrame, ev: dict) -> None:
+    c = df.iloc[-1]
+    bar_ts = df.index[-1]
+
+    def f(v):
+        v = float(v)
+        return None if (np.isnan(v) or np.isinf(v)) else round(v, 4)
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO oscillator_scan
+                (ticker, timeframe, bar_ts, wt1, wt2, wt_diff, mf_candle,
+                 mf_volume, rsi, stoch_k, stoch_d, pctr, pctr_ema, macd,
+                 macd_signal, macd_hist, signals, confluence_score,
+                 direction, scanned_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s::jsonb,%s,%s, clock_timestamp())
+            ON CONFLICT (ticker, timeframe) DO UPDATE SET
+                bar_ts=EXCLUDED.bar_ts, wt1=EXCLUDED.wt1, wt2=EXCLUDED.wt2,
+                wt_diff=EXCLUDED.wt_diff, mf_candle=EXCLUDED.mf_candle,
+                mf_volume=EXCLUDED.mf_volume, rsi=EXCLUDED.rsi,
+                stoch_k=EXCLUDED.stoch_k, stoch_d=EXCLUDED.stoch_d,
+                pctr=EXCLUDED.pctr, pctr_ema=EXCLUDED.pctr_ema,
+                macd=EXCLUDED.macd, macd_signal=EXCLUDED.macd_signal,
+                macd_hist=EXCLUDED.macd_hist, signals=EXCLUDED.signals,
+                confluence_score=EXCLUDED.confluence_score,
+                direction=EXCLUDED.direction, scanned_at=clock_timestamp()
+        """, (ticker, timeframe, str(bar_ts), f(c["wt1"]), f(c["wt2"]),
+              f(c["wt_diff"]), f(c["mf_candle"]), f(c["mf_volume"]),
+              f(c["rsi"]), f(c["stoch_k"]), f(c["stoch_d"]), f(c["pctr"]),
+              f(c["pctr_ema"]), f(c["macd"]), f(c["macd_signal"]),
+              f(c["macd_hist"]), json.dumps(ev["signals"], default=str),
+              ev["confluence_score"], ev["direction"]))
+        for name, detail in ev["signals"].items():
+            direction = detail.get("dir") or ev["direction"] or "n/a"
+            cur.execute("""
+                INSERT INTO oscillator_signals
+                    (ticker, timeframe, signal_type, direction, bar_ts,
+                     price, context)
+                VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)
+                ON CONFLICT (ticker, timeframe, signal_type, bar_ts) DO NOTHING
+            """, (ticker, timeframe, name, direction, str(bar_ts),
+                  f(c["close"]), json.dumps(detail, default=str)))
+
+
+def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
+    """alert_log row for the performance pipeline — only for bars where the
+    fired signals + confluence clear the quality gate. wt_cross must be from
+    the extreme zone; the timing signals (coil, divergence, hook, backed
+    curl) qualify on their own."""
+    sig = ev["signals"]
+    if not sig or ev["direction"] is None \
+            or ev["confluence_score"] < PERF_MIN_CONFLUENCE:
+        return None
+    x = sig.get("wt_cross")
+    curl = sig.get("mf_curl") or {}
+    qualifying = [k for k in ("coil", "divergence", "pctr_hook") if k in sig]
+    if x and x["zone"] == "extreme":
+        qualifying.append("wt_cross")
+    if curl.get("volume_backed"):
+        qualifying.append("mf_curl")
+    if not qualifying:
+        return None
+    return {
+        "ticker": ticker,
+        "price": float(df["close"].iloc[-1]),
+        "score": ev["confluence_score"],
+        "signal_type": f"{timeframe}:{'+'.join(sorted(qualifying))}"
+                       f":{ev['direction']}",
+        "timeframe": timeframe,
+        "direction": ev["direction"],
+        "confluence": ev["confluence_score"],
+    }
+
+
+def _log_perf(perf_rows: list) -> None:
+    """Feed qualifying fired signals into alert_log so the existing
+    performance pipeline computes their 7/30/90-day forward returns."""
+    if not perf_rows:
+        return
+    try:
+        from analysis.alert_tracker import log_alerts
+        n = log_alerts(perf_rows, "oscillator")
+        log.info(f"[oscillator] {n} signals logged to alert-performance")
+    except Exception as e:
+        log.warning(f"[oscillator] perf logging failed (non-fatal): {e}")
+
+
+def run_oscillator_scan(include_4h: bool = True,
+                        include_daily_weekly: bool = True) -> dict:
+    """Full scan over the pattern universe: daily + weekly from the DB, then
+    4h AND 1h from Polygon (same bounded candidate set the pattern scan
+    uses). Designed to run immediately after each pattern scan so the
+    structural-confluence bucket reads fresh pattern rows. The midday
+    refresh passes include_daily_weekly=False — daily/weekly bars can't
+    change intraday, only the 4h/1h reads can."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    counts = {"daily": 0, "weekly": 0, "4h": 0, "1h": 0}
+    perf_rows: list = []
+    try:
+        try:
+            with conn.cursor() as _c:
+                _c.execute("SET statement_timeout = '600s'")
+            conn.commit()
+        except Exception:
+            pass
+        pctx = _pattern_context(conn)
+        if include_daily_weekly:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker FROM screener_snapshot
+                    UNION SELECT ticker FROM watchlist WHERE active = true
+                """)
+                tickers = sorted({r[0] for r in cur.fetchall() if r[0]})
+            log.info(f"[oscillator] daily/weekly scan over {len(tickers)} names")
+            t0 = time.time()
+            for i in range(0, len(tickers), 120):
+                batch = tickers[i:i + 120]
+                frames = _fetch_daily_ohlcv(conn, batch)
+                for t, daily in frames.items():
+                    if len(daily) < 70:
+                        continue
+                    try:
+                        dfd = compute_oscillator(daily)
+                        ev = evaluate_signals(dfd, pctx.get((t, "daily")))
+                        _store(conn, t, "daily", dfd, ev)
+                        counts["daily"] += 1
+                        pe = _perf_entry(t, "daily", dfd, ev)
+                        if pe:
+                            perf_rows.append(pe)
+                        wk = resample_weekly(daily)
+                        if len(wk) >= 70:
+                            dfw = compute_oscillator(wk)
+                            evw = evaluate_signals(dfw, pctx.get((t, "weekly")))
+                            _store(conn, t, "weekly", dfw, evw)
+                            counts["weekly"] += 1
+                            pw = _perf_entry(t, "weekly", dfw, evw)
+                            if pw:
+                                perf_rows.append(pw)
+                    except Exception as e:
+                        log.debug(f"[oscillator] {t} failed: {e}")
+                conn.commit()
+            log.info(f"[oscillator] daily {counts['daily']} / weekly "
+                     f"{counts['weekly']} in {time.time() - t0:.0f}s")
+        if include_4h:
+            for tf in ("4h", "1h"):
+                counts[tf] = _scan_intraday(conn, pctx, tf, perf_rows)
+    finally:
+        conn.close()
+    _log_perf(perf_rows)
+    return counts
+
+
+def _scan_intraday(conn, pctx: dict, tf: str, perf_rows: list) -> int:
+    """4h/1h pass over the pattern scan's bounded candidate set."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from analysis.pattern_scan import _four_h_candidates, FOUR_H_WORKERS
+    cands = _four_h_candidates(conn, {})
+    log.info(f"[oscillator] {tf} scan over {len(cands)} candidates")
+
+    def _one(t):
+        df = fetch_intraday_confirmed(t, tf)
+        if len(df) < 70:
+            return None
+        dfo = compute_oscillator(df)
+        # pattern rows only exist for 4h among intraday TFs
+        return t, dfo, evaluate_signals(
+            dfo, pctx.get((t, "4h")) if tf == "4h" else None)
+
+    n = 0
+    with ThreadPoolExecutor(max_workers=FOUR_H_WORKERS) as ex:
+        futs = {ex.submit(_one, t): t for t in cands}
+        for fut in as_completed(futs):
+            try:
+                res = fut.result()
+                if res:
+                    _store(conn, res[0], tf, res[1], res[2])
+                    pe = _perf_entry(res[0], tf, res[1], res[2])
+                    if pe:
+                        perf_rows.append(pe)
+                    n += 1
+            except Exception as e:
+                log.warning(f"[oscillator] {tf} {futs[fut]} failed: {e}")
+    conn.commit()
+    log.info(f"[oscillator] {tf}: {n} names")
+    return n
+
+
+# ── Plain-English readout ────────────────────────────────────────────────────
+
+def _fmt_bar_ts(bar_ts, timeframe: str) -> str:
+    """Bar stamp for humans — Eastern, 12-hour for intraday bars, plain date
+    for daily and up."""
+    try:
+        ts = pd.Timestamp(bar_ts)
+        if timeframe in INTRADAY_SPEC:
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            ts = ts.tz_convert("America/New_York")
+            return ts.strftime("%b %d, %I:%M %p ET").replace(" 0", " ")
+        return ts.strftime("%b %d")
+    except Exception:
+        return str(bar_ts)
+
+
+def describe_read(r: dict) -> str:
+    """One compact human line for a compute_for_ticker / oscillator_scan
+    read: direction + confluence, wave position, fuel, %R, MACD, and any
+    fired signals."""
+    if not r:
+        return "not enough history"
+    wt2 = r.get("wt2")
+    parts = []
+    if wt2 is not None:
+        if wt2 <= -WT_OUTER:
+            pos = f"wave blown out low ({wt2:+.0f}, below −{WT_OUTER:.0f})"
+        elif wt2 <= -WT_INNER:
+            pos = f"wave in the lower band ({wt2:+.0f})"
+        elif wt2 >= WT_OUTER:
+            pos = f"wave blown out high ({wt2:+.0f}, above +{WT_OUTER:.0f})"
+        elif wt2 >= WT_INNER:
+            pos = f"wave in the upper band ({wt2:+.0f})"
+        else:
+            pos = f"wave mid-range ({wt2:+.0f})"
+        wd = r.get("wt_diff")
+        if wd is not None:
+            pos += ", rising" if wd > 0 else ", falling"
+        parts.append(pos)
+    mf = r.get("mf")
+    if mf is not None:
+        if mf <= -5:
+            parts.append(f"flow washed out ({mf:+.1f})")
+        elif mf >= 5:
+            parts.append(f"flow loaded ({mf:+.1f})")
+        else:
+            parts.append(f"flow neutral ({mf:+.1f})")
+    pr = r.get("pctr")
+    if pr is not None:
+        if pr <= -80:
+            parts.append(f"%R pinned oversold ({pr:.0f})")
+        elif pr >= -20:
+            parts.append(f"%R pinned overbought ({pr:.0f})")
+        else:
+            parts.append(f"%R {pr:.0f}")
+    mh = r.get("macd_hist")
+    if mh is not None:
+        parts.append(f"MACD {'confirming up' if mh > 0 else 'confirming down'}"
+                     f" ({mh:+.2f})")
+    sig = r.get("signals") or {}
+    if sig:
+        names = []
+        for k, v in sig.items():
+            d = v.get("dir") if isinstance(v, dict) else None
+            zone = v.get("zone") if isinstance(v, dict) else None
+            tag = k + (f" {d}" if d else "")
+            if zone == "extreme":
+                tag += " (extreme)"
+            if isinstance(v, dict) and v.get("volume_backed"):
+                tag += " (vol-backed)"
+            names.append(tag)
+        parts.append("fired: " + ", ".join(names))
+    head = ""
+    if r.get("direction"):
+        head = f"{r['direction']} {r.get('confluence_score', 0)}/100 — "
+    return head + "; ".join(parts)

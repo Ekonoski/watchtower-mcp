@@ -640,6 +640,17 @@ def watchtower_analyze_ticker(ticker: str, with_synthesis: bool = True) -> str:
         lines.append("")
         lines.append("*Sleeves with errors: " + ", ".join(s["sleeve"] for s in errored) + "*")
 
+    # Watchtower Oscillator — one-line daily read (confirmed bars, no repaint)
+    try:
+        from analysis.oscillator import compute_for_ticker, describe_read
+        osc = compute_for_ticker(ticker, "daily")
+        if osc:
+            lines.append("")
+            lines.append(f"**OSCILLATOR (daily)** | {describe_read(osc)} — "
+                         "full multi-timeframe read: watchtower_get_oscillator")
+    except Exception:
+        pass
+
     # Social buzz — live X sentiment via Grok
     try:
         from analysis.social_buzz import query_ticker_sentiment, format_buzz_for_display
@@ -798,6 +809,102 @@ def watchtower_scan_patterns(include_4h: bool = True) -> str:
                 + "). Check watchtower_get_patterns in ~2-5 minutes.")
     except Exception as e:
         return f"Error starting pattern scan: {e}"
+
+
+@mcp.tool()
+def watchtower_get_oscillator(ticker: str, timeframe: str = "all") -> str:
+    """
+    Watchtower Oscillator read for one ticker — WaveTrend wave pair, money
+    flow, RSI/StochRSI, Williams %R(28)+EMA, MACD, fired signals, and a
+    0-100 confluence score per timeframe. Computed fresh on CONFIRMED bars
+    only (the live bar is never used, so nothing here can repaint).
+
+    Args:
+        ticker: symbol
+        timeframe: all | weekly | daily | 4h | 1h | 2d | 3d | 5m
+                   ('all' = weekly + daily + 4h + 1h; the others on request)
+    """
+    try:
+        from analysis.oscillator import (compute_for_ticker, describe_read,
+                                         _fmt_bar_ts, ON_DEMAND_TFS)
+        ticker = ticker.upper().strip()
+        tf = timeframe.lower().strip()
+        tfs = ("weekly", "daily", "4h", "1h") if tf == "all" else (tf,)
+        if any(t not in ON_DEMAND_TFS for t in tfs):
+            return f"Unknown timeframe '{timeframe}'. Use all | {' | '.join(ON_DEMAND_TFS)}."
+        lines = [f"**Watchtower Oscillator — ${ticker}** "
+                 "(confirmed bars only — signals cannot repaint)", ""]
+        got = 0
+        for t in tfs:
+            r = compute_for_ticker(ticker, t)
+            if not r:
+                lines.append(f"- **{t}**: not enough history (need 70+ confirmed bars)")
+                continue
+            got += 1
+            lines.append(f"- **{t}** (bar {_fmt_bar_ts(r['bar_ts'], t)}, "
+                         f"${r['close']:,.2f}): {describe_read(r)}")
+            pc = r.get("pattern_ctx")
+            if pc:
+                lines.append(f"    pattern context: {pc['direction']} {pc['status']}"
+                             + (f", trigger ${pc['trigger']:,.2f}" if pc.get("trigger") else ""))
+        if not got:
+            return f"${ticker}: no timeframe had enough history for an oscillator read."
+        lines.append("")
+        lines.append("Reading guide: wave beyond ±53 = actionable extreme (±60 = blown "
+                     "out); 'flow washed out' + wave at the lower band + %R pinned = "
+                     "fuel for a bullish turn; MACD is the confirmation layer.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error computing oscillator for {ticker}: {e}"
+
+
+@mcp.tool()
+def watchtower_screen_oscillator(setup: str = "high_confluence",
+                                 timeframe: str = "daily",
+                                 direction: str = "bullish",
+                                 top_n: int = 15) -> str:
+    """
+    Pull names whose Watchtower Oscillator is flashing a setup — the entry
+    screen. Reads the fleet scan (refreshed after each pattern scan: full at
+    6:45 AM ET, 4h/1h again at 12:45 PM ET).
+
+    Args:
+        setup: high_confluence | coil | wt_extreme_cross | pctr_hook |
+               divergence | mf_curl | any_signal
+        timeframe: daily | weekly | 4h | 1h
+        direction: bullish | bearish | all   (default bullish — entries)
+        top_n: max rows (default 15)
+    """
+    try:
+        from dashboard.api import _oscillator_rows
+        setup = setup.lower().strip()
+        data = _oscillator_rows(timeframe.lower().strip(),
+                                direction.lower().strip(), setup)
+        rows = (data.get("rows") or [])[:max(1, min(top_n, 50))]
+        if not rows:
+            return (f"No {timeframe} names currently match setup '{setup}' "
+                    f"({direction}). The scan refreshes after each pattern scan "
+                    "(6:45 AM / 12:45 PM ET).")
+        lines = [f"**Oscillator screen — {setup}, {timeframe}, {direction}** "
+                 f"({len(rows)} shown; scanned {data.get('as_of_et') or 'n/a'})", ""]
+        def _n(v, spec):
+            return format(v, spec) if v is not None else "n/a"
+        for r in rows:
+            arrow = "▲" if r["direction"] == "bullish" else "▼"
+            sigs = ", ".join(r.get("signal_names") or []) or "—"
+            sec = f" · {r['sector']}" if r.get("sector") else ""
+            rs = f" · RS {r['rs_pct']}" if r.get("rs_pct") is not None else ""
+            px = f"px ${r['close']:,.2f}, " if r.get("close") is not None else ""
+            lines.append(
+                f"- **{r['ticker']}** {arrow} {_n(r['confluence_score'], '.0f')}/100 — "
+                f"{px}wt2 {_n(r['wt2'], '+.0f')}, "
+                f"MF {_n(r['mf'], '+.1f')}, %R {_n(r['pctr'], '.0f')}, "
+                f"MACDh {_n(r['macd_hist'], '+.2f')} · {sigs}{rs}{sec}")
+        lines.append("")
+        lines.append("Deep dive any name with watchtower_get_oscillator(ticker).")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error screening oscillator: {e}"
 
 
 # ── OAuth 2.0 / PKCE endpoints ────────────────────────────────────────────────

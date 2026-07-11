@@ -382,6 +382,7 @@
   <button data-tab="themes">Themes</button>
   <button data-tab="screener">Screener</button>
   <button data-tab="patterns">Patterns</button>
+  <button data-tab="oscillator">Oscillator</button>
   <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
   <button data-tab="calendar">Calendar</button>
@@ -727,6 +728,69 @@
         <tbody id="pat-body"></tbody>
       </table>
       <div id="pat-empty" class="empty" style="display:none">No live patterns match — the scan runs daily at 6:45 AM ET.</div>
+    </div>
+  </section>
+
+  <!-- ── OSCILLATOR ── -->
+  <section id="tab-oscillator" class="tabpane">
+    <div class="gems-intro">
+      <h3>Watchtower Oscillator</h3>
+      <p>Momentum + money-flow composite on <b>confirmed bars only</b> — the live bar never enters
+      the math, so a signal that's here at the close can never repaint away. The wave pair
+      (WaveTrend) marks stretch: beyond <b>±53</b> is an actionable extreme, beyond <b>±60</b> is
+      blown out. Money flow marks fuel (washed out below while price holds = fuel for the turn),
+      Williams %R(28) marks pinning, MACD confirms. <b>Confluence 0–100</b> stacks all of it plus a
+      matching chart pattern — the default view is <b>bullish entry candidates</b> ranked by that
+      score. Refreshed with the pattern scans: full at 6:45 AM ET, 4H/1H again at 12:45 PM. Click
+      a row for the chart drawer.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" id="osc-tf">
+        <button data-tf="daily" class="on">Daily</button>
+        <button data-tf="weekly">Weekly</button>
+        <button data-tf="4h">4H</button>
+        <button data-tf="1h">1H</button>
+      </div>
+      <div class="seg" id="osc-dir">
+        <button data-dir="bullish" class="on">Bullish</button>
+        <button data-dir="bearish">Bearish</button>
+        <button data-dir="all">All</button>
+      </div>
+      <label class="ctl">Setup
+        <select id="osc-setup">
+          <option value="high_confluence" selected>High confluence (60+)</option>
+          <option value="wt_extreme_cross">Wave cross from extreme</option>
+          <option value="coil">Coil (springboard)</option>
+          <option value="divergence">Divergence</option>
+          <option value="pctr_hook">%R hook</option>
+          <option value="mf_curl">Money-flow curl (vol-backed)</option>
+          <option value="any_signal">Any fired signal</option>
+        </select>
+      </label>
+      <label class="ctl">Sector
+        <select id="osc-sector"><option value="ALL">All sectors</option></select>
+      </label>
+      <input type="text" id="osc-search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="osc-count"></span>
+    </div>
+    <div class="tblwrap">
+      <table id="osc-table">
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th class="left">Sector</th>
+          <th title="Confluence 0–100: waves+flow 50, %R 15, MACD 15, matching chart pattern 20">Conf</th>
+          <th>Price</th>
+          <th title="WaveTrend slow wave — beyond ±53 is an actionable extreme, ±60 blown out">wt2</th>
+          <th title="Money flow (candle-position read) — negative = washed out">MF</th>
+          <th title="Williams %R(28) — below −80 pinned oversold, above −20 pinned overbought">%R</th>
+          <th>RSI</th>
+          <th title="MACD histogram — the confirmation layer">MACDh</th>
+          <th title="Relative strength 1–99 vs the screener universe">RS</th>
+          <th class="left" title="Signals fired at the last confirmed bar">Signals</th>
+        </tr></thead>
+        <tbody id="osc-body"></tbody>
+      </table>
+      <div id="osc-empty" class="empty" style="display:none">No names match this setup right now — the scan refreshes at 6:45 AM / 12:45 PM ET.</div>
     </div>
   </section>
 
@@ -1266,6 +1330,72 @@ $("pat-search").addEventListener("input", e => { state.pat.search = e.target.val
 $("pat-sector").addEventListener("change", e => { state.pat.sector = e.target.value; renderPatterns(); });
 $("pat-pattern").addEventListener("change", e => { state.pat.kind = e.target.value; renderPatterns(); });
 
+/* ── watchtower oscillator ── */
+state.osc = { tf: "daily", dir: "bullish", setup: "high_confluence", search: "", sector: "ALL" };
+async function loadOscillator() {
+  const o = state.osc;
+  const tok = seqTake("oscillator");
+  let d;
+  try {
+    d = await api(`/api/oscillator?tf=${encodeURIComponent(o.tf)}&direction=${encodeURIComponent(o.dir)}&setup=${encodeURIComponent(o.setup)}`);
+  } catch { return; }
+  if (seqStale("oscillator", tok)) return;
+  state.oscRows = d.rows || [];
+  state.oscAsOf = d.as_of_et || "";
+  renderOscillator();
+}
+function renderOscillator() {
+  const q = (state.osc.search || "").trim().toUpperCase();
+  const secCounts = {};
+  (state.oscRows || []).forEach(r => {
+    const s0 = r.sector || "—";
+    secCounts[s0] = (secCounts[s0] || 0) + 1;
+  });
+  if (state.osc.sector !== "ALL" && !secCounts[state.osc.sector]) state.osc.sector = "ALL";
+  const sel = $("osc-sector");
+  sel.innerHTML = `<option value="ALL">All sectors (${(state.oscRows || []).length})</option>` +
+    Object.entries(secCounts).sort((a, b) => b[1] - a[1])
+      .map(([s0, n]) => `<option value="${escAttr(s0)}">${esc(s0)} (${n})</option>`).join("");
+  sel.value = state.osc.sector;
+  const sec = state.osc.sector;
+  const rows = (state.oscRows || []).filter(r =>
+    (!q || r.ticker.includes(q)) && (sec === "ALL" || (r.sector || "—") === sec));
+  const body = $("osc-body");
+  $("osc-empty").style.display = rows.length ? "none" : "";
+  $("osc-count").textContent = rows.length
+    ? `${rows.length} names${state.oscAsOf ? " · scanned " + state.oscAsOf : ""}` : "";
+  const wtCls = v => v == null ? "" : (v <= -53 ? "pos" : (v >= 53 ? "neg" : ""));
+  body.innerHTML = rows.map(r => {
+    const bull = r.direction === "bullish";
+    const conf = r.confluence_score || 0;
+    return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
+      <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> <b>${esc(r.ticker)}</b></td>
+      <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
+      <td class="num"><b style="color:${conf >= 70 ? "var(--green)" : (conf >= 50 ? "var(--yellow)" : "var(--muted)")}">${conf.toFixed(0)}</b></td>
+      <td class="num">${r.close != null ? "$" + r.close.toFixed(2) : "—"}</td>
+      <td class="num"><span class="${wtCls(r.wt2)}">${r.wt2 != null ? (r.wt2 > 0 ? "+" : "") + r.wt2.toFixed(0) : "—"}</span></td>
+      <td class="num">${r.mf != null ? (r.mf > 0 ? "+" : "") + r.mf.toFixed(1) : "—"}</td>
+      <td class="num">${r.pctr != null ? r.pctr.toFixed(0) : "—"}</td>
+      <td class="num">${r.rsi != null ? r.rsi.toFixed(0) : "—"}</td>
+      <td class="num">${r.macd_hist != null ? `<span class="${r.macd_hist >= 0 ? "pos" : "neg"}">${(r.macd_hist > 0 ? "+" : "") + r.macd_hist.toFixed(2)}</span>` : "—"}</td>
+      <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
+      <td class="left" style="font-size:11px;color:var(--muted)">${esc((r.signal_names || []).join(", ") || "—")}</td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
+}
+document.querySelectorAll("#osc-tf button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#osc-tf button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.osc.tf = b.dataset.tf; loadOscillator();
+});
+document.querySelectorAll("#osc-dir button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#osc-dir button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.osc.dir = b.dataset.dir; loadOscillator();
+});
+$("osc-setup").addEventListener("change", e => { state.osc.setup = e.target.value; loadOscillator(); });
+$("osc-search").addEventListener("input", e => { state.osc.search = e.target.value; renderOscillator(); });
+$("osc-sector").addEventListener("change", e => { state.osc.sector = e.target.value; renderOscillator(); });
+
 /* ── fetch-race guards ─────────────────────────────────────────────────────
    Click ticker A then B quickly and whichever /api response lands LAST used
    to paint the UI — A's numbers under B's header, or a heat map showing the
@@ -1289,6 +1419,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "themes") loadThemes();
   if (b.dataset.tab === "screener") loadScreener();
   if (b.dataset.tab === "patterns") loadPatterns();
+  if (b.dataset.tab === "oscillator") loadOscillator();
   if (b.dataset.tab === "vantage") loadVantage();
   if (b.dataset.tab === "calendar") loadCalendar();
 });
@@ -2658,6 +2789,7 @@ const TAB_REFRESHERS = {
   themes: () => loadThemes(),
   screener: () => loadScreener(),
   patterns: () => loadPatterns(),
+  oscillator: () => loadOscillator(),
   vantage: () => loadVantage(),
   news: () => { /* news rides the scanner snapshot via loadLatest() */ },
   calendar: () => loadCalendar(),

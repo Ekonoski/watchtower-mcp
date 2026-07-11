@@ -1448,6 +1448,99 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
             "as_of": as_of.isoformat() if as_of else None}
 
 
+_OSC_SETUPS = ("high_confluence", "coil", "wt_extreme_cross", "pctr_hook",
+               "divergence", "mf_curl", "any_signal")
+
+
+def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
+                     setup: str = "high_confluence") -> dict:
+    """Oscillator fleet-scan rows (oscillator_scan, migrations 0065/0066)
+    filtered to a setup, with the screener's sector/RS context joined in.
+    Default view = bullish entry candidates ranked by confluence."""
+    tf = tf if tf in ("daily", "weekly", "4h", "1h") else "daily"
+    direction = direction if direction in ("bullish", "bearish") else "all"
+    setup = setup if setup in _OSC_SETUPS else "high_confluence"
+    sig_dir = "up" if direction == "bullish" else "down"
+
+    setup_sql = {
+        "high_confluence": "o.confluence_score >= 60",
+        "coil": "o.signals ? 'coil'",
+        "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
+                            + ("" if direction == "all" else
+                               f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
+        "pctr_hook": "o.signals ? 'pctr_hook'",
+        "divergence": "o.signals ? 'divergence'",
+        "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
+        "any_signal": "o.signals != '{}'::jsonb",
+    }[setup]
+
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT o.ticker, o.timeframe, o.bar_ts, o.wt1, o.wt2, o.wt_diff,
+                       o.mf_candle, o.rsi, o.pctr, o.macd_hist,
+                       o.signals, o.confluence_score, o.direction,
+                       s.company_name, s.sector, s.rs_pct, s.price
+                FROM oscillator_scan o
+                LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
+                WHERE o.timeframe = %(tf)s
+                  AND (%(dir)s = 'all' OR o.direction = %(dir)s)
+                  AND ({setup_sql})
+                ORDER BY o.confluence_score DESC NULLS LAST, o.ticker
+                LIMIT 400
+                """,
+                {"tf": tf, "dir": direction},
+            )
+            rows = cur.fetchall()
+            cur.execute("SELECT max(scanned_at) FROM oscillator_scan "
+                        "WHERE timeframe = %s", (tf,))
+            as_of = cur.fetchone()[0]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _f(v):
+        return float(v) if v is not None else None
+    out = []
+    for r in rows:
+        sig = r[10] or {}
+        names = []
+        for k, v in sig.items():
+            d = v.get("dir") if isinstance(v, dict) else None
+            tag = k + (f" {d}" if d else "")
+            if isinstance(v, dict) and v.get("zone") == "extreme":
+                tag += " (extreme)"
+            if isinstance(v, dict) and v.get("volume_backed"):
+                tag += " (vol)"
+            names.append(tag)
+        out.append({
+            "ticker": r[0], "timeframe": r[1],
+            "bar_ts": r[2].isoformat() if r[2] else None,
+            "wt1": _f(r[3]), "wt2": _f(r[4]), "wt_diff": _f(r[5]),
+            "mf": _f(r[6]), "rsi": _f(r[7]), "pctr": _f(r[8]),
+            "macd_hist": _f(r[9]), "signals": sig, "signal_names": names,
+            "confluence_score": _f(r[11]) or 0, "direction": r[12],
+            "company_name": r[13] or "", "sector": r[14] or "",
+            "rs_pct": int(r[15]) if r[15] is not None else None,
+            "close": _f(r[16]),
+        })
+    as_of_et = None
+    if as_of is not None:
+        try:
+            from zoneinfo import ZoneInfo
+            as_of_et = as_of.astimezone(ZoneInfo("America/New_York")) \
+                .strftime("%b %d, %I:%M %p ET").replace(" 0", " ")
+        except Exception:
+            as_of_et = as_of.isoformat()
+    return {"rows": out, "count": len(out),
+            "as_of": as_of.isoformat() if as_of else None, "as_of_et": as_of_et}
+
+
 def _fmp_description(ticker: str) -> str:
     """One-shot FMP /profile fetch for a company's business description."""
     api_key = os.environ.get("FMP_API_KEY", "").strip()
@@ -1944,6 +2037,20 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"rows": [], "count": 0, "counts": {},
                                  "as_of": None, "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/oscillator", methods=["GET"])
+    async def oscillator(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        tf = (request.query_params.get("tf") or "daily").lower()
+        direction = (request.query_params.get("direction") or "bullish").lower()
+        setup = (request.query_params.get("setup") or "high_confluence").lower()
+        try:
+            data = await asyncio.to_thread(_oscillator_rows, tf, direction, setup)
+        except Exception as e:
+            return JSONResponse({"rows": [], "count": 0, "as_of": None,
+                                 "as_of_et": None, "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/screener", methods=["GET"])
