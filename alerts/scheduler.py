@@ -644,13 +644,16 @@ def _seed_pattern_backtest_if_empty():
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM pattern_backtest LIMIT 1")
+                # Re-run when empty OR when the replay predates the newest
+                # detector (idempotent upsert refreshes existing rows too).
+                cur.execute("SELECT 1 FROM pattern_backtest "
+                            "WHERE pattern = 'ema_bounce' LIMIT 1")
                 need = cur.fetchone() is None
         finally:
             conn.close()
         if need:
             from analysis.pattern_backtest import run_pattern_backtest
-            log.info("[patterns] backtest table empty — running replay...")
+            log.info("[patterns] backtest missing newest detector — replaying...")
             res = run_pattern_backtest()
             log.info(f"[patterns] timing backtest done: {res}")
     except Exception as e:

@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 5
+ENGINE_VERSION = 6
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -79,6 +79,7 @@ PATTERN_NAMES = {
     "falling_wedge": "Falling Wedge", "rising_wedge": "Rising Wedge",
     "cup_handle": "Cup & Handle",
     "range_breakout": "Range Breakout", "range_breakdown": "Range Breakdown",
+    "ema_bounce": "EMA 8/13 Bounce", "ema_reject": "EMA 8/13 Reject",
 }
 
 FOUR_H_LIQUID_TOP = 350     # most-liquid names always scanned on 4h
@@ -774,6 +775,149 @@ def _det_cup_handle(ctx):
                h_low, l_idx + 1 + b_off, l_idx, points, quality)
 
 
+# ── EMA 8/13 pullback bounce (continuation) ──────────────────────────────────
+
+def _ema_seq(vals: list, span: int) -> list:
+    """EMA over a list (None forward-filled); same length as input."""
+    k = 2.0 / (span + 1)
+    out, prev, e = [], None, None
+    for v in vals:
+        if v is None:
+            v = prev
+        if v is None:
+            out.append(None)
+            continue
+        e = v if e is None else v * k + e * (1 - k)
+        out.append(e)
+        prev = v
+    return out
+
+
+def _det_ema_bounce(ctx):
+    """Eric's continuation setup: a strong impulse with the fast EMAs
+    stacked (8 over 13 over 21), then a SHALLOW 2-7 candle pullback that
+    lands on the 8/13 EMA zone and holds — the trend's first-touch rebate.
+    Trigger = reclaiming the 8 EMA off the pullback low; invalid = that
+    low; target = the impulse repeated from the trigger."""
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    closes, lows = ctx["closes"], ctx["lows"]
+    if n < 40 or any(c is None for c in closes[-30:]):
+        return None
+    e8 = _ema_seq(closes, 8)
+    e13 = _ema_seq(closes, 13)
+    e21 = _ema_seq(closes, 21)
+    if e21[-1] is None:
+        return None
+    # Peak of the impulse: highest close of the recent window, with a
+    # 2-7 bar pullback after it ("a few candles").
+    seg = closes[-11:]
+    peak_idx = (n - len(seg)) + max(range(len(seg)), key=lambda j: seg[j])
+    pull_len = (n - 1) - peak_idx
+    if not (2 <= pull_len <= 7):
+        return None
+    peak = closes[peak_idx]
+    run_start = max(0, peak_idx - cfg["run_len"])
+    base_vals = [c for c in closes[run_start:peak_idx] if c is not None]
+    if not base_vals:
+        return None
+    base = min(base_vals)
+    if base <= 0 or peak / base - 1 < 0.10 * s:
+        return None                                  # no real impulse
+    if not (e8[peak_idx] and e8[peak_idx] > e13[peak_idx] > e21[peak_idx]):
+        return None                                  # EMAs not stacked = no trend
+    # Pullback must TOUCH the 8/13 zone, hold the 21 on a closing basis,
+    # and keep most of the impulse.
+    touched = any(lows[i] is not None and e13[i] is not None
+                  and lows[i] <= e13[i] * (1 + 0.002 * s)
+                  for i in range(peak_idx + 1, n))
+    if not touched:
+        return None
+    if any(closes[i] is not None and e21[i] is not None
+           and closes[i] < e21[i] * (1 - 0.01 * s)
+           for i in range(peak_idx + 1, n)):
+        return None                                  # closed through the 21 — broken
+    pull_pairs = [(i, lows[i]) for i in range(peak_idx + 1, n)
+                  if lows[i] is not None]
+    low_idx, pull_low = min(pull_pairs, key=lambda t: t[1])
+    if pull_low < peak - 0.62 * (peak - base):
+        return None                                  # gave back too much
+    trigger = e8[-1]
+    target = trigger + (peak - base)
+    # Cross detection starts at the pullback LOW — the bounce is what
+    # crosses the trigger, not the fade into the zone.
+    status = _status(ctx, low_idx, trigger, "bullish", target=target)
+    if status is None:
+        return None
+    held_8 = pull_low >= e8[-1] * (1 - 0.005 * s)
+    quality = min(10.0, 5.0 * ((peak / base - 1) / (0.10 * s))) \
+        + (8.0 if held_8 else 4.0) + max(0.0, 7.0 - pull_len)
+    points = {"impulse_low": round(base, 4), "peak": _pt(ctx, peak_idx, peak),
+              "pullback_low": round(pull_low, 4), "ema8": round(e8[-1], 4),
+              "ema13": round(e13[-1], 4), "pull_bars": pull_len,
+              "_anchor_price": pull_low}
+    return _mk(ctx, "ema_bounce", "bullish", status, trigger, target,
+               pull_low, low_idx, run_start, points, quality)
+
+
+def _det_ema_reject(ctx):
+    """Bearish mirror: a strong impulse DOWN with the fast EMAs stacked
+    below, then a weak 2-7 candle rally into the falling 8/13 zone that
+    stalls — short the rejection."""
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    closes, highs = ctx["closes"], ctx["highs"]
+    if n < 40 or any(c is None for c in closes[-30:]):
+        return None
+    e8 = _ema_seq(closes, 8)
+    e13 = _ema_seq(closes, 13)
+    e21 = _ema_seq(closes, 21)
+    if e21[-1] is None:
+        return None
+    seg = closes[-11:]
+    trough_idx = (n - len(seg)) + min(range(len(seg)), key=lambda j: seg[j])
+    rally_len = (n - 1) - trough_idx
+    if not (2 <= rally_len <= 7):
+        return None
+    trough = closes[trough_idx]
+    run_start = max(0, trough_idx - cfg["run_len"])
+    base_vals = [c for c in closes[run_start:trough_idx] if c is not None]
+    if not base_vals:
+        return None
+    base = max(base_vals)
+    if trough <= 0 or base / trough - 1 < 0.10 * s:
+        return None
+    if not (e8[trough_idx] and e8[trough_idx] < e13[trough_idx] < e21[trough_idx]):
+        return None
+    touched = any(highs[i] is not None and e13[i] is not None
+                  and highs[i] >= e13[i] * (1 - 0.002 * s)
+                  for i in range(trough_idx + 1, n))
+    if not touched:
+        return None
+    if any(closes[i] is not None and e21[i] is not None
+           and closes[i] > e21[i] * (1 + 0.01 * s)
+           for i in range(trough_idx + 1, n)):
+        return None
+    rally_pairs = [(i, highs[i]) for i in range(trough_idx + 1, n)
+                   if highs[i] is not None]
+    high_idx, rally_high = max(rally_pairs, key=lambda t: t[1])
+    if rally_high > trough + 0.62 * (base - trough):
+        return None
+    trigger = e8[-1]
+    target = trigger - (base - trough)
+    status = _status(ctx, high_idx, trigger, "bearish", target=target)
+    if status is None:
+        return None
+    held_8 = rally_high <= e8[-1] * (1 + 0.005 * s)
+    quality = min(10.0, 5.0 * ((base / trough - 1) / (0.10 * s))) \
+        + (8.0 if held_8 else 4.0) + max(0.0, 7.0 - rally_len)
+    points = {"impulse_high": round(base, 4),
+              "trough": _pt(ctx, trough_idx, trough),
+              "rally_high": round(rally_high, 4), "ema8": round(e8[-1], 4),
+              "ema13": round(e13[-1], 4), "pull_bars": rally_len,
+              "_anchor_price": rally_high}
+    return _mk(ctx, "ema_reject", "bearish", status, trigger, target,
+               rally_high, high_idx, run_start, points, quality)
+
+
 # ── Long-term range breakout / breakdown ─────────────────────────────────────
 
 def _det_range_break(ctx):
@@ -855,7 +999,8 @@ def _det_range_break(ctx):
 DETECTORS = [_det_inverse_hs, _det_hs_top, _det_double_bottom, _det_double_top,
              _det_bull_flag, _det_bear_flag, _det_asc_triangle,
              _det_desc_triangle, _det_falling_wedge, _det_rising_wedge,
-             _det_cup_handle, _det_range_break]
+             _det_cup_handle, _det_range_break,
+             _det_ema_bounce, _det_ema_reject]
 
 
 def detect_patterns(bars: list, timeframe: str) -> list:
