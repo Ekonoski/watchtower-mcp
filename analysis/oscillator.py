@@ -45,7 +45,7 @@ MF_DEFAULT = "mf_candle"
 
 TIMEFRAMES = ("daily", "weekly", "4h", "1h")    # scanned + stored
 RESAMPLE_TFS = ("2d", "3d")                     # on-demand, single-ticker reads
-ON_DEMAND_TFS = ("daily", "weekly", "2d", "3d", "4h", "1h", "5m")
+ON_DEMAND_TFS = ("daily", "weekly", "monthly", "2d", "3d", "4h", "1h", "5m")
 
 # Polygon aggregate settings per intraday timeframe: (multiplier, timespan,
 # calendar-days of history, seconds per bar). 5m is an execution timeframe —
@@ -166,6 +166,50 @@ def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFr
     if drop_partial and len(agg):
         agg = agg.iloc[:-1]
     return agg
+
+
+def resample_monthly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
+    """Calendar-month bars from daily sessions. The current (incomplete)
+    month is dropped by default — a monthly bar only exists once its month
+    closes, so monthly signals never repaint. Mid-month monthly reads are
+    provisional by definition; this keeps them out of the math."""
+    key = daily.index.to_series().apply(lambda d: (d.year, d.month))
+    agg = daily.groupby(key.values).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"),
+        close=("close", "last"), volume=("volume", "sum"))
+    last_dates = daily.index.to_series().groupby(key.values).max()
+    agg.index = pd.Index(last_dates.values)
+    agg = agg.sort_index()
+    if drop_partial and len(agg):
+        agg = agg.iloc[:-1]
+    return agg
+
+
+def fetch_daily_long(ticker: str, days: int = 2600) -> pd.DataFrame:
+    """~7 years of daily bars from Polygon — the monthly timeframe needs far
+    more history than daily_prices retains (70+ monthly bars for honest
+    indicator math). On-demand single-ticker reads only."""
+    from datetime import date, datetime, timedelta, timezone
+    from analysis.polygon_data import get_client
+    client = get_client()
+    empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    if not client:
+        return empty
+    try:
+        end = date.today()
+        start = end - timedelta(days=days)
+        aggs = list(client.get_aggs(ticker, 1, "day",
+                                    start.isoformat(), end.isoformat(), limit=50000))
+    except Exception as e:
+        log.debug(f"[oscillator] long daily fetch {ticker} failed: {e}")
+        return empty
+    if not aggs:
+        return empty
+    rows = [(datetime.fromtimestamp(a.timestamp / 1000, tz=timezone.utc).date(),
+             a.open, a.high, a.low, a.close, a.volume) for a in aggs]
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df["ts"] = pd.to_datetime(df["ts"])
+    return df.set_index("ts").astype(float).sort_index()
 
 
 def fetch_intraday_confirmed(ticker: str, tf: str = "4h",
@@ -501,7 +545,24 @@ def compute_for_ticker(ticker: str, timeframe: str = "daily",
     if timeframe not in ON_DEMAND_TFS:
         return {}
     own_conn = conn is None
-    if timeframe in INTRADAY_SPEC:
+    if timeframe == "monthly":
+        # Needs ~7 years of history — Polygon on demand; fall back to the DB
+        # (which will usually be too short and return {} honestly).
+        long_daily = fetch_daily_long(ticker)
+        if len(long_daily) < 300:
+            if own_conn:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+            try:
+                long_daily = _fetch_daily_ohlcv(conn, [ticker], days=2600) \
+                    .get(ticker, long_daily)
+            finally:
+                if own_conn:
+                    conn.close()
+                    conn = None
+        df = resample_monthly(long_daily) if len(long_daily) else long_daily
+        pctx_tf = None
+    elif timeframe in INTRADAY_SPEC:
         df = fetch_intraday_fresh(ticker, timeframe)
         pctx_tf = timeframe if timeframe == "4h" else None
     else:

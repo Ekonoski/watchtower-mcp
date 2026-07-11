@@ -827,8 +827,11 @@ def watchtower_get_oscillator(ticker: str, timeframe: str = "all") -> str:
 
     Args:
         ticker: symbol
-        timeframe: all | weekly | daily | 4h | 1h | 2d | 3d | 5m
-                   ('all' = weekly + daily + 4h + 1h; the others on request)
+        timeframe: all | monthly | weekly | daily | 4h | 1h | 2d | 3d | 5m
+                   ('all' = weekly + daily + 4h + 1h; the others on request.
+                   monthly fetches ~7 years of history from Polygon and only
+                   uses CLOSED months — mid-month monthly signals are
+                   provisional until month-end, so they never appear early)
     """
     try:
         from analysis.oscillator import (compute_for_ticker, describe_read,
