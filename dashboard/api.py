@@ -1448,52 +1448,110 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
             "as_of": as_of.isoformat() if as_of else None}
 
 
-_OSC_SETUPS = ("high_confluence", "coil", "wt_extreme_cross", "pctr_hook",
-               "divergence", "mf_curl", "any_signal")
+_OSC_SETUPS = ("entry_grade", "high_confluence", "coil", "wt_extreme_cross",
+               "pctr_hook", "divergence", "mf_curl", "any_signal")
 
 
 def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
-                     setup: str = "high_confluence") -> dict:
+                     setup: str = "entry_grade") -> dict:
     """Oscillator fleet-scan rows (oscillator_scan, migrations 0065/0066)
-    filtered to a setup, with the screener's sector/RS context joined in.
-    Default view = bullish entry candidates ranked by confluence."""
+    filtered to a setup, with the screener's sector/RS context and the
+    weekly oscillator direction joined in.
+
+    entry_grade (the default) is the quality-gated ENTRY list: a supportive
+    oscillator (confluence >= 35) is necessary but not sufficient — the name
+    must also have a live pattern in the trade direction within striking
+    distance of its trigger, the WEEKLY must not be actively against the
+    trade (no opposing weekly oscillator direction, no opposing weekly
+    pattern), and relative strength can't be bottom-of-the-barrel. Without
+    those gates a pure confluence sort surfaces the most washed-out names
+    in the market — knife-catches, not entries. Those still have a home:
+    the other setups (high_confluence = the raw washout watchlist)."""
     tf = tf if tf in ("daily", "weekly", "4h", "1h") else "daily"
     direction = direction if direction in ("bullish", "bearish") else "all"
-    setup = setup if setup in _OSC_SETUPS else "high_confluence"
+    setup = setup if setup in _OSC_SETUPS else "entry_grade"
     sig_dir = "up" if direction == "bullish" else "down"
 
-    setup_sql = {
-        "high_confluence": "o.confluence_score >= 60",
-        "coil": "o.signals ? 'coil'",
-        "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
-                            + ("" if direction == "all" else
-                               f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
-        "pctr_hook": "o.signals ? 'pctr_hook'",
-        "divergence": "o.signals ? 'divergence'",
-        "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
-        "any_signal": "o.signals != '{}'::jsonb",
-    }[setup]
+    base_select = """
+        SELECT o.ticker, o.timeframe, o.bar_ts, o.wt1, o.wt2, o.wt_diff,
+               o.mf_candle, o.rsi, o.pctr, o.macd_hist,
+               o.signals, o.confluence_score, o.direction,
+               s.company_name, s.sector, s.rs_pct, s.price,
+               w.direction AS wk_dir, s.vs_sma
+    """
+
+    if setup == "entry_grade":
+        query = base_select + """
+             , p.pattern, p.timeframe, p.status, p.dist_to_trigger_pct,
+               (o.confluence_score
+                + CASE WHEN o.direction = 'bullish'
+                       THEN LEAST(GREATEST(COALESCE(s.rs_pct,0) - 25, 0), 40)
+                       ELSE LEAST(GREATEST(75 - COALESCE(s.rs_pct,100), 0), 40)
+                  END * 0.5
+                + CASE WHEN o.direction = 'bullish'
+                       THEN GREATEST(12 + LEAST(p.dist_to_trigger_pct, 0), 0)
+                       ELSE GREATEST(12 - GREATEST(p.dist_to_trigger_pct, 0), 0)
+                  END * 2
+                + CASE WHEN w.direction = o.direction THEN 10 ELSE 0 END
+               ) AS entry_rank
+        FROM oscillator_scan o
+        LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
+        LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
+        JOIN LATERAL (
+            SELECT pattern, timeframe, status, dist_to_trigger_pct
+            FROM pattern_scan
+            WHERE ticker = o.ticker AND direction = o.direction
+              AND timeframe IN (o.timeframe, 'weekly')
+            ORDER BY score DESC NULLS LAST LIMIT 1) p ON true
+        WHERE o.timeframe = %(tf)s
+          AND (%(dir)s = 'all' OR o.direction = %(dir)s)
+          AND o.direction IN ('bullish', 'bearish')
+          AND o.confluence_score >= 35
+          AND ((o.direction = 'bullish'
+                AND COALESCE(w.direction, 'none') != 'bearish'
+                AND COALESCE(s.rs_pct, 0) >= 25)
+            OR (o.direction = 'bearish'
+                AND COALESCE(w.direction, 'none') != 'bullish'
+                AND COALESCE(s.rs_pct, 100) <= 75))
+          AND CASE WHEN o.direction = 'bullish'
+                   THEN p.dist_to_trigger_pct > -12
+                   ELSE p.dist_to_trigger_pct < 12 END
+          AND NOT EXISTS (
+              SELECT 1 FROM pattern_scan pb
+              WHERE pb.ticker = o.ticker AND pb.timeframe = 'weekly'
+                AND pb.direction = CASE WHEN o.direction = 'bullish'
+                                        THEN 'bearish' ELSE 'bullish' END)
+        ORDER BY entry_rank DESC, o.ticker
+        LIMIT 400
+        """
+    else:
+        setup_sql = {
+            "high_confluence": "o.confluence_score >= 60",
+            "coil": "o.signals ? 'coil'",
+            "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
+                                + ("" if direction == "all" else
+                                   f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
+            "pctr_hook": "o.signals ? 'pctr_hook'",
+            "divergence": "o.signals ? 'divergence'",
+            "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
+            "any_signal": "o.signals != '{}'::jsonb",
+        }[setup]
+        query = base_select + f"""
+        FROM oscillator_scan o
+        LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
+        LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
+        WHERE o.timeframe = %(tf)s
+          AND (%(dir)s = 'all' OR o.direction = %(dir)s)
+          AND ({setup_sql})
+        ORDER BY o.confluence_score DESC NULLS LAST, o.ticker
+        LIMIT 400
+        """
 
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT o.ticker, o.timeframe, o.bar_ts, o.wt1, o.wt2, o.wt_diff,
-                       o.mf_candle, o.rsi, o.pctr, o.macd_hist,
-                       o.signals, o.confluence_score, o.direction,
-                       s.company_name, s.sector, s.rs_pct, s.price
-                FROM oscillator_scan o
-                LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
-                WHERE o.timeframe = %(tf)s
-                  AND (%(dir)s = 'all' OR o.direction = %(dir)s)
-                  AND ({setup_sql})
-                ORDER BY o.confluence_score DESC NULLS LAST, o.ticker
-                LIMIT 400
-                """,
-                {"tf": tf, "dir": direction},
-            )
+            cur.execute(query, {"tf": tf, "dir": direction})
             rows = cur.fetchall()
             cur.execute("SELECT max(scanned_at) FROM oscillator_scan "
                         "WHERE timeframe = %s", (tf,))
@@ -1518,7 +1576,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             if isinstance(v, dict) and v.get("volume_backed"):
                 tag += " (vol)"
             names.append(tag)
-        out.append({
+        row = {
             "ticker": r[0], "timeframe": r[1],
             "bar_ts": r[2].isoformat() if r[2] else None,
             "wt1": _f(r[3]), "wt2": _f(r[4]), "wt_diff": _f(r[5]),
@@ -1528,7 +1586,16 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "company_name": r[13] or "", "sector": r[14] or "",
             "rs_pct": int(r[15]) if r[15] is not None else None,
             "close": _f(r[16]),
-        })
+            "weekly_dir": r[17],
+            "vs_sma_pct": round(r[18] * 100, 1) if r[18] is not None else None,
+        }
+        if setup == "entry_grade":
+            row.update({
+                "pattern": r[19], "pattern_tf": r[20], "pattern_status": r[21],
+                "pattern_dist": _f(r[22]),
+                "entry_rank": round(_f(r[23]) or 0),
+            })
+        out.append(row)
     as_of_et = None
     if as_of is not None:
         try:

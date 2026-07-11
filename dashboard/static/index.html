@@ -738,11 +738,13 @@
       <p>Momentum + money-flow composite on <b>confirmed bars only</b> — the live bar never enters
       the math, so a signal that's here at the close can never repaint away. The wave pair
       (WaveTrend) marks stretch: beyond <b>±53</b> is an actionable extreme, beyond <b>±60</b> is
-      blown out. Money flow marks fuel (washed out below while price holds = fuel for the turn),
-      Williams %R(28) marks pinning, MACD confirms. <b>Confluence 0–100</b> stacks all of it plus a
-      matching chart pattern — the default view is <b>bullish entry candidates</b> ranked by that
-      score. Refreshed with the pattern scans: full at 6:45 AM ET, 4H/1H again at 12:45 PM. Click
-      a row for the chart drawer.</p>
+      blown out. Money flow marks fuel, Williams %R(28) marks pinning, MACD confirms.
+      <b>Entry grade</b> (the default) demands quality on top of the oscillator: a live pattern in
+      the trade direction within reach of its trigger, a weekly that isn't fighting the trade, and
+      real relative strength — the setups you'd actually enter. <b>Washout watch</b> is the raw
+      stretched-and-turning list: the most oversold names in the market, where turns <i>start</i> —
+      stalk them until they build the higher low, don't buy the first green dot. Refreshed with the
+      pattern scans: full at 6:45 AM ET, 4H/1H again at 12:45 PM. Click a row for the chart drawer.</p>
     </div>
     <div class="controls">
       <div class="seg" id="osc-tf">
@@ -758,7 +760,8 @@
       </div>
       <label class="ctl">Setup
         <select id="osc-setup">
-          <option value="high_confluence" selected>High confluence (60+)</option>
+          <option value="entry_grade" selected>Entry grade (quality-gated)</option>
+          <option value="high_confluence">Washout watch (raw confluence 60+)</option>
           <option value="wt_extreme_cross">Wave cross from extreme</option>
           <option value="coil">Coil (springboard)</option>
           <option value="divergence">Divergence</option>
@@ -783,9 +786,11 @@
           <th title="WaveTrend slow wave — beyond ±53 is an actionable extreme, ±60 blown out">wt2</th>
           <th title="Money flow (candle-position read) — negative = washed out">MF</th>
           <th title="Williams %R(28) — below −80 pinned oversold, above −20 pinned overbought">%R</th>
-          <th>RSI</th>
           <th title="MACD histogram — the confirmation layer">MACDh</th>
+          <th title="Weekly oscillator direction — a daily signal against a bearish weekly is a knife-catch">Wk</th>
+          <th title="Distance from the 200-day SMA — deep below means the trend is still down">vs200</th>
           <th title="Relative strength 1–99 vs the screener universe">RS</th>
+          <th class="left" title="Best live chart pattern in the trade direction (entry-grade view), with distance to trigger">Pattern</th>
           <th class="left" title="Signals fired at the last confirmed bar">Signals</th>
         </tr></thead>
         <tbody id="osc-body"></tbody>
@@ -1331,7 +1336,7 @@ $("pat-sector").addEventListener("change", e => { state.pat.sector = e.target.va
 $("pat-pattern").addEventListener("change", e => { state.pat.kind = e.target.value; renderPatterns(); });
 
 /* ── watchtower oscillator ── */
-state.osc = { tf: "daily", dir: "bullish", setup: "high_confluence", search: "", sector: "ALL" };
+state.osc = { tf: "daily", dir: "bullish", setup: "entry_grade", search: "", sector: "ALL" };
 async function loadOscillator() {
   const o = state.osc;
   const tok = seqTake("oscillator");
@@ -1368,6 +1373,11 @@ function renderOscillator() {
   body.innerHTML = rows.map(r => {
     const bull = r.direction === "bullish";
     const conf = r.confluence_score || 0;
+    const wk = r.weekly_dir === "bullish" ? `<span class="pos">▲</span>`
+      : (r.weekly_dir === "bearish" ? `<span class="neg">▼</span>` : "—");
+    const pat = r.pattern
+      ? `${esc(PATTERN_LABELS[r.pattern] || r.pattern)} <span style="color:var(--muted)">${esc(r.pattern_tf === "weekly" ? "W" : (r.pattern_tf === "daily" ? "D" : r.pattern_tf))} ${esc(r.pattern_status || "")}${r.pattern_dist != null ? " " + (r.pattern_dist > 0 ? "+" : "") + r.pattern_dist.toFixed(1) + "%" : ""}</span>`
+      : "—";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
       <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> <b>${esc(r.ticker)}</b></td>
       <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
@@ -1376,9 +1386,11 @@ function renderOscillator() {
       <td class="num"><span class="${wtCls(r.wt2)}">${r.wt2 != null ? (r.wt2 > 0 ? "+" : "") + r.wt2.toFixed(0) : "—"}</span></td>
       <td class="num">${r.mf != null ? (r.mf > 0 ? "+" : "") + r.mf.toFixed(1) : "—"}</td>
       <td class="num">${r.pctr != null ? r.pctr.toFixed(0) : "—"}</td>
-      <td class="num">${r.rsi != null ? r.rsi.toFixed(0) : "—"}</td>
       <td class="num">${r.macd_hist != null ? `<span class="${r.macd_hist >= 0 ? "pos" : "neg"}">${(r.macd_hist > 0 ? "+" : "") + r.macd_hist.toFixed(2)}</span>` : "—"}</td>
+      <td class="num">${wk}</td>
+      <td class="num">${r.vs_sma_pct != null ? `<span class="${r.vs_sma_pct >= 0 ? "pos" : "neg"}">${(r.vs_sma_pct > 0 ? "+" : "") + r.vs_sma_pct.toFixed(0)}%</span>` : "—"}</td>
       <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
+      <td class="left" style="font-size:11px">${pat}</td>
       <td class="left" style="font-size:11px;color:var(--muted)">${esc((r.signal_names || []).join(", ") || "—")}</td>
     </tr>`;
   }).join("");
