@@ -43,8 +43,22 @@ WT_OUTER = 60.0
 # stored; validation against the TradingView fill picks which one leads.
 MF_DEFAULT = "mf_candle"
 
-TIMEFRAMES = ("daily", "weekly", "4h")          # scanned + stored
+TIMEFRAMES = ("daily", "weekly", "4h", "1h")    # scanned + stored
 RESAMPLE_TFS = ("2d", "3d")                     # on-demand, single-ticker reads
+ON_DEMAND_TFS = ("daily", "weekly", "2d", "3d", "4h", "1h", "5m")
+
+# Polygon aggregate settings per intraday timeframe: (multiplier, timespan,
+# calendar-days of history, seconds per bar). 5m is an execution timeframe —
+# never fleet-scanned, only computed live for a single ticker on request.
+INTRADAY_SPEC = {
+    "4h": (4, "hour", 200, 4 * 3600),
+    "1h": (1, "hour", 75, 3600),
+    "5m": (5, "minute", 10, 300),
+}
+
+# Fleet-scan quality gate for the alert-performance feed: a fired signal set
+# only logs to alert_log when the bar's confluence clears this.
+PERF_MIN_CONFLUENCE = 60
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -147,23 +161,25 @@ def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFr
     return agg
 
 
-def fetch_4h_confirmed(ticker: str, days: int = 200) -> pd.DataFrame:
-    """Polygon 4h bars with REAL timestamps (the shared helper collapses them
-    to dates), final bar dropped while its 4-hour window is still open — so
-    the newest bar is always confirmed."""
+def fetch_intraday_confirmed(ticker: str, tf: str = "4h",
+                             days: int = None) -> pd.DataFrame:
+    """Polygon intraday bars (4h / 1h / 5m) with REAL timestamps (the shared
+    helper collapses them to dates), final bar dropped while its window is
+    still open — so the newest bar is always confirmed."""
     from datetime import date, datetime, timedelta, timezone
     from analysis.polygon_data import get_client
+    mult, span, default_days, bar_secs = INTRADAY_SPEC[tf]
     client = get_client()
     empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     if not client:
         return empty
     try:
         end = date.today()
-        start = end - timedelta(days=days + 10)
-        aggs = list(client.get_aggs(ticker, 4, "hour",
+        start = end - timedelta(days=(days or default_days) + 10)
+        aggs = list(client.get_aggs(ticker, mult, span,
                                     start.isoformat(), end.isoformat(), limit=50000))
     except Exception as e:
-        log.debug(f"[oscillator] 4h fetch {ticker} failed: {e}")
+        log.debug(f"[oscillator] {tf} fetch {ticker} failed: {e}")
         return empty
     if not aggs:
         return empty
@@ -171,9 +187,14 @@ def fetch_4h_confirmed(ticker: str, days: int = 200) -> pd.DataFrame:
              a.open, a.high, a.low, a.close, a.volume) for a in aggs]
     df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
     df = df.set_index("ts").astype(float)
-    if len(df) and df.index[-1] + pd.Timedelta(hours=4) > pd.Timestamp.now(tz=timezone.utc):
+    if len(df) and df.index[-1] + pd.Timedelta(seconds=bar_secs) \
+            > pd.Timestamp.now(tz=timezone.utc):
         df = df.iloc[:-1]
     return df
+
+
+def fetch_4h_confirmed(ticker: str, days: int = 200) -> pd.DataFrame:
+    return fetch_intraday_confirmed(ticker, "4h", days)
 
 
 def _fetch_daily_ohlcv(conn, tickers: list, days: int = 700) -> dict:
@@ -370,6 +391,87 @@ def _confluence(df: pd.DataFrame, sig: dict, pattern_ctx: dict = None):
     return (out[direction] if direction else max(out.values())), direction
 
 
+# ── On-demand single-ticker read (any timeframe, always current) ────────────
+
+def compute_for_ticker(ticker: str, timeframe: str = "daily",
+                       conn=None) -> dict:
+    """Fresh oscillator read for ONE ticker on any supported timeframe.
+    daily/weekly/2d/3d come from daily_prices; 4h/1h/5m from Polygon.
+    Returns {} when there's not enough history. Always computed live —
+    single-ticker reads are cheap, so nothing here can be stale."""
+    ticker = ticker.upper().strip()
+    if timeframe not in ON_DEMAND_TFS:
+        return {}
+    own_conn = conn is None
+    if timeframe in INTRADAY_SPEC:
+        df = fetch_intraday_confirmed(ticker, timeframe)
+        pctx_tf = timeframe if timeframe == "4h" else None
+    else:
+        if own_conn:
+            from screen.reversal_screen import _conn
+            conn = _conn()
+        try:
+            frames = _fetch_daily_ohlcv(conn, [ticker])
+        finally:
+            if own_conn:
+                conn.close()
+                conn = None
+        daily = frames.get(ticker)
+        if daily is None:
+            return {}
+        if timeframe == "daily":
+            df = daily
+        elif timeframe == "weekly":
+            df = resample_weekly(daily)
+        else:
+            df = resample_days(daily, int(timeframe[0]))
+        pctx_tf = timeframe if timeframe in ("daily", "weekly") else None
+    if len(df) < 70:
+        return {}
+    dfo = compute_oscillator(df)
+    pctx = None
+    if pctx_tf:
+        try:
+            if own_conn:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT direction, status, trigger_price, invalid_level
+                    FROM pattern_scan WHERE ticker = %s AND timeframe = %s
+                    ORDER BY score DESC NULLS LAST LIMIT 1
+                """, (ticker, pctx_tf))
+                r = cur.fetchone()
+            if r:
+                pctx = {"direction": r[0], "status": r[1],
+                        "trigger": float(r[2]) if r[2] is not None else None,
+                        "invalid": float(r[3]) if r[3] is not None else None}
+        except Exception:
+            pass
+        finally:
+            if own_conn and conn is not None:
+                conn.close()
+    ev = evaluate_signals(dfo, pctx)
+    c = dfo.iloc[-1]
+
+    def f(v):
+        v = float(v)
+        return None if (np.isnan(v) or np.isinf(v)) else round(v, 4)
+    return {
+        "ticker": ticker, "timeframe": timeframe,
+        "bar_ts": dfo.index[-1], "close": f(c["close"]),
+        "wt1": f(c["wt1"]), "wt2": f(c["wt2"]), "wt_diff": f(c["wt_diff"]),
+        "mf": f(c[MF_DEFAULT]), "mf_candle": f(c["mf_candle"]),
+        "mf_volume": f(c["mf_volume"]), "rsi": f(c["rsi"]),
+        "stoch_k": f(c["stoch_k"]), "stoch_d": f(c["stoch_d"]),
+        "pctr": f(c["pctr"]), "pctr_ema": f(c["pctr_ema"]),
+        "macd": f(c["macd"]), "macd_signal": f(c["macd_signal"]),
+        "macd_hist": f(c["macd_hist"]),
+        "signals": ev["signals"], "confluence_score": ev["confluence_score"],
+        "direction": ev["direction"], "pattern_ctx": pctx,
+    }
+
+
 # ── Scan orchestration ───────────────────────────────────────────────────────
 
 def _pattern_context(conn) -> dict:
@@ -433,14 +535,61 @@ def _store(conn, ticker: str, timeframe: str, df: pd.DataFrame, ev: dict) -> Non
                   f(c["close"]), json.dumps(detail, default=str)))
 
 
-def run_oscillator_scan(include_4h: bool = True) -> dict:
-    """Full scan over the pattern universe: daily + weekly from the DB, 4h
-    from Polygon (same bounded candidate set the pattern scan uses).
-    Designed to run immediately after each pattern scan so the structural-
-    confluence bucket reads fresh pattern rows."""
+def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
+    """alert_log row for the performance pipeline — only for bars where the
+    fired signals + confluence clear the quality gate. wt_cross must be from
+    the extreme zone; the timing signals (coil, divergence, hook, backed
+    curl) qualify on their own."""
+    sig = ev["signals"]
+    if not sig or ev["direction"] is None \
+            or ev["confluence_score"] < PERF_MIN_CONFLUENCE:
+        return None
+    x = sig.get("wt_cross")
+    curl = sig.get("mf_curl") or {}
+    qualifying = [k for k in ("coil", "divergence", "pctr_hook") if k in sig]
+    if x and x["zone"] == "extreme":
+        qualifying.append("wt_cross")
+    if curl.get("volume_backed"):
+        qualifying.append("mf_curl")
+    if not qualifying:
+        return None
+    return {
+        "ticker": ticker,
+        "price": float(df["close"].iloc[-1]),
+        "score": ev["confluence_score"],
+        "signal_type": f"{timeframe}:{'+'.join(sorted(qualifying))}"
+                       f":{ev['direction']}",
+        "timeframe": timeframe,
+        "direction": ev["direction"],
+        "confluence": ev["confluence_score"],
+    }
+
+
+def _log_perf(perf_rows: list) -> None:
+    """Feed qualifying fired signals into alert_log so the existing
+    performance pipeline computes their 7/30/90-day forward returns."""
+    if not perf_rows:
+        return
+    try:
+        from analysis.alert_tracker import log_alerts
+        n = log_alerts(perf_rows, "oscillator")
+        log.info(f"[oscillator] {n} signals logged to alert-performance")
+    except Exception as e:
+        log.warning(f"[oscillator] perf logging failed (non-fatal): {e}")
+
+
+def run_oscillator_scan(include_4h: bool = True,
+                        include_daily_weekly: bool = True) -> dict:
+    """Full scan over the pattern universe: daily + weekly from the DB, then
+    4h AND 1h from Polygon (same bounded candidate set the pattern scan
+    uses). Designed to run immediately after each pattern scan so the
+    structural-confluence bucket reads fresh pattern rows. The midday
+    refresh passes include_daily_weekly=False — daily/weekly bars can't
+    change intraday, only the 4h/1h reads can."""
     from screen.reversal_screen import _conn
     conn = _conn()
-    counts = {"daily": 0, "weekly": 0, "4h": 0}
+    counts = {"daily": 0, "weekly": 0, "4h": 0, "1h": 0}
+    perf_rows: list = []
     try:
         try:
             with conn.cursor() as _c:
@@ -448,56 +597,68 @@ def run_oscillator_scan(include_4h: bool = True) -> dict:
             conn.commit()
         except Exception:
             pass
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT ticker FROM screener_snapshot
-                UNION SELECT ticker FROM watchlist WHERE active = true
-            """)
-            tickers = sorted({r[0] for r in cur.fetchall() if r[0]})
         pctx = _pattern_context(conn)
-        log.info(f"[oscillator] daily/weekly scan over {len(tickers)} names")
-        t0 = time.time()
-        for i in range(0, len(tickers), 120):
-            batch = tickers[i:i + 120]
-            frames = _fetch_daily_ohlcv(conn, batch)
-            for t, daily in frames.items():
-                if len(daily) < 70:
-                    continue
-                try:
-                    dfd = compute_oscillator(daily)
-                    _store(conn, t, "daily", dfd,
-                           evaluate_signals(dfd, pctx.get((t, "daily"))))
-                    counts["daily"] += 1
-                    wk = resample_weekly(daily)
-                    if len(wk) >= 70:
-                        dfw = compute_oscillator(wk)
-                        _store(conn, t, "weekly", dfw,
-                               evaluate_signals(dfw, pctx.get((t, "weekly"))))
-                        counts["weekly"] += 1
-                except Exception as e:
-                    log.debug(f"[oscillator] {t} failed: {e}")
-            conn.commit()
-        log.info(f"[oscillator] daily {counts['daily']} / weekly "
-                 f"{counts['weekly']} in {time.time() - t0:.0f}s")
+        if include_daily_weekly:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker FROM screener_snapshot
+                    UNION SELECT ticker FROM watchlist WHERE active = true
+                """)
+                tickers = sorted({r[0] for r in cur.fetchall() if r[0]})
+            log.info(f"[oscillator] daily/weekly scan over {len(tickers)} names")
+            t0 = time.time()
+            for i in range(0, len(tickers), 120):
+                batch = tickers[i:i + 120]
+                frames = _fetch_daily_ohlcv(conn, batch)
+                for t, daily in frames.items():
+                    if len(daily) < 70:
+                        continue
+                    try:
+                        dfd = compute_oscillator(daily)
+                        ev = evaluate_signals(dfd, pctx.get((t, "daily")))
+                        _store(conn, t, "daily", dfd, ev)
+                        counts["daily"] += 1
+                        pe = _perf_entry(t, "daily", dfd, ev)
+                        if pe:
+                            perf_rows.append(pe)
+                        wk = resample_weekly(daily)
+                        if len(wk) >= 70:
+                            dfw = compute_oscillator(wk)
+                            evw = evaluate_signals(dfw, pctx.get((t, "weekly")))
+                            _store(conn, t, "weekly", dfw, evw)
+                            counts["weekly"] += 1
+                            pw = _perf_entry(t, "weekly", dfw, evw)
+                            if pw:
+                                perf_rows.append(pw)
+                    except Exception as e:
+                        log.debug(f"[oscillator] {t} failed: {e}")
+                conn.commit()
+            log.info(f"[oscillator] daily {counts['daily']} / weekly "
+                     f"{counts['weekly']} in {time.time() - t0:.0f}s")
         if include_4h:
-            counts["4h"] = _scan_4h(conn, pctx)
+            for tf in ("4h", "1h"):
+                counts[tf] = _scan_intraday(conn, pctx, tf, perf_rows)
     finally:
         conn.close()
+    _log_perf(perf_rows)
     return counts
 
 
-def _scan_4h(conn, pctx: dict) -> int:
+def _scan_intraday(conn, pctx: dict, tf: str, perf_rows: list) -> int:
+    """4h/1h pass over the pattern scan's bounded candidate set."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from analysis.pattern_scan import _four_h_candidates, FOUR_H_WORKERS
     cands = _four_h_candidates(conn, {})
-    log.info(f"[oscillator] 4h scan over {len(cands)} candidates")
+    log.info(f"[oscillator] {tf} scan over {len(cands)} candidates")
 
     def _one(t):
-        df = fetch_4h_confirmed(t, days=200)
+        df = fetch_intraday_confirmed(t, tf)
         if len(df) < 70:
             return None
         dfo = compute_oscillator(df)
-        return t, dfo, evaluate_signals(dfo, pctx.get((t, "4h")))
+        # pattern rows only exist for 4h among intraday TFs
+        return t, dfo, evaluate_signals(
+            dfo, pctx.get((t, "4h")) if tf == "4h" else None)
 
     n = 0
     with ThreadPoolExecutor(max_workers=FOUR_H_WORKERS) as ex:
@@ -506,10 +667,92 @@ def _scan_4h(conn, pctx: dict) -> int:
             try:
                 res = fut.result()
                 if res:
-                    _store(conn, res[0], "4h", res[1], res[2])
+                    _store(conn, res[0], tf, res[1], res[2])
+                    pe = _perf_entry(res[0], tf, res[1], res[2])
+                    if pe:
+                        perf_rows.append(pe)
                     n += 1
             except Exception as e:
-                log.warning(f"[oscillator] 4h {futs[fut]} failed: {e}")
+                log.warning(f"[oscillator] {tf} {futs[fut]} failed: {e}")
     conn.commit()
-    log.info(f"[oscillator] 4h: {n} names")
+    log.info(f"[oscillator] {tf}: {n} names")
     return n
+
+
+# ── Plain-English readout ────────────────────────────────────────────────────
+
+def _fmt_bar_ts(bar_ts, timeframe: str) -> str:
+    """Bar stamp for humans — Eastern, 12-hour for intraday bars, plain date
+    for daily and up."""
+    try:
+        ts = pd.Timestamp(bar_ts)
+        if timeframe in INTRADAY_SPEC:
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            ts = ts.tz_convert("America/New_York")
+            return ts.strftime("%b %d, %I:%M %p ET").replace(" 0", " ")
+        return ts.strftime("%b %d")
+    except Exception:
+        return str(bar_ts)
+
+
+def describe_read(r: dict) -> str:
+    """One compact human line for a compute_for_ticker / oscillator_scan
+    read: direction + confluence, wave position, fuel, %R, MACD, and any
+    fired signals."""
+    if not r:
+        return "not enough history"
+    wt2 = r.get("wt2")
+    parts = []
+    if wt2 is not None:
+        if wt2 <= -WT_OUTER:
+            pos = f"wave blown out low ({wt2:+.0f}, below −{WT_OUTER:.0f})"
+        elif wt2 <= -WT_INNER:
+            pos = f"wave in the lower band ({wt2:+.0f})"
+        elif wt2 >= WT_OUTER:
+            pos = f"wave blown out high ({wt2:+.0f}, above +{WT_OUTER:.0f})"
+        elif wt2 >= WT_INNER:
+            pos = f"wave in the upper band ({wt2:+.0f})"
+        else:
+            pos = f"wave mid-range ({wt2:+.0f})"
+        wd = r.get("wt_diff")
+        if wd is not None:
+            pos += ", rising" if wd > 0 else ", falling"
+        parts.append(pos)
+    mf = r.get("mf")
+    if mf is not None:
+        if mf <= -5:
+            parts.append(f"flow washed out ({mf:+.1f})")
+        elif mf >= 5:
+            parts.append(f"flow loaded ({mf:+.1f})")
+        else:
+            parts.append(f"flow neutral ({mf:+.1f})")
+    pr = r.get("pctr")
+    if pr is not None:
+        if pr <= -80:
+            parts.append(f"%R pinned oversold ({pr:.0f})")
+        elif pr >= -20:
+            parts.append(f"%R pinned overbought ({pr:.0f})")
+        else:
+            parts.append(f"%R {pr:.0f}")
+    mh = r.get("macd_hist")
+    if mh is not None:
+        parts.append(f"MACD {'confirming up' if mh > 0 else 'confirming down'}"
+                     f" ({mh:+.2f})")
+    sig = r.get("signals") or {}
+    if sig:
+        names = []
+        for k, v in sig.items():
+            d = v.get("dir") if isinstance(v, dict) else None
+            zone = v.get("zone") if isinstance(v, dict) else None
+            tag = k + (f" {d}" if d else "")
+            if zone == "extreme":
+                tag += " (extreme)"
+            if isinstance(v, dict) and v.get("volume_backed"):
+                tag += " (vol-backed)"
+            names.append(tag)
+        parts.append("fired: " + ", ".join(names))
+    head = ""
+    if r.get("direction"):
+        head = f"{r['direction']} {r.get('confluence_score', 0)}/100 — "
+    return head + "; ".join(parts)

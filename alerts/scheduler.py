@@ -530,6 +530,7 @@ def run_daily_pattern_scan():
         log.info(f"[scheduler] Pattern scan done: {counts}")
     except Exception as e:
         log.error(f"[scheduler] Pattern scan error: {e}")
+    _run_oscillator_scan_safe(include_daily_weekly=True)
 
 
 def run_midday_pattern_scan():
@@ -549,6 +550,42 @@ def run_midday_pattern_scan():
         log.info(f"[scheduler] Midday 4h pattern refresh: {n} patterns.")
     except Exception as e:
         log.error(f"[scheduler] Midday 4h pattern scan error: {e}")
+    # Daily/weekly bars can't change intraday — refresh only the 4h/1h reads.
+    _run_oscillator_scan_safe(include_daily_weekly=False)
+
+
+def _run_oscillator_scan_safe(include_daily_weekly: bool = True):
+    """Watchtower Oscillator scan, chained after each pattern scan so the
+    structural-confluence bucket reads fresh pattern rows. Never raises —
+    a broken oscillator pass must not take the pattern jobs down with it."""
+    try:
+        from analysis.oscillator import run_oscillator_scan
+        log.info("[oscillator] scan starting "
+                 f"({'full' if include_daily_weekly else '4h/1h refresh'})...")
+        counts = run_oscillator_scan(include_daily_weekly=include_daily_weekly)
+        log.info(f"[oscillator] scan done: {counts}")
+    except Exception as e:
+        log.error(f"[oscillator] scan error: {e}")
+
+
+def _seed_oscillator_if_empty():
+    """Deploy-time seeding: if oscillator_scan has no rows yet (first deploy
+    after the feature ships), run a full scan so the dashboard/MCP aren't
+    empty until tomorrow's 6:45 AM slot."""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM oscillator_scan LIMIT 1")
+                need = cur.fetchone() is None
+        finally:
+            conn.close()
+        if need:
+            log.info("[oscillator] oscillator_scan empty — seeding...")
+            _run_oscillator_scan_safe(include_daily_weekly=True)
+    except Exception as e:
+        log.warning(f"[oscillator] seed skipped: {e}")
 
 
 def _seed_pattern_scan_if_stale():
@@ -731,8 +768,12 @@ def start_scheduler():
     # One-time seed on a fresh deploy so the Patterns tab isn't empty until
     # the next 6:45 AM slot. Background thread — never blocks startup.
     import threading
-    threading.Thread(target=_seed_pattern_scan_if_stale,
-                     name="pattern-seed", daemon=True).start()
+
+    def _seed_all():
+        _seed_pattern_scan_if_stale()
+        _seed_oscillator_if_empty()
+
+    threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
     log.info(
         "[scheduler] Scheduler started (America/New_York). "
