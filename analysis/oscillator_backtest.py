@@ -75,11 +75,28 @@ def _events_for_ticker(daily: pd.DataFrame) -> pd.DataFrame:
     h_bull = (o["pctr"] > -80) & pinned3(o["pctr"], -80, True)
     h_bear = (o["pctr"] < -20) & pinned3(o["pctr"], -20, False)
 
+    # Coil: 10 tight bars while the wave bleeds >=15 points (bearish mirror:
+    # wave RISES 15+ into flat price). First bar of each episode only — a
+    # coil is a state, not a per-bar event. (The live signal additionally
+    # requires the pivot-low shelf to hold; the replay approximates without
+    # it.) The rsi/rsi_hold columns split these into Eric's "power coils" —
+    # wave resetting while RSI holds its trend range (Cardwell range rules).
+    band_hi = close.rolling(10).max()
+    band_lo = close.rolling(10).min()
+    tight = (band_lo > 0) & (band_hi / band_lo - 1 <= 0.04)
+    bleed = o["wt1"].shift(9) - o["wt1"]
+    c_bull = tight & (bleed >= 15)
+    c_bear = tight & (bleed <= -15)
+    c_bull = c_bull & ~c_bull.shift(1).fillna(False).astype(bool)
+    c_bear = c_bear & ~c_bear.shift(1).fillna(False).astype(bool)
+
     frames = []
     for mask, sig, direction in ((x_bull, "wt_extreme_cross", "bullish"),
                                  (x_bear, "wt_extreme_cross", "bearish"),
                                  (h_bull, "pctr_hook", "bullish"),
-                                 (h_bear, "pctr_hook", "bearish")):
+                                 (h_bear, "pctr_hook", "bearish"),
+                                 (c_bull, "coil", "bullish"),
+                                 (c_bear, "coil", "bearish")):
         idx = o.index[mask.fillna(False)]
         if not len(idx):
             continue
@@ -92,6 +109,10 @@ def _events_for_ticker(daily: pd.DataFrame) -> pd.DataFrame:
         ev["pctr"] = o["pctr"].loc[idx]
         ev["macd_ok"] = (np.sign(o["macd_hist"].loc[idx])
                          == (1 if direction == "bullish" else -1))
+        ev["rsi"] = o["rsi"].loc[idx]
+        # Range-rule agreement: RSI holding its trend-side of 50 at the event
+        ev["rsi_hold"] = (ev["rsi"] >= 50) if direction == "bullish" \
+            else (ev["rsi"] <= 50)
         ev["weekly_ok"] = (weekly_rising if direction == "bullish"
                            else ~weekly_rising).loc[idx]
         ev["vs200"] = vs200.loc[idx]
@@ -183,21 +204,24 @@ def run_backtest() -> dict:
                  bool(r.macd_ok), bool(r.weekly_ok) if pd.notna(r.weekly_ok) else False,
                  f(r.rs_pct), f(r.vs200), bool(r.gates_passed),
                  f(r.fwd5), f(r.fwd10), f(r.fwd21), f(r.fwd63),
-                 f(r.spy_fwd21))
+                 f(r.spy_fwd21), f(r.rsi),
+                 bool(r.rsi_hold) if pd.notna(r.rsi_hold) else None)
                 for r in events.itertuples()]
         with conn.cursor() as cur:
             execute_values(cur, """
                 INSERT INTO oscillator_backtest
                     (ticker, event_date, signal_type, direction, close, wt2,
                      mf, pctr, macd_ok, weekly_ok, rs_pct, vs200,
-                     gates_passed, fwd5, fwd10, fwd21, fwd63, spy_fwd21)
+                     gates_passed, fwd5, fwd10, fwd21, fwd63, spy_fwd21,
+                     rsi, rsi_hold)
                 VALUES %s
                 ON CONFLICT (ticker, event_date, signal_type) DO UPDATE SET
                     fwd5=EXCLUDED.fwd5, fwd10=EXCLUDED.fwd10,
                     fwd21=EXCLUDED.fwd21, fwd63=EXCLUDED.fwd63,
                     spy_fwd21=EXCLUDED.spy_fwd21,
                     gates_passed=EXCLUDED.gates_passed,
-                    rs_pct=EXCLUDED.rs_pct
+                    rs_pct=EXCLUDED.rs_pct,
+                    rsi=EXCLUDED.rsi, rsi_hold=EXCLUDED.rsi_hold
             """, rows, page_size=2000)
         conn.commit()
         n = len(rows)

@@ -303,10 +303,17 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                 trig = pattern_ctx.get("trigger") or 0
                 if inv and trig and inv < band_lo and band_hi < trig:
                     quality += 25.0   # coiling inside the right-shoulder zone
+            # Power coil (Eric's range-rule read): the wave reset while RSI
+            # held the bull side of 50 — sellers drained the oscillator but
+            # never won a close. CAH July '26 is the archetype.
+            rsi_now = float(c["rsi"]) if not np.isnan(c["rsi"]) else None
             sig["coil"] = {"band_pct": round((band_hi / band_lo - 1) * 100, 2),
                            "wt1_bleed": round(float(df["wt1"].iloc[-10] - c["wt1"]), 1),
                            "shelf": round(float(shelf), 2) if shelf else None,
-                           "coil_quality": quality}
+                           "rsi": round(rsi_now, 1) if rsi_now is not None else None,
+                           "power": bool(rsi_now is not None and rsi_now >= 50),
+                           "coil_quality": quality + (10.0 if rsi_now is not None
+                                                      and rsi_now >= 50 else 0.0)}
 
     # 3) %R hook out of the extreme band after ≥3 closes pinned there.
     r = df["pctr"].values

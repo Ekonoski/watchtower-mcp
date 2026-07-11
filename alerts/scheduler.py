@@ -598,13 +598,16 @@ def _seed_oscillator_backtest_if_empty():
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM oscillator_backtest LIMIT 1")
+                # Re-run when empty OR when the event set predates the coil/
+                # RSI-range upgrade (idempotent upsert refreshes old rows too).
+                cur.execute("SELECT 1 FROM oscillator_backtest "
+                            "WHERE signal_type = 'coil' LIMIT 1")
                 need = cur.fetchone() is None
         finally:
             conn.close()
         if need:
             from analysis.oscillator_backtest import run_backtest
-            log.info("[oscillator] backtest table empty — running replay...")
+            log.info("[oscillator] backtest missing coil events — replaying...")
             res = run_backtest()
             log.info(f"[oscillator] backtest done: {res}")
     except Exception as e:
