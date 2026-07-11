@@ -1533,6 +1533,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
               AND timeframe IN (o.timeframe, 'weekly')
             ORDER BY score DESC NULLS LAST LIMIT 1) p ON true
         WHERE o.timeframe = %(tf)s
+          AND o.bar_ts > clock_timestamp() - make_interval(days => %(fresh)s)
           AND (%(dir)s = 'all' OR o.direction = %(dir)s)
           AND o.direction IN ('bullish', 'bearish')
           AND o.confluence_score >= 35
@@ -1570,6 +1571,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
         LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
         WHERE o.timeframe = %(tf)s
+          AND o.bar_ts > clock_timestamp() - make_interval(days => %(fresh)s)
           AND (%(dir)s = 'all' OR o.direction = %(dir)s)
           AND ({setup_sql})
         ORDER BY o.confluence_score DESC NULLS LAST, o.ticker
@@ -1580,7 +1582,10 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
     conn = _conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(query, {"tf": tf, "dir": direction})
+            # Freshness gate: a stale intraday series (truncated Polygon
+            # response) must never surface as a current pick.
+            fresh_days = 4 if tf in ("4h", "1h") else 30
+            cur.execute(query, {"tf": tf, "dir": direction, "fresh": fresh_days})
             rows = cur.fetchall()
             cur.execute("SELECT max(scanned_at) FROM oscillator_scan "
                         "WHERE timeframe = %s", (tf,))

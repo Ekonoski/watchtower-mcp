@@ -186,10 +186,39 @@ def fetch_intraday_confirmed(ticker: str, tf: str = "4h",
     rows = [(datetime.fromtimestamp(a.timestamp / 1000, tz=timezone.utc),
              a.open, a.high, a.low, a.close, a.volume) for a in aggs]
     df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
-    df = df.set_index("ts").astype(float)
+    df = df.set_index("ts").astype(float).sort_index()
     if len(df) and df.index[-1] + pd.Timedelta(seconds=bar_secs) \
             > pd.Timestamp.now(tz=timezone.utc):
         df = df.iloc[:-1]
+    return df
+
+
+# A confirmed intraday series whose last bar is older than this is stale —
+# the fetch was truncated (CP's 4h series came back ending June 23 while its
+# 1h was current). 4 calendar days rides out any weekend + holiday.
+STALE_MAX_DAYS = 4
+
+
+def _is_stale(df: pd.DataFrame) -> bool:
+    if not len(df):
+        return True
+    from datetime import timezone
+    age = pd.Timestamp.now(tz=timezone.utc) - df.index[-1]
+    return age > pd.Timedelta(days=STALE_MAX_DAYS)
+
+
+def fetch_intraday_fresh(ticker: str, tf: str) -> pd.DataFrame:
+    """fetch_intraday_confirmed + staleness guard: a truncated response gets
+    ONE retry with a shorter window (fewer aggregates — dodges whatever cap
+    clipped the long request); still-stale series come back empty so callers
+    skip the ticker instead of storing weeks-old readings as current."""
+    df = fetch_intraday_confirmed(ticker, tf)
+    if _is_stale(df):
+        df = fetch_intraday_confirmed(ticker, tf, days=45)
+        if _is_stale(df):
+            log.debug(f"[oscillator] {tf} {ticker}: series stale after retry "
+                      f"(last bar {df.index[-1] if len(df) else 'none'}) — skipped")
+            return df.iloc[0:0]
     return df
 
 
@@ -404,7 +433,7 @@ def compute_for_ticker(ticker: str, timeframe: str = "daily",
         return {}
     own_conn = conn is None
     if timeframe in INTRADAY_SPEC:
-        df = fetch_intraday_confirmed(ticker, timeframe)
+        df = fetch_intraday_fresh(ticker, timeframe)
         pctx_tf = timeframe if timeframe == "4h" else None
     else:
         if own_conn:
@@ -652,7 +681,7 @@ def _scan_intraday(conn, pctx: dict, tf: str, perf_rows: list) -> int:
     log.info(f"[oscillator] {tf} scan over {len(cands)} candidates")
 
     def _one(t):
-        df = fetch_intraday_confirmed(t, tf)
+        df = fetch_intraday_fresh(t, tf)
         if len(df) < 70:
             return None
         dfo = compute_oscillator(df)
