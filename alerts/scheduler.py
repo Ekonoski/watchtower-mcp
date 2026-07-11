@@ -569,21 +569,42 @@ def _run_oscillator_scan_safe(include_daily_weekly: bool = True):
 
 
 def _seed_oscillator_if_empty():
-    """Deploy-time seeding: if oscillator_scan has no rows yet (first deploy
-    after the feature ships), run a full scan so the dashboard/MCP aren't
-    empty until tomorrow's 6:45 AM slot."""
+    """Deploy-time seeding: run a full scan when the table is empty (first
+    deploy) OR when the signal definitions changed (SIGNALS_VERSION bump) —
+    stored signal payloads must never lag the code, or a freshly shipped
+    signal shows an empty screen until the next scheduled scan. The version
+    claim is taken only AFTER a successful scan, so a failed run retries on
+    the next boot."""
     try:
+        from analysis.oscillator import SIGNALS_VERSION
         from screen.reversal_screen import _conn
+        claim = f"osc_signals_v{SIGNALS_VERSION}"
         conn = _conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM oscillator_scan LIMIT 1")
-                need = cur.fetchone() is None
+                empty = cur.fetchone() is None
+                cur.execute("SELECT 1 FROM scheduler_job_claims "
+                            "WHERE job_name = %s AND run_date = DATE '2000-01-01'",
+                            (claim,))
+                new_signals = cur.fetchone() is None
         finally:
             conn.close()
-        if need:
-            log.info("[oscillator] oscillator_scan empty — seeding...")
+        if empty or new_signals:
+            log.info(f"[oscillator] seeding (empty={empty}, "
+                     f"signals updated={new_signals})...")
             _run_oscillator_scan_safe(include_daily_weekly=True)
+            conn = _conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO scheduler_job_claims (job_name, run_date)
+                        VALUES (%s, DATE '2000-01-01')
+                        ON CONFLICT DO NOTHING
+                    """, (claim,))
+                conn.commit()
+            finally:
+                conn.close()
     except Exception as e:
         log.warning(f"[oscillator] seed skipped: {e}")
 

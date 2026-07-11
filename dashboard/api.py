@@ -1614,6 +1614,8 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                 tag += " (extreme)"
             if isinstance(v, dict) and v.get("volume_backed"):
                 tag += " (vol)"
+            if isinstance(v, dict) and v.get("count") and v.get("indicators"):
+                tag += f" ({v['count']}/4: {'+'.join(v['indicators'])})"
             names.append(tag)
         row = {
             "ticker": r[0], "timeframe": r[1],

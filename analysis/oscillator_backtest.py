@@ -104,26 +104,45 @@ def _events_for_ticker(daily: pd.DataFrame) -> pd.DataFrame:
     r_bear = (dn_streak == 5) & (mf.shift(5) - mf >= 3.0) \
         & (mf.shift(5) >= mf.shift(10))
 
-    # Wave divergences on confirmed pivots (k=3 both sides — the signal
+    # STACKED divergences on confirmed pivots (k=3 both sides — the signal
     # becomes visible 3 bars after the second pivot, so the event is stamped
-    # there; no lookahead).
+    # there; no lookahead). Same two price pivots checked against four
+    # series — wave / RSI / money flow / MACD histogram — div_count records
+    # how many agreed, so the report can compare 1x vs 2x+ divergences.
     from analysis.oscillator import _pivot_idx
     lows_v = daily["low"].values
     highs_v = daily["high"].values
-    wt = o["wt1"].values
     n = len(o)
+    DIV = (("wave", o["wt1"].values, 0.0), ("rsi", o["rsi"].values, 50.0),
+           ("mf", o["mf_candle"].values, 0.0),
+           ("macd", o["macd_hist"].values, 0.0))
+
+    def _hits(a, b, bearish):
+        out = []
+        for nm, arr, mid in DIV:
+            va, vb = arr[a], arr[b]
+            if np.isnan(va) or np.isnan(vb):
+                continue
+            if (bearish and va > mid and vb < va) or \
+                    (not bearish and va < mid and vb > va):
+                out.append(nm)
+        return out
+
     d_bull = pd.Series(False, index=o.index)
     d_bear = pd.Series(False, index=o.index)
-    pl = _pivot_idx(lows_v, 3, "low")
-    for a, b in zip(pl, pl[1:]):
-        if b - a <= 60 and b + 3 < n and lows_v[b] < lows_v[a] \
-                and wt[b] > wt[a] and wt[a] < 0:
-            d_bull.iloc[b + 3] = True
-    ph = _pivot_idx(highs_v, 3, "high")
-    for a, b in zip(ph, ph[1:]):
-        if b - a <= 60 and b + 3 < n and highs_v[b] > highs_v[a] \
-                and wt[b] < wt[a] and wt[a] > 0:
-            d_bear.iloc[b + 3] = True
+    div_meta: dict = {}
+    for a, b in zip(*(lambda p: (p, p[1:]))(_pivot_idx(lows_v, 3, "low"))):
+        if b - a <= 60 and b + 3 < n and lows_v[b] < lows_v[a]:
+            hits = _hits(a, b, bearish=False)
+            if hits:
+                d_bull.iloc[b + 3] = True
+                div_meta[o.index[b + 3]] = (len(hits), "+".join(hits))
+    for a, b in zip(*(lambda p: (p, p[1:]))(_pivot_idx(highs_v, 3, "high"))):
+        if b - a <= 60 and b + 3 < n and highs_v[b] > highs_v[a]:
+            hits = _hits(a, b, bearish=True)
+            if hits:
+                d_bear.iloc[b + 3] = True
+                div_meta[o.index[b + 3]] = (len(hits), "+".join(hits))
 
     frames = []
     for mask, sig, direction in ((x_bull, "wt_extreme_cross", "bullish"),
@@ -152,6 +171,12 @@ def _events_for_ticker(daily: pd.DataFrame) -> pd.DataFrame:
         # Range-rule agreement: RSI holding its trend-side of 50 at the event
         ev["rsi_hold"] = (ev["rsi"] >= 50) if direction == "bullish" \
             else (ev["rsi"] <= 50)
+        if sig == "divergence":
+            ev["div_count"] = [div_meta.get(i, (None, None))[0] for i in idx]
+            ev["div_inds"] = [div_meta.get(i, (None, None))[1] for i in idx]
+        else:
+            ev["div_count"] = None
+            ev["div_inds"] = None
         ev["weekly_ok"] = (weekly_rising if direction == "bullish"
                            else ~weekly_rising).loc[idx]
         ev["vs200"] = vs200.loc[idx]
@@ -244,7 +269,9 @@ def run_backtest() -> dict:
                  f(r.rs_pct), f(r.vs200), bool(r.gates_passed),
                  f(r.fwd5), f(r.fwd10), f(r.fwd21), f(r.fwd63),
                  f(r.spy_fwd21), f(r.rsi),
-                 bool(r.rsi_hold) if pd.notna(r.rsi_hold) else None)
+                 bool(r.rsi_hold) if pd.notna(r.rsi_hold) else None,
+                 int(r.div_count) if pd.notna(r.div_count) else None,
+                 r.div_inds if isinstance(r.div_inds, str) else None)
                 for r in events.itertuples()]
         with conn.cursor() as cur:
             execute_values(cur, """
@@ -252,7 +279,7 @@ def run_backtest() -> dict:
                     (ticker, event_date, signal_type, direction, close, wt2,
                      mf, pctr, macd_ok, weekly_ok, rs_pct, vs200,
                      gates_passed, fwd5, fwd10, fwd21, fwd63, spy_fwd21,
-                     rsi, rsi_hold)
+                     rsi, rsi_hold, div_count, div_indicators)
                 VALUES %s
                 ON CONFLICT (ticker, event_date, signal_type) DO UPDATE SET
                     fwd5=EXCLUDED.fwd5, fwd10=EXCLUDED.fwd10,
@@ -260,7 +287,9 @@ def run_backtest() -> dict:
                     spy_fwd21=EXCLUDED.spy_fwd21,
                     gates_passed=EXCLUDED.gates_passed,
                     rs_pct=EXCLUDED.rs_pct,
-                    rsi=EXCLUDED.rsi, rsi_hold=EXCLUDED.rsi_hold
+                    rsi=EXCLUDED.rsi, rsi_hold=EXCLUDED.rsi_hold,
+                    div_count=EXCLUDED.div_count,
+                    div_indicators=EXCLUDED.div_indicators
             """, rows, page_size=2000)
         conn.commit()
         n = len(rows)
