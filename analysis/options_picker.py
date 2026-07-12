@@ -44,7 +44,10 @@ def _fetch_chain(ticker: str, contract_type: str, exp_gte: date, exp_lte: date,
         return []
     out = []
     try:
-        snaps = client.get_snapshot_all(
+        from itertools import islice
+        # NOTE: this client version's get_snapshot_all() rejects a `limit`
+        # kwarg (the deploy probe caught it live) — cap client-side instead.
+        snaps = islice(client.get_snapshot_all(
             "options",
             params={
                 "underlying_ticker": ticker,
@@ -54,8 +57,7 @@ def _fetch_chain(ticker: str, contract_type: str, exp_gte: date, exp_lte: date,
                 "strike_price.gte": strike_lo,
                 "strike_price.lte": strike_hi,
             },
-            limit=limit,
-        )
+        ), limit)
         for s in snaps:
             det = getattr(s, "details", None)
             if det is None:
@@ -192,15 +194,26 @@ def build_ticket(ticker: str) -> dict:
                         "max_value": round(width, 2)}
 
         atm = min(at_exp, key=lambda c: abs(c["strike"] - last_close))
-        rv = _realized_vol_21d(conn, ticker)
         iv_ctx = None
-        if atm["iv"] and rv:
-            ratio = atm["iv"] / rv
-            iv_ctx = {"atm_iv": round(atm["iv"], 3), "realized_21d": round(rv, 3),
-                      "ratio": round(ratio, 2),
-                      "read": ("rich — favor spreads" if ratio >= 1.3 else
-                               "cheap — straight options fine" if ratio <= 0.9 else
+        # Prefer our own IV-rank history once it exists; realized-vol proxy
+        # covers the gap while it accumulates.
+        rank = iv_rank(conn, ticker)
+        if rank:
+            r = rank["iv_rank"]
+            iv_ctx = {"atm_iv": round(atm["iv"], 3) if atm["iv"] else None,
+                      "iv_rank": r, "obs": rank["obs"],
+                      "read": ("rich — favor spreads" if r >= 70 else
+                               "cheap — straight options fine" if r <= 30 else
                                "fair")}
+        else:
+            rv = _realized_vol_21d(conn, ticker)
+            if atm["iv"] and rv:
+                ratio = atm["iv"] / rv
+                iv_ctx = {"atm_iv": round(atm["iv"], 3), "realized_21d": round(rv, 3),
+                          "ratio": round(ratio, 2),
+                          "read": ("rich — favor spreads" if ratio >= 1.3 else
+                                   "cheap — straight options fine" if ratio <= 0.9 else
+                                   "fair")}
 
         exp_date = date.fromisoformat(expiry)
         earnings = _earnings_inside(conn, ticker, exp_date)
@@ -238,3 +251,141 @@ def entitlement_probe() -> str:
         msg = f"[options] entitlement probe FAILED: {e}"
         log.warning(msg)
         return msg
+
+
+# ── IV history + rank (the compounding data asset) ──────────────────────────
+
+def atm_iv_snapshot(ticker: str, close: float):
+    """ATM implied volatility + OI totals from a small chain window
+    (30-75 DTE, strikes within ~12% of the close). One snapshot call."""
+    if not close or close <= 0:
+        return None
+    today = date.today()
+    calls = _fetch_chain(ticker, "call", today + timedelta(days=30),
+                         today + timedelta(days=75),
+                         close * 0.88, close * 1.12, limit=100)
+    puts = _fetch_chain(ticker, "put", today + timedelta(days=30),
+                        today + timedelta(days=75),
+                        close * 0.88, close * 1.12, limit=100)
+    if not calls and not puts:
+        return None
+    ivs = []
+    for side in (calls, puts):
+        with_iv = [c for c in side if c["iv"]]
+        if with_iv:
+            atm = min(with_iv, key=lambda c: abs(c["strike"] - close))
+            ivs.append(atm["iv"])
+    if not ivs:
+        return None
+    return {
+        "atm_iv": round(sum(ivs) / len(ivs), 4),
+        "call_oi": sum(c["oi"] or 0 for c in calls),
+        "put_oi": sum(c["oi"] or 0 for c in puts),
+    }
+
+
+def run_iv_snapshot(top_n: int = 500) -> dict:
+    """Nightly: store ATM IV + OI for every name with a live pattern (by
+    score, bounded) plus the watchlist. This is how Watchtower grows its
+    own IV-rank history — after ~3 months, iv_rank() answers 'is premium
+    rich or cheap for THIS name' from proprietary data."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ticker FROM (
+                    SELECT DISTINCT ON (ticker) ticker, score
+                    FROM pattern_scan ORDER BY ticker, score DESC
+                ) p ORDER BY score DESC NULLS LAST LIMIT %s
+            """, (top_n,))
+            names = {r[0] for r in cur.fetchall()}
+            cur.execute("SELECT ticker FROM watchlist WHERE active = true")
+            names |= {r[0] for r in cur.fetchall()}
+            cur.execute("""
+                SELECT ticker, close FROM (
+                    SELECT DISTINCT ON (ticker) ticker, close
+                    FROM daily_prices WHERE ticker = ANY(%s)
+                    ORDER BY ticker, trade_date DESC
+                ) x
+            """, (sorted(names),))
+            closes = dict(cur.fetchall())
+        log.info(f"[options] IV snapshot over {len(closes)} names")
+
+        def _one(t):
+            snap = atm_iv_snapshot(t, float(closes[t]))
+            return (t, snap) if snap else None
+
+        rows = []
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futs = {ex.submit(_one, t): t for t in closes}
+            for f in as_completed(futs):
+                try:
+                    r = f.result()
+                    if r:
+                        rows.append(r)
+                except Exception:
+                    pass
+        with conn.cursor() as cur:
+            for t, s in rows:
+                cur.execute("""
+                    INSERT INTO iv_history (ticker, as_of, atm_iv, call_oi, put_oi)
+                    VALUES (%s, CURRENT_DATE, %s, %s, %s)
+                    ON CONFLICT (ticker, as_of) DO UPDATE SET
+                        atm_iv = EXCLUDED.atm_iv, call_oi = EXCLUDED.call_oi,
+                        put_oi = EXCLUDED.put_oi
+                """, (t, s["atm_iv"], s["call_oi"], s["put_oi"]))
+        conn.commit()
+        log.info(f"[options] IV snapshot stored {len(rows)} names")
+        return {"stored": len(rows), "universe": len(closes)}
+    finally:
+        conn.close()
+
+
+def iv_rank(conn, ticker: str):
+    """Percentile of today's ATM IV within this name's trailing year of
+    our own snapshots. None until ~20 observations exist — the realized-vol
+    proxy covers the gap while history accumulates."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT atm_iv FROM iv_history
+                WHERE ticker = %s AND as_of >= CURRENT_DATE - 370
+                ORDER BY as_of
+            """, (ticker,))
+            ivs = [float(r[0]) for r in cur.fetchall() if r[0] is not None]
+        if len(ivs) < 20:
+            return None
+        cur_iv = ivs[-1]
+        rank = sum(1 for v in ivs if v <= cur_iv) / len(ivs) * 100
+        return {"iv_rank": round(rank), "obs": len(ivs), "atm_iv": cur_iv}
+    except Exception:
+        return None
+
+
+def ticket_one_liner(ticker: str) -> str:
+    """Compact ticket for alert emails: '→ Opt: Sep18 $35C ~0.63Δ (OI 2.5k) /
+    vert 35-42 ~$1.85'. Empty string on any problem — alerts never break
+    because options data hiccuped."""
+    try:
+        t = build_ticket(ticker)
+        if not t or t.get("error"):
+            return ""
+        d = t["directional"]
+        cp = "C" if t["direction"] == "bullish" else "P"
+        exp = t["expiry"][5:].replace("-", "/")     # MM/DD
+        s = f"→ Opt: {exp} ${d['strike']:g}{cp}"
+        if d.get("delta") is not None:
+            s += f" ~{abs(d['delta']):.2f}Δ"
+        if d.get("oi"):
+            s += f" (OI {d['oi']:,})"
+        v = t.get("vertical")
+        if v and v.get("est_debit"):
+            s += (f" / vert {v['long']['strike']:g}-{v['short']['strike']:g}"
+                  f" ~${v['est_debit']}")
+        if t.get("earnings"):
+            s += f" ⚠ER {t['earnings']['date'][5:]}"
+        return s
+    except Exception:
+        return ""

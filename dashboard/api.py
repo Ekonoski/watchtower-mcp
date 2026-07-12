@@ -2167,6 +2167,20 @@ def register_routes(mcp) -> None:
                                  "as_of_et": None, "error": str(e)[:120]})
         return JSONResponse(data)
 
+    @mcp.custom_route("/api/option-ticket", methods=["GET"])
+    async def option_ticket(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        ticker = (request.query_params.get("ticker") or "").upper().strip()
+        if not ticker:
+            return JSONResponse({"error": "ticker required"})
+        try:
+            from analysis.options_picker import build_ticket
+            data = await asyncio.to_thread(build_ticket, ticker)
+        except Exception as e:
+            return JSONResponse({"error": str(e)[:120]})
+        return JSONResponse(data or {})
+
     @mcp.custom_route("/api/screener", methods=["GET"])
     async def screener(request: Request):
         if not _is_authed(request):
