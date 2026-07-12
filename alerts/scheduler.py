@@ -554,6 +554,26 @@ def run_midday_pattern_scan():
     _run_oscillator_scan_safe(include_daily_weekly=False)
 
 
+def run_iv_snapshot_job():
+    """Nightly ATM-IV / open-interest snapshot (5:35 PM ET) — grows
+    Watchtower's own IV-rank history so option structure choices (spreads
+    vs straight premium) get smarter every day it runs."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("iv_snapshot"):
+        return
+    try:
+        from analysis.options_picker import run_iv_snapshot
+        res = run_iv_snapshot()
+        log.info(f"[options] nightly IV snapshot: {res}")
+    except Exception as e:
+        log.error(f"[options] IV snapshot error: {e}")
+
+
 def _run_oscillator_scan_safe(include_daily_weekly: bool = True):
     """Watchtower Oscillator scan, chained after each pattern scan so the
     structural-confluence bucket reads fresh pattern rows. Never raises —
@@ -834,6 +854,15 @@ def start_scheduler():
         run_midday_pattern_scan,
         CronTrigger(day_of_week="mon-fri", hour="12", minute="45", timezone=et),
         id="midday_pattern_scan",
+        replace_existing=True,
+    )
+
+    # Nightly ATM-IV snapshot — 5:35 PM ET, Mon-Fri (after close; options
+    # snapshots settled). Builds the proprietary IV-rank history.
+    scheduler.add_job(
+        run_iv_snapshot_job,
+        CronTrigger(day_of_week="mon-fri", hour="17", minute="35", timezone=et),
+        id="iv_snapshot",
         replace_existing=True,
     )
 

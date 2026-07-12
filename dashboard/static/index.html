@@ -2542,8 +2542,10 @@ async function openDrawer(ticker) {
         : `<div style="margin-top:8px;color:var(--muted)">No company description available.</div>`}
     </div>`;
   }
+  html += `<div id="d-opt"></div>`;
   html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
   $("d-body").innerHTML = html;
+  loadOptionTicket(ticker, tok);
   // Membership chips → jump straight into the ETF holdings / theme modals.
   // Bound via data-attributes (not inline onclick) so names with quotes can't
   // break the handlers.
@@ -2551,6 +2553,42 @@ async function openDrawer(ticker) {
     el.onclick = () => openEtfHoldings(el.dataset.etf, el.dataset.label));
   $("d-body").querySelectorAll(".mb-theme").forEach(el =>
     el.onclick = () => openThemeMembers(el.dataset.theme));
+}
+async function loadOptionTicket(ticker, tok) {
+  // Lazy: the chain fetch takes 1-3s — never hold up the drawer for it.
+  const el = () => document.getElementById("d-opt");
+  if (!el()) return;
+  el().innerHTML = `<div class="social-box" style="color:var(--muted)">Building option ticket…</div>`;
+  let t;
+  try { t = await api("/api/option-ticket?ticker=" + encodeURIComponent(ticker)); }
+  catch { if (el() && !seqStale("drawer", tok)) el().innerHTML = ""; return; }
+  if (seqStale("drawer", tok) || !el()) return;
+  if (!t || !t.ticker || t.error) {
+    el().innerHTML = t && t.error
+      ? `<div class="social-box" style="color:var(--muted)">Options: ${esc(t.error)}${t.note ? " — " + esc(t.note) : ""}</div>`
+      : "";                                  // no live pattern → no ticket, stay quiet
+    return;
+  }
+  const bull = t.direction === "bullish";
+  const d = t.directional || {};
+  const v = t.vertical;
+  const iv = t.iv;
+  const wl = (t.est_weeks || [])[0], wh = (t.est_weeks || [])[1];
+  let h = `<div class="social-box">
+    <b>Option Ticket</b> <span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span>
+    <span style="color:var(--muted)">${esc(t.pattern)} (${esc(t.timeframe)}, ${esc(t.status)})</span>
+    <div class="grid2" style="margin-top:8px">
+      <div><div class="k">Expiry (Est ${wl ? wl + "–" + wh + "w" : "n/a"})</div><b class="num">${esc(t.expiry)}</b></div>
+      <div><div class="k">Directional</div><b class="num">$${d.strike} ${bull ? "call" : "put"}${d.delta != null ? " · " + Math.abs(d.delta).toFixed(2) + "Δ" : ""}</b></div>
+      <div><div class="k">OI / last</div><b class="num">${d.oi != null ? d.oi.toLocaleString() : "?"} / $${d.last != null ? d.last : "?"}</b></div>
+      <div><div class="k">Plan</div><b class="num">$${fmtNum(t.entry)} → $${fmtNum(t.target)}</b></div>
+    </div>`;
+  if (v) h += `<div style="margin-top:8px"><span class="k">Vertical:</span> <b class="num">long $${v.long.strike} / short $${v.short.strike}</b>${v.est_debit != null ? ` · est. debit <b class="num">$${v.est_debit}</b> → max <b class="num">$${v.max_value}</b>` : ""}</div>`;
+  if (iv) h += `<div style="margin-top:6px"><span class="k">IV:</span> ${iv.iv_rank != null ? `rank <b class="num">${iv.iv_rank}</b> (${iv.obs} obs)` : `ATM <b class="num">${(iv.atm_iv * 100).toFixed(0)}%</b> vs realized <b class="num">${(iv.realized_21d * 100).toFixed(0)}%</b>`} — <b>${esc(iv.read)}</b></div>`;
+  if (t.earnings) h += `<div style="margin-top:6px;color:var(--yellow)">⚠ Earnings ${esc(t.earnings.date)} ${esc(t.earnings.when || "")} — inside this option's life</div>`;
+  if (t.oi_note) h += `<div style="margin-top:6px;color:var(--yellow)">⚠ ${esc(t.oi_note)}</div>`;
+  h += `<div style="margin-top:6px;color:var(--muted);font-size:11px">15-min delayed snapshot — confirm live pricing at your broker.</div></div>`;
+  el().innerHTML = h;
 }
 function rsColor(rs) { return rs >= 80 ? "var(--green)" : rs >= 60 ? "#9dd44a" : rs >= 40 ? "var(--yellow)" : "var(--red)"; }
 function renderRS(m) {

@@ -1364,13 +1364,22 @@ def build_pattern_breakout_alerts() -> list:
             name = PATTERN_NAMES.get(pat["pattern"], pat["pattern"])
             move = (pat["target"] - price) / price * 100.0
             verb = "broke above trigger" if bullish else "broke below trigger"
+            # Contract suggestion rides in the alert so it arrives ready to
+            # act on (empty on any options-data hiccup — never blocks).
+            opt = ""
+            try:
+                from analysis.options_picker import ticket_one_liner
+                opt = ticket_one_liner(ticker)
+            except Exception:
+                pass
             rows.append({
                 "ticker": ticker,
                 "sleeve": "pattern",
                 "signal_type": "PATTERN_BREAKOUT" if bullish else "PATTERN_BREAKDOWN",
                 "score": _TF_SCORE.get(pat["timeframe"], 70.0),
-                "rationale": (f"{name} ({tf}): {verb} ${trig:,.2f} — "
-                              f"target ${pat['target']:,.2f} ({move:+.1f}%)")[:200],
+                "rationale": ((f"{name} ({tf}): {verb} ${trig:,.2f} — "
+                               f"target ${pat['target']:,.2f} ({move:+.1f}%)")[:200]
+                              + (f" {opt}" if opt else "")),
                 "current_price": price,
                 "change_pct": round(float(snap.get("change_pct") or 0), 2),
                 "vol_pace_ratio": round(float(snap.get("vol_ratio") or 0), 2),
