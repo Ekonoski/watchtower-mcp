@@ -8,10 +8,12 @@ analysis/levels.py) feeding a family of detectors for the common setups:
   bearish reversals    hs_top, double_top, rising_wedge
   continuations        bull_flag, bear_flag, asc_triangle, desc_triangle
 
-The flagship is the inverse head & shoulders — decline → low → equal-or-
+The flagship is the inverse head & shoulders — decline → low → clearly
 LOWER low (head) → HIGHER low (right shoulder) → neckline break. The higher
-low off the head is what proves the trend change; the left shoulder and head
-are allowed to be the same or similar price (double-bottom variant).
+low off the head is what proves the trend change. The head must sit a real
+margin below BOTH shoulders: near-equal lows are a double bottom, and the
+double-bottom detector owns that shape (each detector claims its own
+geometry — KFY's twin $59 lows were being mislabeled as an iHS).
 
 Every detector returns the same shape:
   trigger_price — the line that confirms the pattern (neckline / flag high /
@@ -48,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 7
+ENGINE_VERSION = 8
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -298,6 +300,9 @@ def _det_inverse_hs(ctx):
     if not ls_cands:
         return None
     l1_idx, l1 = min(ls_cands, key=lambda t: t[1])
+    if l2 > l1 * (1 - min_hl):
+        return None  # head barely below left shoulder — twin lows, that's a
+        # double bottom's shape and its detector owns it
     neck = _robust_extreme(ctx["highs"][l2_idx:l3_idx + 1], "high")
     if not neck or neck <= 0 or l3 >= neck * 0.995 or l1 >= neck:
         return None
@@ -349,6 +354,9 @@ def _det_hs_top(ctx):
     if not ls_cands:
         return None
     h1_idx, h1 = max(ls_cands, key=lambda t: t[1])
+    if h2 < h1 * (1 + min_lh):
+        return None  # head barely above left shoulder — twin highs, that's a
+        # double top's shape and its detector owns it
     neck = _robust_extreme(ctx["lows"][h2_idx:h3_idx + 1], "low")
     if not neck or neck <= 0 or h3 <= neck * 1.005 or h1 <= neck:
         return None
@@ -383,44 +391,53 @@ def _det_double_bottom(ctx):
     plows = _plows_live(ctx)
     if len(plows) < 2:
         return None
-    l2_idx, l2 = plows[-1]
-    if (n - 1) - l2_idx > cfg["recent"]:
+    # Freshness comes from the LATEST pivot low: a higher low printed after
+    # the W is strength, not staleness, so it keeps the pattern alive — the
+    # twin pair itself may sit further back (bounded below). A nearer pair
+    # that fails downstream gates (undercut, spent, extended) must not
+    # shadow an older valid one, so candidate pairs are evaluated in order.
+    if (n - 1) - plows[-1][0] > cfg["recent"]:
         return None
-    win_start = max(0, l2_idx - cfg["max_width"])
-    cands = [(i, p) for i, p in plows
-             if win_start <= i <= l2_idx - cfg["min_sep"] * 2
-             and abs(l2 - p) / p <= tol]
-    if not cands:
-        return None
-    l1_idx, l1 = cands[-1]  # nearest qualifying twin low
-    bottom = min(l1, l2)
-    lows_span = [x for x in ctx["lows"][l1_idx:] if x is not None]
-    if not lows_span or min(lows_span) < bottom * 0.999:
-        return None
-    trigger = _robust_extreme(ctx["highs"][l1_idx:l2_idx + 1], "high")
-    if not trigger:
-        return None
-    depth = (trigger - bottom) / bottom
-    if depth < min_depth:
-        return None
-    pre = [x for x in ctx["highs"][max(0, l1_idx - (l2_idx - l1_idx)):l1_idx] if x is not None]
-    if not pre or max(pre) < trigger * (1 + 0.04 * s):
-        return None  # needs a real decline INTO the lows, not sideways chop
-    # The second low must have BOUNCED (≥25% of pattern height) — until it
-    # does you can't call it a double bottom, and this also stops flat-top
-    # triangles / plain chop from masquerading as one.
-    if ctx["last"] < bottom + 0.25 * (trigger - bottom):
-        return None
-    status = _status(ctx, l2_idx, trigger, "bullish", target=trigger + (trigger - bottom))
-    if status is None:
-        return None
-    closeness = abs(l2 - l1) / l1
-    quality = min(12.0, 6.0 * depth / min_depth) + max(0.0, 8.0 * (1 - closeness / tol)) \
-        + (5.0 if l2_idx - l1_idx >= cfg["min_sep"] * 3 else 2.0)
-    points = {"low1": _pt(ctx, l1_idx, l1), "low2": _pt(ctx, l2_idx, l2),
-              "depth_pct": round(depth * 100, 2), "_anchor_price": bottom}
-    return _mk(ctx, "double_bottom", "bullish", status, trigger,
-               trigger + (trigger - bottom), bottom, l2_idx, l1_idx, points, quality)
+    pairs = []
+    for j in range(len(plows) - 1, 0, -1):
+        j_idx, j_low = plows[j]
+        if (n - 1) - j_idx > cfg["max_width"] // 2:
+            break  # pair too old to still call live
+        win_start = max(0, j_idx - cfg["max_width"])
+        cands = [(i, p) for i, p in plows[:j]
+                 if win_start <= i <= j_idx - cfg["min_sep"] * 2
+                 and abs(j_low - p) / p <= tol]
+        for i, p in reversed(cands):  # nearest twin first
+            lows_span = [x for x in ctx["lows"][i:] if x is not None]
+            if lows_span and min(lows_span) >= min(p, j_low) * 0.999:
+                pairs.append((i, p, j_idx, j_low))
+    for l1_idx, l1, l2_idx, l2 in pairs[:8]:
+        bottom = min(l1, l2)
+        trigger = _robust_extreme(ctx["highs"][l1_idx:l2_idx + 1], "high")
+        if not trigger:
+            continue
+        depth = (trigger - bottom) / bottom
+        if depth < min_depth:
+            continue
+        pre = [x for x in ctx["highs"][max(0, l1_idx - (l2_idx - l1_idx)):l1_idx] if x is not None]
+        if not pre or max(pre) < trigger * (1 + 0.04 * s):
+            continue  # needs a real decline INTO the lows, not sideways chop
+        # The second low must have BOUNCED (≥25% of pattern height) — until
+        # it does you can't call it a double bottom, and this also stops
+        # flat-top triangles / plain chop from masquerading as one.
+        if ctx["last"] < bottom + 0.25 * (trigger - bottom):
+            continue
+        status = _status(ctx, l2_idx, trigger, "bullish", target=trigger + (trigger - bottom))
+        if status is None:
+            continue
+        closeness = abs(l2 - l1) / l1
+        quality = min(12.0, 6.0 * depth / min_depth) + max(0.0, 8.0 * (1 - closeness / tol)) \
+            + (5.0 if l2_idx - l1_idx >= cfg["min_sep"] * 3 else 2.0)
+        points = {"low1": _pt(ctx, l1_idx, l1), "low2": _pt(ctx, l2_idx, l2),
+                  "depth_pct": round(depth * 100, 2), "_anchor_price": bottom}
+        return _mk(ctx, "double_bottom", "bullish", status, trigger,
+                   trigger + (trigger - bottom), bottom, l2_idx, l1_idx, points, quality)
+    return None
 
 
 def _det_double_top(ctx):
@@ -429,43 +446,50 @@ def _det_double_top(ctx):
     phighs = ctx["phighs"]
     if len(phighs) < 2:
         return None
-    h2_idx, h2 = phighs[-1]
-    if (n - 1) - h2_idx > cfg["recent"]:
+    # Mirror of the double bottom: a lower high after the M keeps the
+    # pattern alive; the twin pair may sit further back (bounded below),
+    # and nearer pairs that fail downstream gates don't shadow older ones.
+    if (n - 1) - phighs[-1][0] > cfg["recent"]:
         return None
-    win_start = max(0, h2_idx - cfg["max_width"])
-    cands = [(i, p) for i, p in phighs
-             if win_start <= i <= h2_idx - cfg["min_sep"] * 2
-             and abs(h2 - p) / p <= tol]
-    if not cands:
-        return None
-    h1_idx, h1 = cands[-1]
-    top = max(h1, h2)
-    highs_span = [x for x in ctx["highs"][h1_idx:] if x is not None]
-    if not highs_span or max(highs_span) > top * 1.001:
-        return None
-    trigger = _robust_extreme(ctx["lows"][h1_idx:h2_idx + 1], "low")
-    if not trigger or trigger <= 0:
-        return None
-    depth = (top - trigger) / top
-    if depth < min_depth:
-        return None
-    pre = [x for x in ctx["lows"][max(0, h1_idx - (h2_idx - h1_idx)):h1_idx] if x is not None]
-    if not pre or min(pre) > trigger * (1 - 0.04 * s):
-        return None  # needs a real rally INTO the highs, not sideways chop
-    # The second high must have been REJECTED (≥25% of pattern height) —
-    # otherwise a flat-bottom triangle or chop reads as a double top.
-    if ctx["last"] > top - 0.25 * (top - trigger):
-        return None
-    status = _status(ctx, h2_idx, trigger, "bearish", target=trigger - (top - trigger))
-    if status is None:
-        return None
-    closeness = abs(h2 - h1) / h1
-    quality = min(12.0, 6.0 * depth / min_depth) + max(0.0, 8.0 * (1 - closeness / tol)) \
-        + (5.0 if h2_idx - h1_idx >= cfg["min_sep"] * 3 else 2.0)
-    points = {"high1": _pt(ctx, h1_idx, h1), "high2": _pt(ctx, h2_idx, h2),
-              "depth_pct": round(depth * 100, 2), "_anchor_price": top}
-    return _mk(ctx, "double_top", "bearish", status, trigger,
-               trigger - (top - trigger), top, h2_idx, h1_idx, points, quality)
+    pairs = []
+    for j in range(len(phighs) - 1, 0, -1):
+        j_idx, j_high = phighs[j]
+        if (n - 1) - j_idx > cfg["max_width"] // 2:
+            break  # pair too old to still call live
+        win_start = max(0, j_idx - cfg["max_width"])
+        cands = [(i, p) for i, p in phighs[:j]
+                 if win_start <= i <= j_idx - cfg["min_sep"] * 2
+                 and abs(j_high - p) / p <= tol]
+        for i, p in reversed(cands):  # nearest twin first
+            highs_span = [x for x in ctx["highs"][i:] if x is not None]
+            if highs_span and max(highs_span) <= max(p, j_high) * 1.001:
+                pairs.append((i, p, j_idx, j_high))
+    for h1_idx, h1, h2_idx, h2 in pairs[:8]:
+        top = max(h1, h2)
+        trigger = _robust_extreme(ctx["lows"][h1_idx:h2_idx + 1], "low")
+        if not trigger or trigger <= 0:
+            continue
+        depth = (top - trigger) / top
+        if depth < min_depth:
+            continue
+        pre = [x for x in ctx["lows"][max(0, h1_idx - (h2_idx - h1_idx)):h1_idx] if x is not None]
+        if not pre or min(pre) > trigger * (1 - 0.04 * s):
+            continue  # needs a real rally INTO the highs, not sideways chop
+        # The second high must have been REJECTED (≥25% of pattern height) —
+        # otherwise a flat-bottom triangle or chop reads as a double top.
+        if ctx["last"] > top - 0.25 * (top - trigger):
+            continue
+        status = _status(ctx, h2_idx, trigger, "bearish", target=trigger - (top - trigger))
+        if status is None:
+            continue
+        closeness = abs(h2 - h1) / h1
+        quality = min(12.0, 6.0 * depth / min_depth) + max(0.0, 8.0 * (1 - closeness / tol)) \
+            + (5.0 if h2_idx - h1_idx >= cfg["min_sep"] * 3 else 2.0)
+        points = {"high1": _pt(ctx, h1_idx, h1), "high2": _pt(ctx, h2_idx, h2),
+                  "depth_pct": round(depth * 100, 2), "_anchor_price": top}
+        return _mk(ctx, "double_top", "bearish", status, trigger,
+                   trigger - (top - trigger), top, h2_idx, h1_idx, points, quality)
+    return None
 
 
 # ── Continuations: flags ─────────────────────────────────────────────────────
