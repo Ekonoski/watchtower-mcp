@@ -287,18 +287,21 @@ def estimate_resolution(pattern: str, timeframe: str, anchor_date,
 
 def estimate_trim(pattern: str, timeframe: str, stats: dict) -> dict:
     """{'weeks_hi', 'dte', 'source'} — expiry sizing for the SWING leg of a
-    trim-into-strength trade: the measured time from breakout to the FIRST
-    TRIM (+1R), not the full move. Uses the r1_p75 bars from the replay
-    with a 1.5x cushion, snapped to standard tenors, never under 21 DTE
-    (a swing leg still shouldn't be a theta trap). Empty dict when the
-    pattern has no measured +1R sample — callers fall back to a fraction
-    of the full-resolution DTE."""
+    trim-into-strength trade: monetize the first explosive leg (+1R), not
+    the full pattern resolution. Gamma trades want short-dated contracts,
+    but not melting ones, so: DTE = 3.5x the MEDIAN measured time-to-pop
+    (cushion for one failed first attempt plus a retry), also covering
+    1.5x the slow-quartile pop, snapped to tenors with a 45-DTE floor —
+    theta over a 2-3 week hold is modest at 60 DTE and brutal under 30.
+    Empty dict when the pattern has no measured +1R sample — callers fall
+    back to a fraction of the runner DTE."""
     bpw = BARS_PER_WEEK.get(timeframe, 5.0)
     st = (stats or {}).get(pattern) or {}
-    r1 = st.get("r1_p75")
-    if st.get("n", 0) < 30 or r1 is None:
+    med, p75 = st.get("r1_med"), st.get("r1_p75")
+    if st.get("n", 0) < 30 or med is None:
         return {}
-    hi = max(round(r1 / bpw, 1), 0.5)
-    want = max(hi * 7 * 1.5, 21)            # 1.5x cushion, 21-DTE floor
+    hi = max(round((p75 or med) / bpw, 1), 0.5)
+    want = max((med / bpw) * 7 * 3.5,
+               hi * 7 * 1.5, 45)
     dte = next((t for t in DTE_TENORS if t >= want), DTE_TENORS[-1])
     return {"weeks_hi": hi, "dte": dte, "source": "measured"}

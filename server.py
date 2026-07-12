@@ -965,8 +965,11 @@ def watchtower_option_ticket(ticker: str) -> str:
         lines = [f"**Option ticket — ${t['ticker']}** {arrow} "
                  f"{t['pattern']} ({t['timeframe']}, {t['status']}, score {t['score']:.0f})", ""]
         stop_s = f"${t['stop']:,.2f}" if t.get("stop") is not None else "n/a"
-        lines.append(f"- Underlying plan: entry ${t['entry']:,.2f} · stop {stop_s} · "
-                     f"target ${t['target']:,.2f} · last ${t['last_close']:,.2f}")
+        trim_s = (f" · first trim (+1R) ${t['trim_1r']:,.2f}"
+                  if t.get("trim_1r") is not None else "")
+        lines.append(f"- Underlying plan: entry ${t['entry']:,.2f} · stop {stop_s}"
+                     f"{trim_s} · target ${t['target']:,.2f} · "
+                     f"last ${t['last_close']:,.2f}")
         wl, wh = t.get("est_weeks") or (None, None)
         est_s = f"~{wl}-{wh} weeks" if wl else "n/a"
         lines.append(f"- Resolution estimate: {est_s} → DTE floor {t['dte_floor']} → "
@@ -983,7 +986,13 @@ def watchtower_option_ticket(ticker: str) -> str:
                          f"${sl['strike']:g} {cp}** ({sw_delta}, "
                          f"OI {sl.get('oi') or '?'}, last ${sl.get('last') or '?'}) "
                          f"— sized to the +1R time ({wk}; floor {sw['dte_floor']} DTE). "
-                         "Bank the first push; re-enter on the next setup.")
+                         "Sell into the +1R push; consider rolling ~1/4 of "
+                         "proceeds up-and-out for leg two instead of going flat.")
+            if sw.get("er_inside"):
+                lines.append("  ⚠️ Earnings lands INSIDE the swing window — "
+                             "if the pop hasn't arrived by the day before the "
+                             "print, take the gain or cut; IV crush hits "
+                             "short-dated contracts hardest.")
         d = t["directional"]
         d_delta = f"{d['delta']:+.2f}Δ" if d.get("delta") is not None else "Δ n/a"
         d_iv = f", IV {d['iv']:.0%}" if d.get("iv") else ""

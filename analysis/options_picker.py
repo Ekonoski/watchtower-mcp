@@ -156,7 +156,7 @@ def build_ticket(ticker: str) -> dict:
         # full move — the contract for a trim-into-strength trade. Falls back
         # to a third of the runner DTE when the pattern has no +1R sample.
         trim = estimate_trim(pattern, tf, stats) or {}
-        swing_dte = int(trim.get("dte") or max(21, dte // 3))
+        swing_dte = int(trim.get("dte") or max(45, dte // 3))
         today = date.today()
         exp_gte = today + timedelta(days=min(max(swing_dte - 4, 10),
                                              max(dte - 7, 14)))
@@ -186,6 +186,7 @@ def build_ticket(ticker: str) -> dict:
         expiry = next((e for e in exps if e >= runner_floor), exps[-1])
         swing_expiry = next((e for e in exps if e >= swing_floor), exps[0])
         at_exp = [c for c in liquid if c["exp"] == expiry]
+        earnings = _earnings_inside(conn, ticker, date.fromisoformat(expiry))
 
         def _pick_leg(chain_slice):
             # Delta nearest ±TARGET_DELTA (fall back to the strike nearest
@@ -204,7 +205,14 @@ def build_ticket(ticker: str) -> dict:
                 swing = {"expiry": swing_expiry, "leg": _pick_leg(swing_at),
                          "dte_floor": swing_dte,
                          "weeks_to_trim": trim.get("weeks_hi"),
-                         "source": trim.get("source") or "est"}
+                         "source": trim.get("source") or "est",
+                         # Earnings inside the SWING window is the sharp
+                         # edge: IV crush hits short-dated contracts hardest.
+                         # Rule: if the pop hasn't arrived by the day before
+                         # the print, take what's there or cut — don't drift
+                         # through it by default.
+                         "er_inside": bool(earnings and
+                                           earnings["date"] <= swing_expiry)}
 
         # Vertical: long nearest the entry, short nearest the target.
         long_leg = min(at_exp, key=lambda c: abs(c["strike"] - trigger))
@@ -241,14 +249,16 @@ def build_ticket(ticker: str) -> dict:
                                    "cheap — straight options fine" if ratio <= 0.9 else
                                    "fair")}
 
-        exp_date = date.fromisoformat(expiry)
-        earnings = _earnings_inside(conn, ticker, exp_date)
+        # First trim = +1R: the trigger's risk unit projected forward
+        # (2*trigger - invalid works for both directions). This is the level
+        # the swing leg monetizes — 91% of EMA bounces tag it.
+        trim_1r = round(2 * trigger - invalid, 2) if invalid is not None else None
 
         return {
             "ticker": ticker, "pattern": pattern, "timeframe": tf,
             "direction": direction, "status": status, "score": float(score or 0),
-            "entry": trigger, "stop": invalid, "target": target,
-            "last_close": last_close,
+            "entry": trigger, "stop": invalid, "trim_1r": trim_1r,
+            "target": target, "last_close": last_close,
             "est_weeks": [est.get("weeks_lo"), est.get("weeks_hi")],
             "dte_floor": dte, "expiry": expiry,
             "expiries_available": exps[:4],
