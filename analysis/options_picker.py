@@ -36,8 +36,11 @@ TARGET_DELTA = 0.65   # directional leg
 def _fetch_chain(ticker: str, contract_type: str, exp_gte: date, exp_lte: date,
                  strike_lo: float, strike_hi: float, limit: int = 250) -> list:
     """Option contract snapshots for one underlying, filtered server-side
-    where Polygon allows and client-side for the rest. Uses the same
-    get_snapshot_all idiom as fetch_options_snapshot (version-safe)."""
+    where Polygon allows and client-side for the rest.
+
+    Must use the v3 options-chain endpoint (list_snapshot_options_chain);
+    get_snapshot_all("options") builds a v2 URL that Polygon 404s — the
+    deploy probe caught that live."""
     from analysis.polygon_data import get_client
     client = get_client()
     if not client:
@@ -45,17 +48,15 @@ def _fetch_chain(ticker: str, contract_type: str, exp_gte: date, exp_lte: date,
     out = []
     try:
         from itertools import islice
-        # NOTE: this client version's get_snapshot_all() rejects a `limit`
-        # kwarg (the deploy probe caught it live) — cap client-side instead.
-        snaps = islice(client.get_snapshot_all(
-            "options",
+        snaps = islice(client.list_snapshot_options_chain(
+            ticker,
             params={
-                "underlying_ticker": ticker,
                 "contract_type": contract_type,
                 "expiration_date.gte": exp_gte.isoformat(),
                 "expiration_date.lte": exp_lte.isoformat(),
                 "strike_price.gte": strike_lo,
                 "strike_price.lte": strike_hi,
+                "limit": 250,
             },
         ), limit)
         for s in snaps:
