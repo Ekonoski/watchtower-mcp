@@ -74,10 +74,19 @@ def _breakout_idx(bars: list, as_of: int, trigger: float, direction: str,
     return as_of
 
 
-def _resolve(bars: list, j: int, target: float, invalid, direction: str):
+def _resolve(bars: list, j: int, trigger: float, target: float, invalid,
+             direction: str):
     """Walk forward from the breakout bar: measured-move touch vs a CLOSE
     through the invalidation level (closes define structure; wicks don't).
-    Same-bar tie goes to 'invalid' — the conservative read."""
+    Same-bar ties go to 'invalid' — the conservative read. Also tracks the
+    FIRST TRIM: did +1R (trigger plus one stop-distance) get touched before
+    a stop-close — the win metric for trim-along-the-way management."""
+    r1 = None
+    if invalid is not None and abs(trigger - invalid) > 1e-9:
+        r1 = trigger + (trigger - invalid) if direction == "bullish" \
+            else trigger - (invalid - trigger)
+    win_1r = False if r1 is not None else None
+    bars_1r = None
     end = min(len(bars), j + 1 + HORIZON)
     for i in range(j + 1, end):
         b = bars[i]
@@ -86,11 +95,16 @@ def _resolve(bars: list, j: int, target: float, invalid, direction: str):
                     else b["close"] > invalid))
         hit = (b["high"] >= target if direction == "bullish"
                else b["low"] <= target)
+        if r1 is not None and win_1r is False and not stopped:
+            if (b["high"] >= r1 if direction == "bullish" else b["low"] <= r1):
+                win_1r, bars_1r = True, i - j
         if stopped:
-            return "invalid", i - j
+            return "invalid", i - j, win_1r, bars_1r
         if hit:
-            return "target", i - j
-    return "open", None
+            if win_1r is False:
+                win_1r, bars_1r = True, i - j
+            return "target", i - j, win_1r, bars_1r
+    return "open", None, win_1r, bars_1r
 
 
 def _replay_ticker(bars: list) -> list:
@@ -115,8 +129,9 @@ def _replay_ticker(bars: list) -> list:
             if key in seen:
                 continue
             seen.add(key)
-            outcome, bto = _resolve(bars, j, det["target"],
-                                    det["invalid_level"], det["direction"])
+            outcome, bto, w1, b1 = _resolve(bars, j, det["trigger_price"],
+                                            det["target"], det["invalid_level"],
+                                            det["direction"])
             anchor = det.get("anchor_date")
             width = None
             if anchor is not None:
@@ -126,7 +141,7 @@ def _replay_ticker(bars: list) -> list:
                     pass
             out.append((det["pattern"], det["direction"], anchor, dates[j],
                         width, det["trigger_price"], det["target"],
-                        det["invalid_level"], outcome, bto))
+                        det["invalid_level"], outcome, bto, w1, b1))
     return out
 
 
@@ -172,11 +187,14 @@ def run_pattern_backtest() -> dict:
                     INSERT INTO pattern_backtest
                         (ticker, pattern, direction, anchor_date,
                          breakout_date, base_width_bars, trigger_price,
-                         target, invalid_level, outcome, bars_to_outcome)
+                         target, invalid_level, outcome, bars_to_outcome,
+                         win_1r, bars_to_1r)
                     VALUES %s
                     ON CONFLICT (ticker, pattern, breakout_date) DO UPDATE SET
                         outcome = EXCLUDED.outcome,
-                        bars_to_outcome = EXCLUDED.bars_to_outcome
+                        bars_to_outcome = EXCLUDED.bars_to_outcome,
+                        win_1r = EXCLUDED.win_1r,
+                        bars_to_1r = EXCLUDED.bars_to_1r
                 """, rows, page_size=2000)
             conn.commit()
         log.info(f"[patterns] backtest stored {len(rows)} breakouts "

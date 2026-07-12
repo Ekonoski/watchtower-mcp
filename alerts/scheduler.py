@@ -645,9 +645,11 @@ def _seed_pattern_backtest_if_empty():
         try:
             with conn.cursor() as cur:
                 # Re-run when empty OR when the replay predates the newest
-                # detector (idempotent upsert refreshes existing rows too).
+                # schema/detector (win_1r arrived with engine v7's
+                # vol-normalized EMA bounce; idempotent upsert refreshes
+                # existing rows too).
                 cur.execute("SELECT 1 FROM pattern_backtest "
-                            "WHERE pattern = 'ema_bounce' LIMIT 1")
+                            "WHERE win_1r IS NOT NULL LIMIT 1")
                 need = cur.fetchone() is None
         finally:
             conn.close()

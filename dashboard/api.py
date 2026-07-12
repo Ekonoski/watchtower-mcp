@@ -1422,9 +1422,12 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
                        p.trigger_price, p.target, p.invalid_level, p.last_close,
                        p.dist_to_trigger_pct, p.score, p.points, p.anchor_date,
                        p.detected_at, p.scanned_at,
-                       s.company_name, s.sector, s.rs_pct
+                       s.company_name, s.sector, s.rs_pct,
+                       w.direction AS weekly_dir
                 FROM pattern_scan p
                 LEFT JOIN screener_snapshot s ON s.ticker = p.ticker
+                LEFT JOIN oscillator_scan w
+                       ON w.ticker = p.ticker AND w.timeframe = 'weekly'
                 WHERE (%(tf)s = 'all' OR p.timeframe = %(tf)s)
                   AND (%(st)s = 'all' OR p.status = %(st)s)
                   AND (%(dir)s = 'all' OR p.direction = %(dir)s)
@@ -1463,6 +1466,7 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
             "detected_at": r[13].isoformat() if r[13] else None,
             "company_name": r[15] or "", "sector": r[16] or "",
             "rs_pct": int(r[17]) if r[17] is not None else None,
+            "weekly_dir": r[18],
         }
         if estimate_resolution is not None:
             row["est"] = estimate_resolution(r[2], r[1], r[12], timing)
