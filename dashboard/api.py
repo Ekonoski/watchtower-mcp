@@ -1539,7 +1539,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                o.mf_candle, o.rsi, o.pctr, o.macd_hist,
                o.signals, o.confluence_score, o.direction,
                s.company_name, s.sector, s.rs_pct, s.price,
-               w.direction AS wk_dir, s.vs_sma
+               w.direction AS wk_dir, s.vs_sma, o.bars_since_cross
     """
 
     if setup == "entry_grade":
@@ -1673,12 +1673,13 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             # float() before round — the raw DB Decimal survives round() and
             # then blows up JSON serialization AFTER the route's error guard
             "vs_sma_pct": round(float(r[18]) * 100, 1) if r[18] is not None else None,
+            "bars_since_cross": int(r[19]) if r[19] is not None else None,
         }
         if setup == "entry_grade":
             row.update({
-                "pattern": r[19], "pattern_tf": r[20], "pattern_status": r[21],
-                "pattern_dist": _f(r[22]),
-                "entry_rank": round(_f(r[23]) or 0),
+                "pattern": r[20], "pattern_tf": r[21], "pattern_status": r[22],
+                "pattern_dist": _f(r[23]),
+                "entry_rank": round(_f(r[24]) or 0),
             })
         out.append(row)
     as_of_et = None
