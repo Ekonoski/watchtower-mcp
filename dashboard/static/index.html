@@ -2587,11 +2587,19 @@ async function loadOptionTicket(ticker, tok) {
     <b>Option Ticket</b> <span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span>
     <span style="color:var(--muted)">${esc(t.pattern)} (${esc(t.timeframe)}, ${esc(t.status)})</span>
     <div class="grid2" style="margin-top:8px">
-      <div><div class="k">Expiry (Est ${wl ? wl + "–" + wh + "w" : "n/a"})</div><b class="num">${esc(t.expiry)}</b></div>
-      <div><div class="k">Directional</div><b class="num">$${d.strike} ${bull ? "call" : "put"}${d.delta != null ? " · " + Math.abs(d.delta).toFixed(2) + "Δ" : ""}</b></div>
+      <div><div class="k">Runner expiry (Est ${wl ? wl + "–" + wh + "w" : "n/a"})</div><b class="num">${esc(t.expiry)}</b></div>
+      <div><div class="k">Runner leg</div><b class="num">$${d.strike} ${bull ? "call" : "put"}${d.delta != null ? " · " + Math.abs(d.delta).toFixed(2) + "Δ" : ""}</b></div>
       <div><div class="k">OI / last</div><b class="num">${d.oi != null ? d.oi.toLocaleString() : "?"} / $${d.last != null ? d.last : "?"}</b></div>
       <div><div class="k">Plan</div><b class="num">$${fmtNum(t.entry)} → $${fmtNum(t.target)}</b></div>
     </div>`;
+  const sw = t.swing;
+  if (sw && sw.leg) {
+    const sl = sw.leg;
+    h += `<div style="margin-top:8px"><span class="k">Swing (trim-into-strength):</span>
+      <b class="num">${esc(sw.expiry)} $${sl.strike} ${bull ? "call" : "put"}${sl.delta != null ? " · " + Math.abs(sl.delta).toFixed(2) + "Δ" : ""}</b>
+      <span style="color:var(--muted)"> · OI ${sl.oi != null ? sl.oi.toLocaleString() : "?"} / $${sl.last != null ? sl.last : "?"}
+      — sized to the measured +1R time${sw.weeks_to_trim ? ` (~${sw.weeks_to_trim}w)` : ""}; bank the first push, let the runner ride</span></div>`;
+  }
   if (v) h += `<div style="margin-top:8px"><span class="k">Vertical:</span> <b class="num">long $${v.long.strike} / short $${v.short.strike}</b>${v.est_debit != null ? ` · est. debit <b class="num">$${v.est_debit}</b> → max <b class="num">$${v.max_value}</b>` : ""}</div>`;
   if (iv) h += `<div style="margin-top:6px"><span class="k">IV:</span> ${iv.iv_rank != null ? `rank <b class="num">${iv.iv_rank}</b> (${iv.obs} obs)` : `ATM <b class="num">${(iv.atm_iv * 100).toFixed(0)}%</b> vs realized <b class="num">${(iv.realized_21d * 100).toFixed(0)}%</b>`} — <b>${esc(iv.read)}</b></div>`;
   if (t.earnings) h += `<div style="margin-top:6px;color:var(--yellow)">⚠ Earnings ${esc(t.earnings.date)} ${esc(t.earnings.when || "")} — inside this option's life</div>`;

@@ -944,10 +944,11 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 def watchtower_option_ticket(ticker: str) -> str:
     """
     Turn a ticker's best live pattern into a concrete options ticket:
-    expiry from the pattern's MEASURED resolution time (Est DTE), a
-    ~0.65-delta directional leg, a vertical spread built from the
-    pattern's own entry/target strikes, IV rich/cheap context (ATM IV vs
-    21-day realized), open-interest liquidity gating, and an
+    TWO ~0.65-delta legs — a SWING leg whose expiry is sized to the
+    measured time-to-first-trim (+1R, for trim-into-strength trades) and
+    a RUNNER leg sized to the full measured resolution (2x p75) — plus a
+    vertical spread built from the pattern's own entry/target strikes,
+    IV rich/cheap context, open-interest liquidity gating, and an
     earnings-inside-the-window flag. Prices are 15-min delayed snapshot
     data — decision support; the broker's screen is the final price check.
     """
@@ -971,11 +972,22 @@ def watchtower_option_ticket(ticker: str) -> str:
         lines.append(f"- Resolution estimate: {est_s} → DTE floor {t['dte_floor']} → "
                      f"**expiry {t['expiry']}** (also available: "
                      f"{', '.join(t.get('expiries_available', [])[1:]) or '—'})")
+        cp = "call" if t["direction"] == "bullish" else "put"
+        sw = t.get("swing")
+        if sw and sw.get("leg"):
+            sl = sw["leg"]
+            sw_delta = f"{sl['delta']:+.2f}Δ" if sl.get("delta") is not None else "Δ n/a"
+            wk = (f"~{sw['weeks_to_trim']}w to first trim, measured"
+                  if sw.get("weeks_to_trim") else "est from full resolution")
+            lines.append(f"- Swing (trim-into-strength): **{sw['expiry']} "
+                         f"${sl['strike']:g} {cp}** ({sw_delta}, "
+                         f"OI {sl.get('oi') or '?'}, last ${sl.get('last') or '?'}) "
+                         f"— sized to the +1R time ({wk}; floor {sw['dte_floor']} DTE). "
+                         "Bank the first push; re-enter on the next setup.")
         d = t["directional"]
         d_delta = f"{d['delta']:+.2f}Δ" if d.get("delta") is not None else "Δ n/a"
         d_iv = f", IV {d['iv']:.0%}" if d.get("iv") else ""
-        lines.append(f"- Directional: **{d['exp']} ${d['strike']:g} "
-                     f"{'call' if t['direction']=='bullish' else 'put'}** "
+        lines.append(f"- Runner (full move): **{d['exp']} ${d['strike']:g} {cp}** "
                      f"({d_delta}{d_iv}, OI {d.get('oi') or '?'}, "
                      f"last ${d.get('last') or '?'})")
         v = t.get("vertical")
@@ -986,7 +998,11 @@ def watchtower_option_ticket(ticker: str) -> str:
                          f"width ${v['width']:g}, est. debit {deb} → "
                          f"max value ${v['max_value']:g}")
         iv = t.get("iv")
-        if iv:
+        if iv and iv.get("iv_rank") is not None:
+            atm_s = f"ATM {iv['atm_iv']:.0%}, " if iv.get("atm_iv") else ""
+            lines.append(f"- IV context: {atm_s}IV rank {iv['iv_rank']}/100 "
+                         f"({iv['obs']} obs, our own history) — **{iv['read']}**")
+        elif iv:
             lines.append(f"- IV context: ATM {iv['atm_iv']:.0%} vs realized "
                          f"{iv['realized_21d']:.0%} (ratio {iv['ratio']}) — **{iv['read']}**")
         e = t.get("earnings")

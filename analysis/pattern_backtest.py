@@ -206,8 +206,11 @@ def run_pattern_backtest() -> dict:
 
 
 def timing_stats(conn=None) -> dict:
-    """Per-pattern timing: {pattern: {n, hit_rate, p25, med, p75}} in BARS
-    from breakout to target-touch (winners only for the time stats)."""
+    """Per-pattern timing: {pattern: {n, hit_rate, p25, med, p75, r1_med,
+    r1_p75}} in BARS. p25/med/p75 = breakout to full target-touch (winners
+    only); r1_med/r1_p75 = breakout to FIRST TRIM (+1R touch) on rows that
+    got there — the number that sizes a swing-leg option for a trim-into-
+    strength style rather than a hold-to-target one."""
     from screen.reversal_screen import _conn
     own = conn is None
     if own:
@@ -223,17 +226,23 @@ def timing_stats(conn=None) -> dict:
                        percentile_cont(0.5) WITHIN GROUP (ORDER BY bars_to_outcome)
                            FILTER (WHERE outcome='target'),
                        percentile_cont(0.75) WITHIN GROUP (ORDER BY bars_to_outcome)
-                           FILTER (WHERE outcome='target')
+                           FILTER (WHERE outcome='target'),
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY bars_to_1r)
+                           FILTER (WHERE win_1r),
+                       percentile_cont(0.75) WITHIN GROUP (ORDER BY bars_to_1r)
+                           FILTER (WHERE win_1r)
                 FROM pattern_backtest
                 GROUP BY pattern
             """)
             out = {}
-            for p, n, hr, p25, med, p75 in cur.fetchall():
+            for p, n, hr, p25, med, p75, r1m, r1p in cur.fetchall():
                 out[p] = {"n": int(n),
                           "hit_rate": float(hr) if hr is not None else None,
                           "p25": float(p25) if p25 is not None else None,
                           "med": float(med) if med is not None else None,
-                          "p75": float(p75) if p75 is not None else None}
+                          "p75": float(p75) if p75 is not None else None,
+                          "r1_med": float(r1m) if r1m is not None else None,
+                          "r1_p75": float(r1p) if r1p is not None else None}
             return out
     finally:
         if own:
@@ -274,3 +283,22 @@ def estimate_resolution(pattern: str, timeframe: str, anchor_date,
     want = hi * 7 * 2                       # 2x the upper estimate, in days
     dte = next((t for t in DTE_TENORS if t >= want), DTE_TENORS[-1])
     return {"weeks_lo": lo, "weeks_hi": hi, "dte": dte, "source": source}
+
+
+def estimate_trim(pattern: str, timeframe: str, stats: dict) -> dict:
+    """{'weeks_hi', 'dte', 'source'} — expiry sizing for the SWING leg of a
+    trim-into-strength trade: the measured time from breakout to the FIRST
+    TRIM (+1R), not the full move. Uses the r1_p75 bars from the replay
+    with a 1.5x cushion, snapped to standard tenors, never under 21 DTE
+    (a swing leg still shouldn't be a theta trap). Empty dict when the
+    pattern has no measured +1R sample — callers fall back to a fraction
+    of the full-resolution DTE."""
+    bpw = BARS_PER_WEEK.get(timeframe, 5.0)
+    st = (stats or {}).get(pattern) or {}
+    r1 = st.get("r1_p75")
+    if st.get("n", 0) < 30 or r1 is None:
+        return {}
+    hi = max(round(r1 / bpw, 1), 0.5)
+    want = max(hi * 7 * 1.5, 21)            # 1.5x cushion, 21-DTE floor
+    dte = next((t for t in DTE_TENORS if t >= want), DTE_TENORS[-1])
+    return {"weeks_hi": hi, "dte": dte, "source": "measured"}

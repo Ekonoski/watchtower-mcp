@@ -8,11 +8,15 @@ via Polygon's options snapshot (Options Starter: chains with greeks, IV,
 open interest; 15-minute delayed — decision data, not execution data):
 
   build_ticket(ticker) ->
-    - expiry: the nearest expiration at/after the Est-DTE floor (2x the
-      p75 resolution time — the "buy twice the time you think you need"
-      rule), from the pattern's own measured history when available
+    - expiry (RUNNER): the nearest expiration at/after the Est-DTE floor
+      (2x the p75 full-resolution time — the "buy twice the time you think
+      you need" rule), from the pattern's own measured history
+    - swing leg: a second, SHORTER expiry sized to the measured time to
+      the FIRST TRIM (+1R, r1_p75 x 1.5, >=21 DTE) — the contract for a
+      trim-into-strength trade that banks the first push and re-enters,
+      rather than holding through the full measured move
     - directional leg: the ~0.65-delta call (bullish) / put (bearish) at
-      that expiry, liquidity-gated on open interest
+      each expiry, liquidity-gated on open interest
     - vertical: long strike nearest the ENTRY, short strike nearest the
       TARGET — the pattern's own geometry as a defined-risk spread
     - IV context: ATM IV vs the underlying's 21-day realized vol (crude
@@ -144,10 +148,18 @@ def build_ticket(ticker: str) -> dict:
             float(trigger), float(invalid) if invalid is not None else None,
             float(target), float(last_close))
 
-        est = estimate_resolution(pattern, tf, anchor_date, timing_stats(conn)) or {}
+        from analysis.pattern_backtest import estimate_trim
+        stats = timing_stats(conn)
+        est = estimate_resolution(pattern, tf, anchor_date, stats) or {}
         dte = int(est.get("dte") or 60)
+        # Swing leg: sized to the measured time-to-FIRST-TRIM (+1R), not the
+        # full move — the contract for a trim-into-strength trade. Falls back
+        # to a third of the runner DTE when the pattern has no +1R sample.
+        trim = estimate_trim(pattern, tf, stats) or {}
+        swing_dte = int(trim.get("dte") or max(21, dte // 3))
         today = date.today()
-        exp_gte = today + timedelta(days=max(dte - 7, 14))
+        exp_gte = today + timedelta(days=min(max(swing_dte - 4, 10),
+                                             max(dte - 7, 14)))
         exp_lte = today + timedelta(days=int(dte * 2.2))
 
         bull = direction == "bullish"
@@ -169,17 +181,30 @@ def build_ticket(ticker: str) -> dict:
                     "note": "No strikes with meaningful open interest."}
 
         exps = sorted({c["exp"] for c in liquid})
-        expiry = exps[0]
+        runner_floor = (today + timedelta(days=max(dte - 7, 14))).isoformat()
+        swing_floor = (today + timedelta(days=max(swing_dte - 4, 10))).isoformat()
+        expiry = next((e for e in exps if e >= runner_floor), exps[-1])
+        swing_expiry = next((e for e in exps if e >= swing_floor), exps[0])
         at_exp = [c for c in liquid if c["exp"] == expiry]
 
-        # Directional leg: delta nearest ±TARGET_DELTA (fall back to the
-        # strike nearest the trigger when greeks are missing).
-        want = TARGET_DELTA if bull else -TARGET_DELTA
-        with_delta = [c for c in at_exp if c["delta"] is not None]
-        if with_delta:
-            leg = min(with_delta, key=lambda c: abs(c["delta"] - want))
-        else:
-            leg = min(at_exp, key=lambda c: abs(c["strike"] - trigger))
+        def _pick_leg(chain_slice):
+            # Delta nearest ±TARGET_DELTA (fall back to the strike nearest
+            # the trigger when greeks are missing).
+            want = TARGET_DELTA if bull else -TARGET_DELTA
+            with_delta = [c for c in chain_slice if c["delta"] is not None]
+            if with_delta:
+                return min(with_delta, key=lambda c: abs(c["delta"] - want))
+            return min(chain_slice, key=lambda c: abs(c["strike"] - trigger))
+
+        leg = _pick_leg(at_exp)
+        swing = None
+        if swing_expiry != expiry:
+            swing_at = [c for c in liquid if c["exp"] == swing_expiry]
+            if swing_at:
+                swing = {"expiry": swing_expiry, "leg": _pick_leg(swing_at),
+                         "dte_floor": swing_dte,
+                         "weeks_to_trim": trim.get("weeks_hi"),
+                         "source": trim.get("source") or "est"}
 
         # Vertical: long nearest the entry, short nearest the target.
         long_leg = min(at_exp, key=lambda c: abs(c["strike"] - trigger))
@@ -227,7 +252,7 @@ def build_ticket(ticker: str) -> dict:
             "est_weeks": [est.get("weeks_lo"), est.get("weeks_hi")],
             "dte_floor": dte, "expiry": expiry,
             "expiries_available": exps[:4],
-            "directional": leg, "vertical": vertical,
+            "directional": leg, "swing": swing, "vertical": vertical,
             "iv": iv_ctx, "earnings": earnings, "oi_note": oi_note,
         }
     finally:
@@ -376,7 +401,15 @@ def ticket_one_liner(ticker: str) -> str:
         d = t["directional"]
         cp = "C" if t["direction"] == "bullish" else "P"
         exp = t["expiry"][5:].replace("-", "/")     # MM/DD
-        s = f"→ Opt: {exp} ${d['strike']:g}{cp}"
+        s = "→ Opt:"
+        sw = t.get("swing")
+        if sw and sw.get("leg"):
+            sl = sw["leg"]
+            s += f" swing {sw['expiry'][5:].replace('-', '/')} ${sl['strike']:g}{cp}"
+            if sl.get("delta") is not None:
+                s += f" ~{abs(sl['delta']):.2f}Δ"
+            s += " /"
+        s += f" runner {exp} ${d['strike']:g}{cp}"
         if d.get("delta") is not None:
             s += f" ~{abs(d['delta']):.2f}Δ"
         if d.get("oi"):
