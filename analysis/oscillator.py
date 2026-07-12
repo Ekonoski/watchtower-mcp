@@ -650,12 +650,37 @@ def compute_for_ticker(ticker: str, timeframe: str = "daily",
         "pctr": f(c["pctr"]), "pctr_ema": f(c["pctr_ema"]),
         "macd": f(c["macd"]), "macd_signal": f(c["macd_signal"]),
         "macd_hist": f(c["macd_hist"]),
+        "bars_since_cross": _bars_since_cross(dfo),
         "signals": ev["signals"], "confluence_score": ev["confluence_score"],
         "direction": ev["direction"], "pattern_ctx": pctx,
     }
 
 
 # ── Scan orchestration ───────────────────────────────────────────────────────
+
+def _bars_since_cross(df: pd.DataFrame, window: int = 120) -> int:
+    """Confirmed bars since wt1 last crossed wt2 (either direction). 0 =
+    crossed on the latest bar. None when there's no cross inside the
+    window. This is STATE, not an event — the NU lesson: a summary that
+    only reports cross EVENTS reads 'not crossed' four weeks after a cross
+    that held, which inverts the actual read."""
+    try:
+        d = (df["wt1"] - df["wt2"]).values[-window:]
+        d = d[~np.isnan(d)]
+        if len(d) < 2:
+            return None
+        last = np.sign(d[-1])
+        if last == 0:
+            return 0
+        n = 0
+        for v in d[-2::-1]:
+            if np.sign(v) != last:
+                return n
+            n += 1
+        return None
+    except Exception:
+        return None
+
 
 def _pattern_context(conn) -> dict:
     """(ticker, timeframe) -> best live pattern row, for coil boosts and the
@@ -686,9 +711,9 @@ def _store(conn, ticker: str, timeframe: str, df: pd.DataFrame, ev: dict) -> Non
             INSERT INTO oscillator_scan
                 (ticker, timeframe, bar_ts, wt1, wt2, wt_diff, mf_candle,
                  mf_volume, rsi, stoch_k, stoch_d, pctr, pctr_ema, macd,
-                 macd_signal, macd_hist, signals, confluence_score,
-                 direction, scanned_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                 macd_signal, macd_hist, bars_since_cross, signals,
+                 confluence_score, direction, scanned_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s::jsonb,%s,%s, clock_timestamp())
             ON CONFLICT (ticker, timeframe) DO UPDATE SET
                 bar_ts=EXCLUDED.bar_ts, wt1=EXCLUDED.wt1, wt2=EXCLUDED.wt2,
@@ -697,14 +722,17 @@ def _store(conn, ticker: str, timeframe: str, df: pd.DataFrame, ev: dict) -> Non
                 stoch_k=EXCLUDED.stoch_k, stoch_d=EXCLUDED.stoch_d,
                 pctr=EXCLUDED.pctr, pctr_ema=EXCLUDED.pctr_ema,
                 macd=EXCLUDED.macd, macd_signal=EXCLUDED.macd_signal,
-                macd_hist=EXCLUDED.macd_hist, signals=EXCLUDED.signals,
+                macd_hist=EXCLUDED.macd_hist,
+                bars_since_cross=EXCLUDED.bars_since_cross,
+                signals=EXCLUDED.signals,
                 confluence_score=EXCLUDED.confluence_score,
                 direction=EXCLUDED.direction, scanned_at=clock_timestamp()
         """, (ticker, timeframe, str(bar_ts), f(c["wt1"]), f(c["wt2"]),
               f(c["wt_diff"]), f(c["mf_candle"]), f(c["mf_volume"]),
               f(c["rsi"]), f(c["stoch_k"]), f(c["stoch_d"]), f(c["pctr"]),
               f(c["pctr_ema"]), f(c["macd"]), f(c["macd_signal"]),
-              f(c["macd_hist"]), json.dumps(ev["signals"], default=str),
+              f(c["macd_hist"]), _bars_since_cross(df),
+              json.dumps(ev["signals"], default=str),
               ev["confluence_score"], ev["direction"]))
         for name, detail in ev["signals"].items():
             direction = detail.get("dir") or ev["direction"] or "n/a"
@@ -886,23 +914,34 @@ def describe_read(r: dict) -> str:
     fired signals."""
     if not r:
         return "not enough history"
-    wt2 = r.get("wt2")
+    wt1, wt2 = r.get("wt1"), r.get("wt2")
     parts = []
     if wt2 is not None:
         if wt2 <= -WT_OUTER:
-            pos = f"wave blown out low ({wt2:+.0f}, below −{WT_OUTER:.0f})"
+            pos = f"blown out low ({wt2:+.0f}, below −{WT_OUTER:.0f})"
         elif wt2 <= -WT_INNER:
-            pos = f"wave in the lower band ({wt2:+.0f})"
+            pos = f"in the lower band ({wt2:+.0f})"
         elif wt2 >= WT_OUTER:
-            pos = f"wave blown out high ({wt2:+.0f}, above +{WT_OUTER:.0f})"
+            pos = f"blown out high ({wt2:+.0f}, above +{WT_OUTER:.0f})"
         elif wt2 >= WT_INNER:
-            pos = f"wave in the upper band ({wt2:+.0f})"
+            pos = f"in the upper band ({wt2:+.0f})"
         else:
-            pos = f"wave mid-range ({wt2:+.0f})"
-        wd = r.get("wt_diff")
-        if wd is not None:
-            pos += ", rising" if wd > 0 else ", falling"
-        parts.append(pos)
+            pos = f"mid-range ({wt2:+.0f})"
+        # State the STANDING wave relationship, not just the anchor wave —
+        # a month-old cross that held is a material fact (the NU lesson:
+        # "wave −44, rising" read as 'not crossed' when wt1 had been above
+        # wt2 for weeks).
+        if wt1 is not None:
+            state = "crossed UP" if wt1 > wt2 else "crossed DOWN"
+            since = r.get("bars_since_cross")
+            ago = (f" {since} bars ago" if since not in (None, 0)
+                   else (" this bar" if since == 0 else ""))
+            parts.append(f"waves {state}{ago} (wt1 {wt1:+.0f} / wt2 {wt2:+.0f}), {pos}")
+        else:
+            wd = r.get("wt_diff")
+            trend = (", wt1 above" if wd and wd > 0
+                     else (", wt1 below" if wd else ""))
+            parts.append(f"wave {pos}{trend}")
     mf = r.get("mf")
     if mf is not None:
         if mf <= -5:

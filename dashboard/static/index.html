@@ -1412,7 +1412,7 @@ function renderOscillator() {
       <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
       <td class="num"><b style="color:${conf >= 70 ? "var(--green)" : (conf >= 50 ? "var(--yellow)" : "var(--muted)")}">${conf.toFixed(0)}</b></td>
       <td class="num">${r.close != null ? "$" + r.close.toFixed(2) : "—"}</td>
-      <td class="num"><span class="${wtCls(r.wt2)}">${r.wt2 != null ? (r.wt2 > 0 ? "+" : "") + r.wt2.toFixed(0) : "—"}</span></td>
+      <td class="num" title="${r.wt1 != null && r.wt2 != null ? `wt1 ${r.wt1.toFixed(1)} / wt2 ${r.wt2.toFixed(1)} — waves crossed ${r.wt1 > r.wt2 ? "UP" : "DOWN"}${r.bars_since_cross != null ? ` ${r.bars_since_cross} bars ago` : ""}` : ""}"><span class="${wtCls(r.wt2)}">${r.wt2 != null ? (r.wt2 > 0 ? "+" : "") + r.wt2.toFixed(0) : "—"}</span>${r.wt1 != null && r.wt2 != null ? `<span class="${r.wt1 > r.wt2 ? "pos" : "neg"}" style="font-size:10px"> ${r.wt1 > r.wt2 ? "↑x" : "↓x"}${r.bars_since_cross != null ? r.bars_since_cross : ""}</span>` : ""}</td>
       <td class="num">${r.mf != null ? (r.mf > 0 ? "+" : "") + r.mf.toFixed(1) : "—"}</td>
       <td class="num">${r.pctr != null ? r.pctr.toFixed(0) : "—"}</td>
       <td class="num">${r.macd_hist != null ? `<span class="${r.macd_hist >= 0 ? "pos" : "neg"}">${(r.macd_hist > 0 ? "+" : "") + r.macd_hist.toFixed(2)}</span>` : "—"}</td>

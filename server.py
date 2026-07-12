@@ -928,9 +928,14 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
                 pat = (f" · {r['pattern']} ({r.get('pattern_tf','')} "
                        f"{r.get('pattern_status','')}"
                        + (f", {d:+.1f}% vs trigger" if d is not None else "") + ")")
+            xst = ""
+            if r.get("wt1") is not None and r.get("wt2") is not None:
+                bsc = r.get("bars_since_cross")
+                xst = (f" ({'x-up' if r['wt1'] > r['wt2'] else 'x-down'}"
+                       + (f" {bsc}b ago" if bsc is not None else "") + ")")
             lines.append(
                 f"- **{r['ticker']}** {arrow} {_n(r['confluence_score'], '.0f')}/100 — "
-                f"{px}wt2 {_n(r['wt2'], '+.0f')}, "
+                f"{px}wt {_n(r['wt1'], '+.0f')}/{_n(r['wt2'], '+.0f')}{xst}, "
                 f"MF {_n(r['mf'], '+.1f')}, %R {_n(r['pctr'], '.0f')}, "
                 f"MACDh {_n(r['macd_hist'], '+.2f')}{wk}{pat} · {sigs}{rs}{sec}")
         lines.append("")
