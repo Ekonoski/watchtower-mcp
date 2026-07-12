@@ -721,6 +721,7 @@
           <th title="Measured-move objective">Target</th>
           <th title="Upside/downside to target from the last close, in the trade's direction">To Tgt</th>
           <th title="Where the structure is broken (head / flag low / last low)">Invalid</th>
+          <th title="Weekly oscillator direction — a bullish daily pattern against a bearish weekly is a knife-catch (and vice versa)">Wk</th>
           <th title="Relative strength 1–99 vs the screener universe">RS</th>
           <th title="Pattern quality 0–100: depth, higher-low margin, symmetry, volume, proximity">Score</th>
           <th title="Days this structure has been on the list">Age</th>
@@ -1315,6 +1316,7 @@ function renderPatterns() {
       <td class="num">${r.target != null ? "$" + r.target.toFixed(2) : "—"}</td>
       <td class="num">${toTgt != null ? `<span class="${toTgt >= 0 ? "pos" : "neg"}">${toTgt >= 0 ? "+" : ""}${toTgt.toFixed(1)}%</span>` : "—"}</td>
       <td class="num">${r.invalid != null ? "$" + r.invalid.toFixed(2) : "—"}</td>
+      <td class="num">${r.weekly_dir === "bullish" ? `<span class="pos">▲</span>` : (r.weekly_dir === "bearish" ? `<span class="neg">▼</span>` : "—")}</td>
       <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
       <td class="num"><b>${r.score != null ? r.score.toFixed(0) : "—"}</b></td>
       <td class="num">${age != null ? (age === 0 ? "new" : age + "d") : "—"}</td>

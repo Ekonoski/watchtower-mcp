@@ -232,6 +232,14 @@ def run_backtest() -> dict:
             log.warning("[oscillator] backtest found no events")
             return {"events": 0}
         events = pd.concat(all_events, ignore_index=True)
+        # A ticker can print BOTH directions of the same signal on one bar
+        # (e.g. a low pivot and a high pivot confirming the same day, each
+        # yielding a divergence). The table key is (ticker, date, type), and
+        # ON CONFLICT DO UPDATE refuses to touch a row twice in one command —
+        # the whole 25-minute replay died on exactly that. Ambiguous bars
+        # carry no signal anyway: drop the twins.
+        events = events.drop_duplicates(
+            subset=["ticker", "event_date", "signal_type"], keep="first")
 
         # Cross-sectional RS percentile per date — ranks each event's 63-day
         # return against every name trading that day, like the live screener.

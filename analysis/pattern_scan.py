@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 6
+ENGINE_VERSION = 7
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -793,6 +793,35 @@ def _ema_seq(vals: list, span: int) -> list:
     return out
 
 
+
+def _impulse_floor(ctx, start: int, end: int) -> float:
+    """Volatility-normalized impulse requirement for the EMA bounce/reject:
+    a real leg is ~4x the name's own average daily true range — a 6% move
+    on a stock that travels 1.2%/day is a monster; a 10% pop on a 4%/day
+    biotech can be noise. Noise is measured over the bars BEFORE the run
+    (the impulse's own candles would inflate it), falling back to the run
+    window when history is short. The old fixed 10%-scale bar remains as a
+    CAP (anything that big qualifies regardless of volatility) and a
+    3.5%-scale floor keeps ultra-quiet names from firing on nothing."""
+    s = ctx["cfg"]["scale"]
+    highs, lows, closes = ctx["highs"], ctx["lows"], ctx["closes"]
+
+    def _atrp(a: int, b: int):
+        trs = []
+        for i in range(max(a, 1), b):
+            h, lo, c, pc = highs[i], lows[i], closes[i], closes[i - 1]
+            if None in (h, lo, c, pc) or c <= 0:
+                continue
+            trs.append(max(h - lo, abs(h - pc), abs(lo - pc)) / c)
+        return sum(trs) / len(trs) if trs else None
+
+    width = max(end - start, 5)
+    atrp = _atrp(start - width, start) or _atrp(start, end)
+    if atrp is None:
+        return 0.10 * s
+    return max(0.035 * s, min(0.10 * s, 4.0 * atrp))
+
+
 def _det_ema_bounce(ctx):
     """Eric's continuation setup: a strong impulse with the fast EMAs
     stacked (8 over 13 over 21), then a SHALLOW 2-7 candle pullback that
@@ -821,8 +850,11 @@ def _det_ema_bounce(ctx):
     if not base_vals:
         return None
     base = min(base_vals)
-    if base <= 0 or peak / base - 1 < 0.10 * s:
-        return None                                  # no real impulse
+    if base <= 0:
+        return None
+    thr = _impulse_floor(ctx, run_start, peak_idx)
+    if peak / base - 1 < thr:
+        return None                                  # no real impulse (vol-adjusted)
     if not (e8[peak_idx] and e8[peak_idx] > e13[peak_idx] > e21[peak_idx]):
         return None                                  # EMAs not stacked = no trend
     # Pullback must TOUCH the 8/13 zone, hold the 21 on a closing basis,
@@ -849,7 +881,7 @@ def _det_ema_bounce(ctx):
     if status is None:
         return None
     held_8 = pull_low >= e8[-1] * (1 - 0.005 * s)
-    quality = min(10.0, 5.0 * ((peak / base - 1) / (0.10 * s))) \
+    quality = min(10.0, 5.0 * ((peak / base - 1) / max(thr, 1e-9))) \
         + (8.0 if held_8 else 4.0) + max(0.0, 7.0 - pull_len)
     points = {"impulse_low": round(base, 4), "peak": _pt(ctx, peak_idx, peak),
               "pullback_low": round(pull_low, 4), "ema8": round(e8[-1], 4),
@@ -883,7 +915,10 @@ def _det_ema_reject(ctx):
     if not base_vals:
         return None
     base = max(base_vals)
-    if trough <= 0 or base / trough - 1 < 0.10 * s:
+    if trough <= 0:
+        return None
+    thr = _impulse_floor(ctx, run_start, trough_idx)
+    if base / trough - 1 < thr:
         return None
     if not (e8[trough_idx] and e8[trough_idx] < e13[trough_idx] < e21[trough_idx]):
         return None
@@ -907,7 +942,7 @@ def _det_ema_reject(ctx):
     if status is None:
         return None
     held_8 = rally_high <= e8[-1] * (1 + 0.005 * s)
-    quality = min(10.0, 5.0 * ((base / trough - 1) / (0.10 * s))) \
+    quality = min(10.0, 5.0 * ((base / trough - 1) / max(thr, 1e-9))) \
         + (8.0 if held_8 else 4.0) + max(0.0, 7.0 - rally_len)
     points = {"impulse_high": round(base, 4),
               "trough": _pt(ctx, trough_idx, trough),
