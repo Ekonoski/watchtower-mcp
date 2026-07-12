@@ -714,6 +714,38 @@ def _seed_pattern_scan_if_stale():
                 else:
                     cur.execute("SELECT 1 FROM pattern_scan LIMIT 1")
                     need = cur.fetchone() is None
+                    if not need:
+                        # Liveness takeover: the claim is written BEFORE the
+                        # run (so sibling containers don't double-scan), and
+                        # the exception path releases it — but a container
+                        # KILLED mid-scan (a rapid follow-up deploy replacing
+                        # it) never reaches that path, and the orphaned claim
+                        # would block this engine version forever (7/12: the
+                        # #100 deploy killed #99's v8 rescan at +7 min; every
+                        # later boot skipped it). If the claim is old enough
+                        # that a healthy scan would have finished AND nothing
+                        # has been written since it was taken, re-claim and
+                        # re-run.
+                        cur.execute(
+                            """
+                            SELECT 1 FROM scheduler_job_claims c
+                            WHERE c.job_name = %s AND c.run_date = DATE '2000-01-01'
+                              AND c.claimed_at < now() - interval '20 minutes'
+                              AND COALESCE((SELECT max(scanned_at) FROM pattern_scan),
+                                           TIMESTAMPTZ 'epoch') < c.claimed_at
+                            """,
+                            (f"pattern_engine_v{ENGINE_VERSION}",),
+                        )
+                        if cur.fetchone() is not None:
+                            cur.execute(
+                                "UPDATE scheduler_job_claims SET claimed_at = now() "
+                                "WHERE job_name = %s AND run_date = DATE '2000-01-01'",
+                                (f"pattern_engine_v{ENGINE_VERSION}",),
+                            )
+                            need = True
+                            log.warning("[scheduler] pattern engine claim was "
+                                        "orphaned by an interrupted scan — "
+                                        "re-claiming and re-running")
             conn.commit()
         finally:
             conn.close()
