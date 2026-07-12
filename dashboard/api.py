@@ -1503,8 +1503,9 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
             "as_of": as_of.isoformat() if as_of else None}
 
 
-_OSC_SETUPS = ("entry_grade", "high_confluence", "coil", "wt_extreme_cross",
-               "pctr_hook", "divergence", "mf_round", "mf_curl", "any_signal")
+_OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
+               "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
+               "mf_curl", "any_signal")
 
 
 def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
@@ -1583,7 +1584,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
     else:
         setup_sql = {
             "high_confluence": "o.confluence_score >= 60",
-            "coil": "o.signals ? 'coil'",
+            "loaded_spring": "o.signals ? 'loaded_spring'",
             "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
@@ -1597,15 +1598,24 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
             "any_signal": "o.signals != '{}'::jsonb",
         }[setup]
+        # Loaded spring is bullish by construction, but the row's COMPUTED
+        # direction is usually bearish (the flow is pointing down — that's
+        # the setup) — filtering on it would hide exactly the names this
+        # screen exists to find. Rank by how firmly RSI is holding.
+        dir_clause = ("" if setup == "loaded_spring" else
+                      "AND (%(dir)s = 'all' OR o.direction = %(dir)s)")
+        order_sql = ("(o.signals->'loaded_spring'->>'rsi')::float DESC"
+                     if setup == "loaded_spring"
+                     else "o.confluence_score DESC NULLS LAST")
         query = base_select + f"""
         FROM oscillator_scan o
         LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
         LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
         WHERE o.timeframe = %(tf)s
           AND o.bar_ts > clock_timestamp() - make_interval(days => %(fresh)s)
-          AND (%(dir)s = 'all' OR o.direction = %(dir)s)
+          {dir_clause}
           AND ({setup_sql})
-        ORDER BY o.confluence_score DESC NULLS LAST, o.ticker
+        ORDER BY {order_sql}, o.ticker
         LIMIT 400
         """
 

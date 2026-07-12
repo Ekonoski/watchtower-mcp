@@ -65,7 +65,10 @@ PERF_MIN_CONFLUENCE = 60
 # so stored signals never lag the code — without this, a new signal shows
 # an empty screen until the next scheduled scan.
 # v2: stacked divergence (4 indicators + count), mf_round, power coils.
-SIGNALS_VERSION = 2
+# v3: loaded_spring (the replay-validated "RSI holds 50 while flow/%R dip"
+#     cohort) promoted to a signal; coil demoted from screens (no excess
+#     edge vs SPY in 61k replayed events — kept computed for continuity).
+SIGNALS_VERSION = 3
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -475,6 +478,27 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                                      "price": [round(float(look["low"].values[a]), 2),
                                                round(float(look["low"].values[b]), 2)]}
 
+    # 7) LOADED SPRING — Eric's "locked and loaded" read, validated by the
+    # replay: an oscillator dip in a name whose RSI never surrenders 50.
+    # Two proven flavors (excess vs SPY over 21 days): money flow arcing
+    # DOWN while RSI holds (+4.4%, n=13.8k) and a %R hook up off a pinned
+    # band while RSI holds (+2.7%, n=5.7k). Both are shallow digestion in
+    # strength, not distribution — bullish only, by construction. This is
+    # what the coil was trying to be; the coil itself showed NO excess edge
+    # (61k events, both flavors negative) and is demoted from the screens.
+    rsi_last = float(c["rsi"]) if not np.isnan(c["rsi"]) else None
+    if rsi_last is not None and rsi_last >= 50:
+        flavors = []
+        mr = sig.get("mf_round")
+        if mr and mr["dir"] == "down":
+            flavors.append("mf_down")
+        hk = sig.get("pctr_hook")
+        if hk and hk["dir"] == "up":
+            flavors.append("pctr_hook")
+        if flavors:
+            sig["loaded_spring"] = {"rsi": round(rsi_last, 1),
+                                    "flavors": flavors}
+
     score, direction = _confluence(df, sig, pattern_ctx)
     return {"signals": sig, "confluence_score": score, "direction": direction}
 
@@ -697,15 +721,16 @@ def _store(conn, ticker: str, timeframe: str, df: pd.DataFrame, ev: dict) -> Non
 def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
     """alert_log row for the performance pipeline — only for bars where the
     fired signals + confluence clear the quality gate. wt_cross must be from
-    the extreme zone; the timing signals (coil, divergence, hook, backed
-    curl) qualify on their own."""
+    the extreme zone; the timing signals (loaded spring, divergence, hook,
+    backed curl) qualify on their own. The coil no longer qualifies — the
+    replay showed no excess edge, so it doesn't earn perf tracking."""
     sig = ev["signals"]
     if not sig or ev["direction"] is None \
             or ev["confluence_score"] < PERF_MIN_CONFLUENCE:
         return None
     x = sig.get("wt_cross")
     curl = sig.get("mf_curl") or {}
-    qualifying = [k for k in ("coil", "divergence", "pctr_hook") if k in sig]
+    qualifying = [k for k in ("loaded_spring", "divergence", "pctr_hook") if k in sig]
     if x and x["zone"] == "extreme":
         qualifying.append("wt_cross")
     if curl.get("volume_backed"):
@@ -911,6 +936,8 @@ def describe_read(r: dict) -> str:
                 tag += " (vol-backed)"
             if isinstance(v, dict) and v.get("count") and v.get("indicators"):
                 tag += f" ({v['count']}/4: {'+'.join(v['indicators'])})"
+            if isinstance(v, dict) and v.get("flavors"):
+                tag += f" ({'+'.join(v['flavors'])}, RSI {v.get('rsi')})"
             names.append(tag)
         parts.append("fired: " + ", ".join(names))
     head = ""
