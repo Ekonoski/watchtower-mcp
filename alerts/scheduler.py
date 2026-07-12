@@ -844,6 +844,11 @@ def start_scheduler():
     import threading
 
     def _seed_all():
+        try:
+            from analysis.options_picker import entitlement_probe
+            entitlement_probe()   # one log line: is options data flowing?
+        except Exception:
+            pass
         _seed_pattern_scan_if_stale()
         _seed_oscillator_if_empty()
         _seed_oscillator_backtest_if_empty()
