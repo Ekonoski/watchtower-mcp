@@ -1257,10 +1257,11 @@ async function loadPatterns() {
   const tok = seqTake("patterns");
   let d;
   try {
-    d = await api(`/api/patterns?tf=${encodeURIComponent(p.tf)}&status=${encodeURIComponent(p.status)}&direction=${encodeURIComponent(p.dir)}`);
+    d = await api(`/api/patterns?tf=${encodeURIComponent(p.tf)}&status=${encodeURIComponent(p.status)}&direction=${encodeURIComponent(p.dir)}&pattern=${encodeURIComponent(p.kind || "ALL")}`);
   } catch { return; }
   if (seqStale("patterns", tok)) return;
   state.patRows = d.rows || [];
+  state.patCounts = d.pattern_counts || null;
   renderPatterns();
 }
 function renderPatterns() {
@@ -1279,12 +1280,14 @@ function renderPatterns() {
       .map(([s0, n]) => `<option value="${escAttr(s0)}">${esc(s0)} (${n})</option>`).join("");
   sel.value = state.pat.sector;
   const sec = state.pat.sector;
-  // Pattern-type dropdown, same live-count treatment as sectors.
-  const patCounts = {};
-  (state.patRows || []).forEach(r => { patCounts[r.pattern] = (patCounts[r.pattern] || 0) + 1; });
+  // Pattern-type dropdown from the API's true counts (the row payload is
+  // capped at 800, so counting rows client-side undercounts badly).
+  const patCounts = state.patCounts ||
+    (state.patRows || []).reduce((m, r) => (m[r.pattern] = (m[r.pattern] || 0) + 1, m), {});
   if (state.pat.kind !== "ALL" && !patCounts[state.pat.kind]) state.pat.kind = "ALL";
+  const total = Object.values(patCounts).reduce((a, b) => a + b, 0);
   const ksel = $("pat-pattern");
-  ksel.innerHTML = `<option value="ALL">All patterns (${(state.patRows || []).length})</option>` +
+  ksel.innerHTML = `<option value="ALL">All patterns (${total})</option>` +
     Object.entries(patCounts).sort((a, b) => b[1] - a[1])
       .map(([p0, n]) => `<option value="${escAttr(p0)}">${esc(PATTERN_LABELS[p0] || p0)} (${n})</option>`).join("");
   ksel.value = state.pat.kind;
@@ -1341,7 +1344,7 @@ document.querySelectorAll("#pat-dir button").forEach(b => b.onclick = () => {
 });
 $("pat-search").addEventListener("input", e => { state.pat.search = e.target.value; renderPatterns(); });
 $("pat-sector").addEventListener("change", e => { state.pat.sector = e.target.value; renderPatterns(); });
-$("pat-pattern").addEventListener("change", e => { state.pat.kind = e.target.value; renderPatterns(); });
+$("pat-pattern").addEventListener("change", e => { state.pat.kind = e.target.value; loadPatterns(); });
 
 /* ── watchtower oscillator ── */
 state.osc = { tf: "daily", dir: "bullish", setup: "entry_grade", search: "", sector: "ALL" };

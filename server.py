@@ -741,7 +741,8 @@ def watchtower_get_gmmss_context() -> str:
 
 @mcp.tool()
 def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
-                            direction: str = "all", top_n: int = 30) -> str:
+                            direction: str = "all", top_n: int = 30,
+                            pattern: str = "ALL") -> str:
     """
     Live classical chart-pattern detections across weekly, daily, and 4h bars.
 
@@ -757,11 +758,15 @@ def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
         status:    all | forming | breakout
         direction: all | bullish | bearish
         top_n:     max rows (default 30)
+        pattern:   ALL or one pattern key (e.g. ema_bounce, inverse_hs,
+                   double_bottom) — filtered in SQL, so every setup of that
+                   type is reachable regardless of overall score rank
     """
     try:
         from dashboard.api import _pattern_rows
         from analysis.pattern_scan import PATTERN_NAMES
-        data = _pattern_rows(timeframe.lower(), status.lower(), direction.lower())
+        data = _pattern_rows(timeframe.lower(), status.lower(), direction.lower(),
+                             pattern)
         rows = data.get("rows") or []
         if not rows:
             return ("No live patterns match. The scan runs daily at 6:45 AM ET "
