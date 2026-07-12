@@ -1006,7 +1006,7 @@ def _bearish_rotation_rows(limit: int = 14) -> dict:
                 ),
                 bear_pat AS (
                     SELECT ticker, count(*) AS n,
-                           bool_or(status = 'forming') AS any_forming,
+                           bool_or(status IN ('forming', 'retest')) AS any_forming,
                            (array_agg(pattern  ORDER BY score DESC NULLS LAST))[1] AS top_pattern,
                            (array_agg(status   ORDER BY score DESC NULLS LAST))[1] AS top_status,
                            (array_agg(timeframe ORDER BY score DESC NULLS LAST))[1] AS top_tf
@@ -1414,7 +1414,7 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
     and the 800-row score cap would otherwise silently drop most of any
     one pattern's setups before the browser ever saw them."""
     tf = tf if tf in ("weekly", "daily", "4h") else "all"
-    status = status if status in ("forming", "breakout") else "all"
+    status = status if status in ("forming", "retest", "breakout") else "all"
     direction = direction if direction in ("bullish", "bearish") else "all"
     pattern = (pattern or "ALL").strip()
     # Ticker search must ALSO run in SQL: the payload is capped at the top

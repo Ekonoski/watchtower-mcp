@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 8
+ENGINE_VERSION = 9
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -179,12 +179,15 @@ def _ctx(bars: list, timeframe: str):
 
 
 def _status(ctx, start_idx: int, trigger: float, direction: str, target=None):
-    """'forming' / 'breakout' / None (stale or extended break — not listable).
-    A break that has already retreated back through the trigger counts as
-    forming again (retest) — UNLESS the measured move already played out:
-    if price reached the target after the structure completed, the pattern
-    is spent, not forming (AMC weekly spiked through its target and round-
-    tripped below the neckline; that's a finished trade, not an entry)."""
+    """'forming' / 'retest' / 'breakout' / None (stale or extended break —
+    not listable). forming = price has never closed through the trigger;
+    retest = it broke through after the anchor and has pulled back to the
+    other side WITHOUT the measured move playing out (the throwback — a
+    second-chance entry, and empirically where the best entries live:
+    NU/AAL/SPGI all entered on this state while it was still labeled
+    'forming'); breakout = crossed within break_recent bars and not
+    extended. Spent patterns (target reached after the structure
+    completed) are dropped — a finished trade, not an entry."""
     closes, n, cfg = ctx["closes"], ctx["n"], ctx["cfg"]
     last = ctx["last"]
     if target is not None:
@@ -199,8 +202,10 @@ def _status(ctx, start_idx: int, trigger: float, direction: str, target=None):
     if direction == "bullish":
         cross = next((i for i in range(start_idx + 1, n)
                       if closes[i] is not None and closes[i] > trigger), None)
-        if cross is None or last < trigger:
+        if cross is None:
             return "forming"
+        if last < trigger:
+            return "retest"
         if (n - 1) - cross > cfg["break_recent"]:
             return None
         if last > trigger * (1 + cfg["max_ext"]):
@@ -208,8 +213,10 @@ def _status(ctx, start_idx: int, trigger: float, direction: str, target=None):
         return "breakout"
     cross = next((i for i in range(start_idx + 1, n)
                   if closes[i] is not None and closes[i] < trigger), None)
-    if cross is None or last > trigger:
+    if cross is None:
         return "forming"
+    if last > trigger:
+        return "retest"
     if (n - 1) - cross > cfg["break_recent"]:
         return None
     if last < trigger * (1 - cfg["max_ext"]):
@@ -1330,7 +1337,7 @@ def _forming_patterns() -> dict:
                 cur.execute("""
                     SELECT ticker, timeframe, pattern, direction,
                            trigger_price, target, score
-                    FROM pattern_scan WHERE status = 'forming'
+                    FROM pattern_scan WHERE status IN ('forming', 'retest')
                 """)
                 for t, tf, pat, direction, trig, tgt, score in cur.fetchall():
                     out.setdefault(t, []).append({
