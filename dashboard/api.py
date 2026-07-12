@@ -1406,7 +1406,7 @@ def _pattern_timing_cached() -> dict:
 
 
 def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
-                  pattern: str = "ALL") -> dict:
+                  pattern: str = "ALL", search: str = "") -> dict:
     """Live chart-pattern detections (pattern_scan, migration 0061) with the
     screener's RS/sector context joined in. The scan only ever keeps live
     patterns, so no recency filtering is needed here. The pattern filter
@@ -1417,6 +1417,10 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
     status = status if status in ("forming", "breakout") else "all"
     direction = direction if direction in ("bullish", "bearish") else "all"
     pattern = (pattern or "ALL").strip()
+    # Ticker search must ALSO run in SQL: the payload is capped at the top
+    # 800 by score, so a client-side search over it silently misses any
+    # matching name below the cap (AAL's score-63 bounce vs 6,300 rows).
+    search = (search or "").strip().upper()[:12]
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
@@ -1437,10 +1441,12 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
                   AND (%(st)s = 'all' OR p.status = %(st)s)
                   AND (%(dir)s = 'all' OR p.direction = %(dir)s)
                   AND (%(pat)s = 'ALL' OR p.pattern = %(pat)s)
+                  AND (%(q)s = '' OR p.ticker LIKE %(q)s || '%%')
                 ORDER BY p.score DESC NULLS LAST, p.ticker
                 LIMIT 800
                 """,
-                {"tf": tf, "st": status, "dir": direction, "pat": pattern},
+                {"tf": tf, "st": status, "dir": direction, "pat": pattern,
+                 "q": search},
             )
             rows = cur.fetchall()
             cur.execute("""
@@ -2179,8 +2185,10 @@ def register_routes(mcp) -> None:
         status = (request.query_params.get("status") or "all").lower()
         direction = (request.query_params.get("direction") or "all").lower()
         pattern = request.query_params.get("pattern") or "ALL"
+        search = request.query_params.get("search") or ""
         try:
-            data = await asyncio.to_thread(_pattern_rows, tf, status, direction, pattern)
+            data = await asyncio.to_thread(_pattern_rows, tf, status, direction,
+                                           pattern, search)
         except Exception as e:
             return JSONResponse({"rows": [], "count": 0, "counts": {},
                                  "as_of": None, "error": str(e)[:120]})

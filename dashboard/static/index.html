@@ -1264,7 +1264,7 @@ async function loadPatterns() {
   const tok = seqTake("patterns");
   let d;
   try {
-    d = await api(`/api/patterns?tf=${encodeURIComponent(p.tf)}&status=${encodeURIComponent(p.status)}&direction=${encodeURIComponent(p.dir)}&pattern=${encodeURIComponent(p.kind || "ALL")}`);
+    d = await api(`/api/patterns?tf=${encodeURIComponent(p.tf)}&status=${encodeURIComponent(p.status)}&direction=${encodeURIComponent(p.dir)}&pattern=${encodeURIComponent(p.kind || "ALL")}&search=${encodeURIComponent((p.search || "").trim())}`);
   } catch { return; }
   if (seqStale("patterns", tok)) return;
   state.patRows = d.rows || [];
@@ -1350,7 +1350,13 @@ document.querySelectorAll("#pat-dir button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#pat-dir button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.pat.dir = b.dataset.dir; loadPatterns();
 });
-$("pat-search").addEventListener("input", e => { state.pat.search = e.target.value; renderPatterns(); });
+let patSearchTimer = null;
+$("pat-search").addEventListener("input", e => {
+  state.pat.search = e.target.value;
+  renderPatterns();                       // instant narrowing of what's loaded
+  clearTimeout(patSearchTimer);           // ...then refetch so names below the
+  patSearchTimer = setTimeout(loadPatterns, 350);  // 800-row cap are found too
+});
 $("pat-sector").addEventListener("change", e => { state.pat.sector = e.target.value; renderPatterns(); });
 $("pat-pattern").addEventListener("change", e => { state.pat.kind = e.target.value; loadPatterns(); });
 
