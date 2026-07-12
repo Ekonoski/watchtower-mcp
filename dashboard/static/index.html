@@ -717,6 +717,7 @@
           <th>Status</th>
           <th>Price</th>
           <th title="The line that confirms the pattern — neckline / flag high / triangle edge">Trigger</th>
+          <th title="First trim: +1R = trigger plus one risk unit (trigger − invalid). The measured 'first push' level — 91% of resolved EMA bounces tag it; the swing option leg is sized to reach it">1R</th>
           <th title="Signed distance of last close from the trigger">Dist</th>
           <th title="Measured-move objective">Target</th>
           <th title="Upside/downside to target from the last close, in the trade's direction">To Tgt</th>
@@ -1321,6 +1322,7 @@ function renderPatterns() {
       <td class="num"><span class="${stCls}">${esc(r.status)}</span></td>
       <td class="num">${r.last_close != null ? "$" + r.last_close.toFixed(2) : "—"}</td>
       <td class="num">${r.trigger != null ? "$" + r.trigger.toFixed(2) : "—"}</td>
+      <td class="num">${r.trigger != null && r.invalid != null ? "$" + (2 * r.trigger - r.invalid).toFixed(2) : "—"}</td>
       <td class="num">${r.dist_pct != null ? (r.dist_pct > 0 ? "+" : "") + r.dist_pct.toFixed(1) + "%" : "—"}</td>
       <td class="num">${r.target != null ? "$" + r.target.toFixed(2) : "—"}</td>
       <td class="num">${toTgt != null ? `<span class="${toTgt >= 0 ? "pos" : "neg"}">${toTgt >= 0 ? "+" : ""}${toTgt.toFixed(1)}%</span>` : "—"}</td>
@@ -2587,11 +2589,20 @@ async function loadOptionTicket(ticker, tok) {
     <b>Option Ticket</b> <span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span>
     <span style="color:var(--muted)">${esc(t.pattern)} (${esc(t.timeframe)}, ${esc(t.status)})</span>
     <div class="grid2" style="margin-top:8px">
-      <div><div class="k">Expiry (Est ${wl ? wl + "–" + wh + "w" : "n/a"})</div><b class="num">${esc(t.expiry)}</b></div>
-      <div><div class="k">Directional</div><b class="num">$${d.strike} ${bull ? "call" : "put"}${d.delta != null ? " · " + Math.abs(d.delta).toFixed(2) + "Δ" : ""}</b></div>
+      <div><div class="k">Runner expiry (Est ${wl ? wl + "–" + wh + "w" : "n/a"})</div><b class="num">${esc(t.expiry)}</b></div>
+      <div><div class="k">Runner leg</div><b class="num">$${d.strike} ${bull ? "call" : "put"}${d.delta != null ? " · " + Math.abs(d.delta).toFixed(2) + "Δ" : ""}</b></div>
       <div><div class="k">OI / last</div><b class="num">${d.oi != null ? d.oi.toLocaleString() : "?"} / $${d.last != null ? d.last : "?"}</b></div>
-      <div><div class="k">Plan</div><b class="num">$${fmtNum(t.entry)} → $${fmtNum(t.target)}</b></div>
+      <div><div class="k">Plan</div><b class="num">$${fmtNum(t.entry)}${t.trim_1r != null ? ` → $${fmtNum(t.trim_1r)} <span style="font-weight:400;color:var(--muted)">(1R trim)</span>` : ""} → $${fmtNum(t.target)}</b></div>
     </div>`;
+  const sw = t.swing;
+  if (sw && sw.leg) {
+    const sl = sw.leg;
+    h += `<div style="margin-top:8px"><span class="k">Swing (trim-into-strength):</span>
+      <b class="num">${esc(sw.expiry)} $${sl.strike} ${bull ? "call" : "put"}${sl.delta != null ? " · " + Math.abs(sl.delta).toFixed(2) + "Δ" : ""}</b>
+      <span style="color:var(--muted)"> · OI ${sl.oi != null ? sl.oi.toLocaleString() : "?"} / $${sl.last != null ? sl.last : "?"}
+      — sized to the measured +1R time${sw.weeks_to_trim ? ` (~${sw.weeks_to_trim}w)` : ""}; sell into the +1R push, roll ~¼ up-and-out for leg two</span>
+      ${sw.er_inside ? `<div style="margin-top:4px;color:var(--yellow)">⚠ Earnings inside the swing window — if the pop hasn't arrived by the day before the print, take the gain or cut (IV crush hits short-dated hardest)</div>` : ""}</div>`;
+  }
   if (v) h += `<div style="margin-top:8px"><span class="k">Vertical:</span> <b class="num">long $${v.long.strike} / short $${v.short.strike}</b>${v.est_debit != null ? ` · est. debit <b class="num">$${v.est_debit}</b> → max <b class="num">$${v.max_value}</b>` : ""}</div>`;
   if (iv) h += `<div style="margin-top:6px"><span class="k">IV:</span> ${iv.iv_rank != null ? `rank <b class="num">${iv.iv_rank}</b> (${iv.obs} obs)` : `ATM <b class="num">${(iv.atm_iv * 100).toFixed(0)}%</b> vs realized <b class="num">${(iv.realized_21d * 100).toFixed(0)}%</b>`} — <b>${esc(iv.read)}</b></div>`;
   if (t.earnings) h += `<div style="margin-top:6px;color:var(--yellow)">⚠ Earnings ${esc(t.earnings.date)} ${esc(t.earnings.when || "")} — inside this option's life</div>`;
