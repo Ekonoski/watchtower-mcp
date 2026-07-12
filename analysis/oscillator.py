@@ -156,9 +156,15 @@ def resample_days(daily: pd.DataFrame, k: int) -> pd.DataFrame:
 
 
 def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
-    """ISO-week bars from daily sessions. The current (possibly incomplete)
-    week is dropped by default — a weekly bar only exists once its week is
-    over, so weekly signals never repaint."""
+    """ISO-week bars from daily sessions. A partial (still-trading) current
+    week is dropped so weekly signals never repaint — but ONLY when it is
+    genuinely partial. The old unconditional drop discarded the week that
+    closed Friday all weekend long, so Saturday/Sunday weekly reads ran a
+    full bar behind the chart (the NU cross-age confusion, META's weekly
+    price showing $582). A week is complete once we're past its Friday:
+    either today is in a later ISO week, or it's the Sat/Sun of the same
+    ISO week."""
+    from datetime import date as _date
     iso = daily.index.to_series().apply(lambda d: (d.isocalendar()[0], d.isocalendar()[1]))
     agg = daily.groupby(iso.values).agg(
         open=("open", "first"), high=("high", "max"), low=("low", "min"),
@@ -167,7 +173,12 @@ def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFr
     agg.index = pd.Index(last_dates.values)
     agg = agg.sort_index()
     if drop_partial and len(agg):
-        agg = agg.iloc[:-1]
+        today = _date.today()
+        last_bar = pd.Timestamp(agg.index[-1])
+        same_week = (today.isocalendar()[:2]
+                     == last_bar.date().isocalendar()[:2])
+        if same_week and today.weekday() < 5:
+            agg = agg.iloc[:-1]
     return agg
 
 
@@ -184,7 +195,13 @@ def resample_monthly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataF
     agg.index = pd.Index(last_dates.values)
     agg = agg.sort_index()
     if drop_partial and len(agg):
-        agg = agg.iloc[:-1]
+        # Only drop the last month when it is GENUINELY still in progress —
+        # once the calendar has moved on, that month can never repaint.
+        from datetime import date as _date
+        today = _date.today()
+        last_bar = pd.Timestamp(agg.index[-1])
+        if (today.year, today.month) == (last_bar.year, last_bar.month):
+            agg = agg.iloc[:-1]
     return agg
 
 
