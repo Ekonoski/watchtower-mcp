@@ -220,19 +220,19 @@ def fetch_options_snapshot(underlying: str, num_contracts: int = 6) -> dict:
             pass
 
         # Try to get options snapshots for puts (near term, around the money)
-        # Use get_snapshot_all for options with params for underlying (avoids kwarg issues on some client versions)
+        # via the v3 options-chain endpoint — get_snapshot_all("options")
+        # builds a v2 URL that Polygon 404s.
         puts_found = []
         try:
-            # params dict for compatibility; contract_type=put for bearish sleeve focus
-            snapshots = client.get_snapshot_all(
-                "options",
+            from itertools import islice
+            snapshots = islice(client.list_snapshot_options_chain(
+                underlying,
                 params={
                     "contract_type": "put",
-                    "underlying_ticker": underlying,
-                    "expiration_date.gte": (date.today() + timedelta(days=7)).isoformat()
+                    "expiration_date.gte": (date.today() + timedelta(days=7)).isoformat(),
+                    "limit": 50,
                 },
-                limit=50
-            )
+            ), 50)
             for s in list(snapshots)[:num_contracts]:
                 det = getattr(s, 'details', None)
                 if not det:
