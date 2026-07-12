@@ -932,6 +932,69 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 
 
 @mcp.tool()
+def watchtower_option_ticket(ticker: str) -> str:
+    """
+    Turn a ticker's best live pattern into a concrete options ticket:
+    expiry from the pattern's MEASURED resolution time (Est DTE), a
+    ~0.65-delta directional leg, a vertical spread built from the
+    pattern's own entry/target strikes, IV rich/cheap context (ATM IV vs
+    21-day realized), open-interest liquidity gating, and an
+    earnings-inside-the-window flag. Prices are 15-min delayed snapshot
+    data — decision support; the broker's screen is the final price check.
+    """
+    try:
+        from analysis.options_picker import build_ticket
+        t = build_ticket(ticker)
+        if not t:
+            return (f"${ticker.upper()}: no live pattern on the board — "
+                    "the ticket builder keys off pattern_scan. Check "
+                    "watchtower_get_patterns or the Patterns tab.")
+        if t.get("error"):
+            return f"${t.get('ticker', ticker.upper())}: {t['error']} — {t.get('note','')}"
+        arrow = "▲" if t["direction"] == "bullish" else "▼"
+        lines = [f"**Option ticket — ${t['ticker']}** {arrow} "
+                 f"{t['pattern']} ({t['timeframe']}, {t['status']}, score {t['score']:.0f})", ""]
+        stop_s = f"${t['stop']:,.2f}" if t.get("stop") is not None else "n/a"
+        lines.append(f"- Underlying plan: entry ${t['entry']:,.2f} · stop {stop_s} · "
+                     f"target ${t['target']:,.2f} · last ${t['last_close']:,.2f}")
+        wl, wh = t.get("est_weeks") or (None, None)
+        est_s = f"~{wl}-{wh} weeks" if wl else "n/a"
+        lines.append(f"- Resolution estimate: {est_s} → DTE floor {t['dte_floor']} → "
+                     f"**expiry {t['expiry']}** (also available: "
+                     f"{', '.join(t.get('expiries_available', [])[1:]) or '—'})")
+        d = t["directional"]
+        d_delta = f"{d['delta']:+.2f}Δ" if d.get("delta") is not None else "Δ n/a"
+        d_iv = f", IV {d['iv']:.0%}" if d.get("iv") else ""
+        lines.append(f"- Directional: **{d['exp']} ${d['strike']:g} "
+                     f"{'call' if t['direction']=='bullish' else 'put'}** "
+                     f"({d_delta}{d_iv}, OI {d.get('oi') or '?'}, "
+                     f"last ${d.get('last') or '?'})")
+        v = t.get("vertical")
+        if v:
+            deb = f"~${v['est_debit']}" if v.get("est_debit") else "n/a"
+            lines.append(f"- Vertical (entry→target): long ${v['long']['strike']:g} / "
+                         f"short ${v['short']['strike']:g} ({v['long']['exp']}), "
+                         f"width ${v['width']:g}, est. debit {deb} → "
+                         f"max value ${v['max_value']:g}")
+        iv = t.get("iv")
+        if iv:
+            lines.append(f"- IV context: ATM {iv['atm_iv']:.0%} vs realized "
+                         f"{iv['realized_21d']:.0%} (ratio {iv['ratio']}) — **{iv['read']}**")
+        e = t.get("earnings")
+        if e:
+            lines.append(f"- ⚠️ **Earnings {e['date']} {e['when']}** — inside this "
+                         "option's life. Decide now: ride through or exit before.")
+        if t.get("oi_note"):
+            lines.append(f"- ⚠️ {t['oi_note']}")
+        lines.append("")
+        lines.append("Prices are 15-min delayed last-trade/close — confirm live "
+                     "pricing at your broker before entering.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error building option ticket for {ticker}: {e}"
+
+
+@mcp.tool()
 def watchtower_pattern_timing(rerun: bool = False) -> str:
     """
     How long each chart pattern takes to play out, measured from the
