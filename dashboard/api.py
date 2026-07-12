@@ -1405,13 +1405,18 @@ def _pattern_timing_cached() -> dict:
     return _PATTERN_TIMING_CACHE["stats"]
 
 
-def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") -> dict:
+def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
+                  pattern: str = "ALL") -> dict:
     """Live chart-pattern detections (pattern_scan, migration 0061) with the
     screener's RS/sector context joined in. The scan only ever keeps live
-    patterns, so no recency filtering is needed here."""
+    patterns, so no recency filtering is needed here. The pattern filter
+    must be applied HERE, not client-side: the book runs thousands of rows
+    and the 800-row score cap would otherwise silently drop most of any
+    one pattern's setups before the browser ever saw them."""
     tf = tf if tf in ("weekly", "daily", "4h") else "all"
     status = status if status in ("forming", "breakout") else "all"
     direction = direction if direction in ("bullish", "bearish") else "all"
+    pattern = (pattern or "ALL").strip()
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
@@ -1431,10 +1436,11 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
                 WHERE (%(tf)s = 'all' OR p.timeframe = %(tf)s)
                   AND (%(st)s = 'all' OR p.status = %(st)s)
                   AND (%(dir)s = 'all' OR p.direction = %(dir)s)
+                  AND (%(pat)s = 'ALL' OR p.pattern = %(pat)s)
                 ORDER BY p.score DESC NULLS LAST, p.ticker
                 LIMIT 800
                 """,
-                {"tf": tf, "st": status, "dir": direction},
+                {"tf": tf, "st": status, "dir": direction, "pat": pattern},
             )
             rows = cur.fetchall()
             cur.execute("""
@@ -1442,6 +1448,21 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
                 FROM pattern_scan GROUP BY timeframe, status
             """)
             agg = cur.fetchall()
+            # True per-pattern counts under the tf/status/direction filter
+            # (but NOT the pattern filter) — feeds the dropdown so every
+            # pattern stays selectable with its real count.
+            cur.execute(
+                """
+                SELECT pattern, count(*)
+                FROM pattern_scan
+                WHERE (%(tf)s = 'all' OR timeframe = %(tf)s)
+                  AND (%(st)s = 'all' OR status = %(st)s)
+                  AND (%(dir)s = 'all' OR direction = %(dir)s)
+                GROUP BY pattern
+                """,
+                {"tf": tf, "st": status, "dir": direction},
+            )
+            pat_agg = cur.fetchall()
     finally:
         try:
             conn.close()
@@ -1478,6 +1499,7 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all") 
         if ts is not None and (as_of is None or ts > as_of):
             as_of = ts
     return {"rows": out, "count": len(out), "counts": counts,
+            "pattern_counts": {p_k: int(n) for p_k, n in pat_agg},
             "as_of": as_of.isoformat() if as_of else None}
 
 
@@ -2146,8 +2168,9 @@ def register_routes(mcp) -> None:
         tf = (request.query_params.get("tf") or "all").lower()
         status = (request.query_params.get("status") or "all").lower()
         direction = (request.query_params.get("direction") or "all").lower()
+        pattern = request.query_params.get("pattern") or "ALL"
         try:
-            data = await asyncio.to_thread(_pattern_rows, tf, status, direction)
+            data = await asyncio.to_thread(_pattern_rows, tf, status, direction, pattern)
         except Exception as e:
             return JSONResponse({"rows": [], "count": 0, "counts": {},
                                  "as_of": None, "error": str(e)[:120]})
