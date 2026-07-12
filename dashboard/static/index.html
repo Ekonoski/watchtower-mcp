@@ -674,12 +674,14 @@
       <p>Classical setups detected across <b>weekly, daily, and 4-hour</b> bars: inverse head &amp;
       shoulders (including the double-bottom-with-a-<b>higher-low</b> variant), H&amp;S tops, double
       bottoms/tops, flags, triangles, wedges, cup &amp; handle, and long-term range
-      breakouts/breakdowns. <b>Forming</b> = price hasn't crossed the trigger
-      line yet — the entry window; <b>Breakout</b> = crossed within the last few bars and not yet
-      extended. Stale or extended breaks are dropped automatically, so everything here is live.
+      breakouts/breakdowns. <b>Forming</b> = price has never crossed the trigger
+      line — the early entry window; <b>Retest</b> = it broke through and pulled back to the line
+      without the measured move playing out — the throwback, the second-chance entry;
+      <b>Breakout</b> = crossed within the last few bars and not yet extended. Stale, extended, or
+      played-out breaks are dropped automatically, so everything here is live.
       Weekly/daily read closing-price structure; 4H uses full highs/lows. An intraday alert fires
-      the moment a forming name crosses its trigger. Refreshed daily at 6:45 AM ET (4H again at
-      12:45 PM). Click any row for the full chart drawer.</p>
+      the moment a forming or retesting name crosses its trigger. Refreshed daily at 6:45 AM ET
+      (4H again at 12:45 PM). Click any row for the full chart drawer.</p>
     </div>
     <div class="controls">
       <div class="seg" id="pat-tf">
@@ -689,9 +691,10 @@
         <button data-tf="4h">4H</button>
       </div>
       <div class="seg" id="pat-status">
-        <button data-st="forming" class="on">Forming</button>
+        <button data-st="all" class="on">All</button>
+        <button data-st="forming">Forming</button>
+        <button data-st="retest">Retest</button>
         <button data-st="breakout">Breakout</button>
-        <button data-st="all">All</button>
       </div>
       <div class="seg" id="pat-dir">
         <button data-dir="all" class="on">All</button>
@@ -1248,7 +1251,7 @@ document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
 });
 
 /* ── chart patterns ── */
-state.pat = { tf: "all", status: "forming", dir: "all", search: "", sector: "ALL", kind: "ALL" };
+state.pat = { tf: "all", status: "all", dir: "all", search: "", sector: "ALL", kind: "ALL" };
 const PATTERN_LABELS = {
   inverse_hs: "Inv H&S", hs_top: "H&S Top",
   double_bottom: "Double Bottom", double_top: "Double Top",
@@ -1314,12 +1317,13 @@ function renderPatterns() {
     const age = r.detected_at
       ? Math.max(0, Math.round((Date.now() - new Date(r.detected_at).getTime()) / 86400000)) : null;
     const stCls = r.status === "breakout" ? "pos" : "";
+    const stStyle = r.status === "retest" ? ` style="color:var(--yellow);font-weight:600"` : "";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
       <td class="left"><b>${esc(r.ticker)}</b></td>
       <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> ${esc(name)}</td>
       <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
       <td class="num">${esc(tfLabel[r.timeframe] || r.timeframe)}</td>
-      <td class="num"><span class="${stCls}">${esc(r.status)}</span></td>
+      <td class="num"><span class="${stCls}"${stStyle}>${esc(r.status)}</span></td>
       <td class="num">${r.last_close != null ? "$" + r.last_close.toFixed(2) : "—"}</td>
       <td class="num">${r.trigger != null ? "$" + r.trigger.toFixed(2) : "—"}</td>
       <td class="num">${r.trigger != null && r.invalid != null ? "$" + (2 * r.trigger - r.invalid).toFixed(2) : "—"}</td>

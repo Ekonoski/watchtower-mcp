@@ -755,7 +755,10 @@ def watchtower_get_patterns(timeframe: str = "all", status: str = "all",
 
     Args:
         timeframe: all | weekly | daily | 4h
-        status:    all | forming | breakout
+        status:    all | forming (never crossed the trigger) |
+                   retest (broke out, pulled back to the line — the
+                   throwback/second-chance entry) | breakout (crossed
+                   within the last few bars, not extended)
         direction: all | bullish | bearish
         top_n:     max rows (default 30)
         pattern:   ALL or one pattern key (e.g. ema_bounce, inverse_hs,

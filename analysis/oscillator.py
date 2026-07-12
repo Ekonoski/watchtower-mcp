@@ -368,7 +368,7 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
         if shelf is None or band_lo > shelf:
             quality = 50.0
             if pattern_ctx and pattern_ctx.get("direction") == "bullish" \
-                    and pattern_ctx.get("status") == "forming":
+                    and pattern_ctx.get("status") in ("forming", "retest"):
                 quality += 25.0
                 inv = pattern_ctx.get("invalid") or 0
                 trig = pattern_ctx.get("trigger") or 0
