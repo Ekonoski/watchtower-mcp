@@ -1509,6 +1509,81 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
             "as_of": as_of.isoformat() if as_of else None}
 
 
+_MOMENTUM_SCANNERS = ("gappers", "pillars", "continuation", "earnings_gap",
+                      "all")
+
+
+def _momentum_rows(scanner: str = "gappers") -> dict:
+    """Momentum scanner rows (momentum_scan) with the Watchtower column no
+    momentum scanner has: the name's live swing structure joined in."""
+    scanner = scanner if scanner in _MOMENTUM_SCANNERS else "gappers"
+    where = {
+        "gappers": "abs(m.gap_pct) >= 4",
+        "pillars": "m.pillar_count >= 3",
+        "continuation": "m.move_2w_pct >= 30",
+        "earnings_gap": "m.earnings_gap AND abs(m.gap_pct) >= 4",
+        "all": "TRUE",
+    }[scanner]
+    order = {
+        "gappers": "abs(m.gap_pct) DESC",
+        "pillars": "m.pillar_count DESC, m.day_change_pct DESC",
+        "continuation": "m.move_2w_pct DESC",
+        "earnings_gap": "abs(m.gap_pct) DESC",
+        "all": "abs(m.day_change_pct) DESC",
+    }[scanner]
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT m.ticker, m.price, m.day_change_pct, m.gap_pct,
+                       m.volume, m.relvol, m.float_shares, m.short_interest,
+                       m.news_flag, m.headline, m.pillars, m.pillar_count,
+                       m.move_2w_pct, m.former_momo, m.earnings_gap,
+                       m.session, m.scanned_at,
+                       p.pattern, p.timeframe, p.status, p.dist_to_trigger_pct,
+                       o.direction, o.confluence_score
+                FROM momentum_scan m
+                LEFT JOIN LATERAL (
+                    SELECT pattern, timeframe, status, dist_to_trigger_pct
+                    FROM pattern_scan
+                    WHERE ticker = m.ticker
+                    ORDER BY score DESC NULLS LAST LIMIT 1) p ON true
+                LEFT JOIN oscillator_scan o
+                       ON o.ticker = m.ticker AND o.timeframe = 'daily'
+                WHERE {where}
+                ORDER BY {order}
+                LIMIT 250
+            """)
+            rows = cur.fetchall()
+            cur.execute("SELECT max(scanned_at), max(session) FROM momentum_scan")
+            as_of, session = cur.fetchone() or (None, None)
+    finally:
+        conn.close()
+
+    def _f(v):
+        return float(v) if v is not None else None
+    out = []
+    for r in rows:
+        out.append({
+            "ticker": r[0], "price": _f(r[1]), "chg_pct": _f(r[2]),
+            "gap_pct": _f(r[3]), "volume": int(r[4]) if r[4] else 0,
+            "relvol": _f(r[5]),
+            "float_shares": int(r[6]) if r[6] else None,
+            "short_interest": int(r[7]) if r[7] else None,
+            "news": bool(r[8]), "headline": r[9] or "",
+            "pillars": r[10] or {}, "pillar_count": int(r[11] or 0),
+            "move_2w_pct": _f(r[12]), "former_momo": bool(r[13]),
+            "earnings_gap": bool(r[14]), "session": r[15],
+            "pattern": r[17], "pattern_tf": r[18], "pattern_status": r[19],
+            "pattern_dist": _f(r[20]),
+            "osc_dir": r[21],
+            "osc_conf": int(r[22]) if r[22] is not None else None,
+        })
+    return {"rows": out, "count": len(out), "session": session,
+            "as_of": as_of.isoformat() if as_of else None}
+
+
 _OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
                "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
                "mf_curl", "any_signal")
@@ -2176,6 +2251,18 @@ def register_routes(mcp) -> None:
             data = await asyncio.to_thread(_theme_members, theme, window)
         except Exception as e:
             return JSONResponse({"theme": theme, "rows": [], "count": 0, "error": str(e)[:120]})
+        return JSONResponse(data)
+
+    @mcp.custom_route("/api/momentum", methods=["GET"])
+    async def momentum(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        scanner = (request.query_params.get("scanner") or "gappers").lower()
+        try:
+            data = await asyncio.to_thread(_momentum_rows, scanner)
+        except Exception as e:
+            return JSONResponse({"rows": [], "count": 0, "as_of": None,
+                                 "error": str(e)[:120]})
         return JSONResponse(data)
 
     @mcp.custom_route("/api/patterns", methods=["GET"])

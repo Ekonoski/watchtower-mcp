@@ -574,6 +574,61 @@ def run_iv_snapshot_job():
         log.error(f"[options] IV snapshot error: {e}")
 
 
+def run_momentum_scan_job():
+    """Momentum scanner pass (gappers / 5 Pillars / continuation /
+    earnings-gap). Skips non-trading days; never raises."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    try:
+        from analysis.momentum_scan import run_momentum_scan
+        res = run_momentum_scan()
+        log.info(f"[momentum] scan pass: {res}")
+    except Exception as e:
+        log.error(f"[momentum] scan error: {e}")
+
+
+def run_ticker_stats_job():
+    """Nightly FMP float refresh into ticker_stats."""
+    if not _claim_daily_job("ticker_stats"):
+        return
+    try:
+        from analysis.momentum_scan import refresh_ticker_stats
+        res = refresh_ticker_stats()
+        log.info(f"[momentum] ticker_stats: {res}")
+    except Exception as e:
+        log.error(f"[momentum] ticker_stats error: {e}")
+
+
+def _seed_momentum_if_empty():
+    """Deploy seed: populate float data + one scanner pass so the Momentum
+    tab works immediately instead of waiting for the next cron slot."""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM ticker_stats LIMIT 1")
+                stats_empty = cur.fetchone() is None
+                cur.execute("SELECT 1 FROM momentum_scan LIMIT 1")
+                scan_empty = cur.fetchone() is None
+        finally:
+            conn.close()
+        if stats_empty:
+            from analysis.momentum_scan import refresh_ticker_stats
+            log.info("[momentum] seeding ticker_stats...")
+            refresh_ticker_stats()
+        if scan_empty or stats_empty:
+            from analysis.momentum_scan import run_momentum_scan
+            log.info("[momentum] seeding first scan pass...")
+            run_momentum_scan()
+    except Exception as e:
+        log.warning(f"[momentum] seed skipped: {e}")
+
+
 def _run_oscillator_scan_safe(include_daily_weekly: bool = True):
     """Watchtower Oscillator scan, chained after each pattern scan so the
     structural-confluence bucket reads fresh pattern rows. Never raises —
@@ -898,6 +953,36 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Momentum scanners (Warrior-class, Phase A): pre-market Gap & Go pass
+    # at 8:50 AM ET, then every 10 minutes through the session. One full-
+    # market snapshot per pass; freshness is whatever the data plan allows
+    # and is labeled on the tab.
+    scheduler.add_job(
+        run_momentum_scan_job,
+        CronTrigger(day_of_week="mon-fri", hour="8", minute="50", timezone=et),
+        id="momentum_premarket",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_momentum_scan_job,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="35,45,55", timezone=et),
+        id="momentum_open",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_momentum_scan_job,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*/10", timezone=et),
+        id="momentum_session",
+        replace_existing=True,
+    )
+    # Nightly float refresh feeding the 5-Pillars float pillar.
+    scheduler.add_job(
+        run_ticker_stats_job,
+        CronTrigger(day_of_week="mon-fri", hour="17", minute="15", timezone=et),
+        id="ticker_stats_refresh",
+        replace_existing=True,
+    )
+
     scheduler.start()
 
     # One-time seed on a fresh deploy so the Patterns tab isn't empty until
@@ -912,6 +997,7 @@ def start_scheduler():
             pass
         _seed_pattern_scan_if_stale()
         _seed_oscillator_if_empty()
+        _seed_momentum_if_empty()
         _seed_oscillator_backtest_if_empty()
         _seed_pattern_backtest_if_empty()
 

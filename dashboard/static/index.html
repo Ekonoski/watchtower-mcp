@@ -382,6 +382,7 @@
   <button data-tab="themes">Themes</button>
   <button data-tab="screener">Screener</button>
   <button data-tab="patterns">Patterns</button>
+  <button data-tab="momentum">Momentum</button>
   <button data-tab="oscillator">Oscillator</button>
   <button data-tab="vantage">Vantage</button>
   <button data-tab="news">News Catalysts</button>
@@ -664,6 +665,56 @@
         <tbody id="scr-body"></tbody>
       </table>
       <div id="scr-empty" class="empty" style="display:none">No names match. The screener refreshes nightly pre-market.</div>
+    </div>
+  </section>
+
+  <!-- ── MOMENTUM ── -->
+  <section id="tab-momentum" class="tabpane">
+    <div class="pane-head">
+      <h3>Momentum Scanners</h3>
+      <p>Warrior-class day-trade scanners on a full-market snapshot, refreshed every
+      10 minutes in-session plus an <b>8:50 AM pre-market Gap &amp; Go pass</b>.
+      <b>Gappers</b> = ±4% vs prior close. <b>5 Pillars</b> (Ross Cameron's published
+      composite): price $1–20 · +10% day · rel volume ≥5× (time-of-day adjusted) ·
+      float ≤20M · news catalyst — scored, so near-misses rank below qualifiers.
+      <b>Continuation</b> = 2-week movers ≥30%. <b>Earnings gap</b> = reported within a
+      day and gapping. 🔁 = Former Momo (a +25% day inside the trailing year — proven movers repeat).
+      The Structure column is the edge no momentum scanner has: the name's live swing
+      pattern and oscillator read. Data is delayed per the current plan — the seconds-class
+      alerts (HOD bursts, squeezes, halts) arrive with the real-time upgrade, not faked before it.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" id="mom-scanner">
+        <button data-sc="gappers" class="on">Gappers</button>
+        <button data-sc="pillars">5 Pillars</button>
+        <button data-sc="continuation">Continuation</button>
+        <button data-sc="earnings_gap">Earnings gap</button>
+        <button data-sc="all">All</button>
+      </div>
+      <input type="text" id="mom-search" placeholder="Filter ticker…" size="12">
+      <span class="count-note" id="mom-count"></span>
+      <span class="count-note" id="mom-asof" style="margin-left:auto"></span>
+    </div>
+    <div class="tblwrap">
+      <table id="mom-table">
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th title="last snapshot price (delayed per data plan)">Price</th>
+          <th title="change vs prior close">Chg%</th>
+          <th title="open (or pre-market last) vs prior close">Gap%</th>
+          <th>Volume</th>
+          <th title="today's volume vs 20-day average, prorated by session time elapsed — the Warrior 'daily rate'">RelVol</th>
+          <th title="shares float (FMP, nightly refresh)">Float</th>
+          <th title="5 Pillars score: price $1-20, +10% day, relvol ≥5x, float ≤20M, news">Pillars</th>
+          <th title="2-week move">2W%</th>
+          <th class="left" title="news catalyst headline (last ~16h)">News</th>
+          <th class="left" title="best live Watchtower pattern + distance to trigger">Structure</th>
+          <th title="daily oscillator direction / confluence">Osc</th>
+        </tr></thead>
+        <tbody id="mom-body"></tbody>
+      </table>
+      <div id="mom-empty" class="empty" style="display:none">No names match — the scan runs
+      every 10 minutes in-session (first pass 8:50 AM ET).</div>
     </div>
   </section>
 
@@ -1250,6 +1301,68 @@ document.querySelectorAll("#scr-cap button").forEach(b => b.onclick = () => {
   b.classList.add("on"); state.scr.cap = b.dataset.cap; loadScreener();
 });
 
+/* ── momentum scanners ── */
+state.mom = { scanner: "gappers", search: "" };
+async function loadMomentum() {
+  const tok = seqTake("momentum");
+  let d;
+  try { d = await api(`/api/momentum?scanner=${encodeURIComponent(state.mom.scanner)}`); }
+  catch { return; }
+  if (seqStale("momentum", tok)) return;
+  state.momRows = d.rows || [];
+  state.momAsOf = d.as_of || "";
+  state.momSession = d.session || "";
+  renderMomentum();
+}
+function fmtShares(n) {
+  if (n == null) return "—";
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  return (n / 1e3).toFixed(0) + "K";
+}
+function renderMomentum() {
+  const q = (state.mom.search || "").trim().toUpperCase();
+  const rows = (state.momRows || []).filter(r => !q || r.ticker.includes(q));
+  const body = $("mom-body");
+  $("mom-empty").style.display = rows.length ? "none" : "";
+  $("mom-count").textContent = rows.length ? `${rows.length} names` : "";
+  $("mom-asof").textContent = state.momAsOf
+    ? `as of ${new Date(state.momAsOf).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} · ${state.momSession} · delayed per data plan` : "";
+  body.innerHTML = rows.map(r => {
+    const p = r.pillars || {};
+    const pd = ["price","change","relvol","float","news"].map(k =>
+      `<span style="opacity:${p[k] ? 1 : .25}" title="${k}">●</span>`).join("");
+    const chgCls = (r.chg_pct || 0) >= 0 ? "pos" : "neg";
+    const gapCls = (r.gap_pct || 0) >= 0 ? "pos" : "neg";
+    const struct = r.pattern
+      ? `${esc(PATTERN_LABELS[r.pattern] || r.pattern)} <span style="color:var(--muted)">${esc(r.pattern_tf === "weekly" ? "W" : r.pattern_tf === "daily" ? "D" : (r.pattern_tf || ""))} ${esc(r.pattern_status || "")}${r.pattern_dist != null ? " " + (r.pattern_dist > 0 ? "+" : "") + r.pattern_dist.toFixed(1) + "%" : ""}</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    const osc = r.osc_dir
+      ? `<span class="${r.osc_dir === "bullish" ? "pos" : "neg"}">${r.osc_dir === "bullish" ? "▲" : "▼"}</span>${r.osc_conf != null ? " " + r.osc_conf : ""}`
+      : "—";
+    return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
+      <td class="left"><b>${esc(r.ticker)}</b>${r.former_momo ? ' <span title="Former Momo — a +25% day inside the trailing year">🔁</span>' : ""}${r.earnings_gap ? ' <span title="reported earnings within the last day">📊</span>' : ""}</td>
+      <td class="num">$${r.price != null ? r.price.toFixed(2) : "—"}</td>
+      <td class="num"><span class="${chgCls}">${r.chg_pct != null ? (r.chg_pct > 0 ? "+" : "") + r.chg_pct.toFixed(1) + "%" : "—"}</span></td>
+      <td class="num"><span class="${gapCls}">${r.gap_pct != null ? (r.gap_pct > 0 ? "+" : "") + r.gap_pct.toFixed(1) + "%" : "—"}</span></td>
+      <td class="num">${fmtShares(r.volume)}</td>
+      <td class="num">${r.relvol != null ? `<b style="color:${r.relvol >= 5 ? "var(--green)" : r.relvol >= 2 ? "var(--yellow)" : "inherit"}">${r.relvol.toFixed(1)}x</b>` : "—"}</td>
+      <td class="num">${fmtShares(r.float_shares)}</td>
+      <td class="num" title="price / change / relvol / float / news">${pd} <b>${r.pillar_count}</b></td>
+      <td class="num">${r.move_2w_pct != null ? (r.move_2w_pct > 0 ? "+" : "") + r.move_2w_pct.toFixed(0) + "%" : "—"}</td>
+      <td class="left" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(r.headline || "")}">${r.news ? "🔥 " + esc((r.headline || "").slice(0, 60)) : "—"}</td>
+      <td class="left">${struct}</td>
+      <td class="num">${osc}</td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));
+}
+document.querySelectorAll("#mom-scanner button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#mom-scanner button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); state.mom.scanner = b.dataset.sc; loadMomentum();
+});
+$("mom-search").addEventListener("input", e => { state.mom.search = e.target.value; renderMomentum(); });
+
 /* ── chart patterns ── */
 state.pat = { tf: "all", status: "all", dir: "all", search: "", sector: "ALL", kind: "ALL" };
 const PATTERN_LABELS = {
@@ -1464,6 +1577,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   if (b.dataset.tab === "themes") loadThemes();
   if (b.dataset.tab === "screener") loadScreener();
   if (b.dataset.tab === "patterns") loadPatterns();
+  if (b.dataset.tab === "momentum") loadMomentum();
   if (b.dataset.tab === "oscillator") loadOscillator();
   if (b.dataset.tab === "vantage") loadVantage();
   if (b.dataset.tab === "calendar") loadCalendar();
@@ -2881,6 +2995,7 @@ const TAB_REFRESHERS = {
   themes: () => loadThemes(),
   screener: () => loadScreener(),
   patterns: () => loadPatterns(),
+  momentum: () => loadMomentum(),
   oscillator: () => loadOscillator(),
   vantage: () => loadVantage(),
   news: () => { /* news rides the scanner snapshot via loadLatest() */ },
