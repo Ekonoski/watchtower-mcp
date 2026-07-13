@@ -1547,13 +1547,20 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
         with conn.cursor() as cur:
             cur.execute(f"""
                 SELECT m.ticker, m.price, m.day_change_pct, m.gap_pct,
-                       m.volume, m.relvol, m.float_shares, m.short_interest,
+                       m.volume, m.relvol,
+                       COALESCE(m.float_shares, ts.float_shares) AS float_shares,
+                       m.short_interest,
                        m.news_flag, m.headline, m.pillars, m.pillar_count,
                        m.move_2w_pct, m.former_momo, m.earnings_gap,
                        m.session, m.scanned_at,
                        p.pattern, p.timeframe, p.status, p.dist_to_trigger_pct,
                        o.direction, o.confluence_score
                 FROM momentum_scan m
+                -- Floats read live from ticker_stats: the per-symbol float
+                -- top-up runs AFTER the scan row is written, so the frozen
+                -- scan-time value can lag a pass behind (or a whole weekend,
+                -- when no further passes run to pick it up).
+                LEFT JOIN ticker_stats ts ON ts.ticker = m.ticker
                 LEFT JOIN LATERAL (
                     SELECT pattern, timeframe, status, dist_to_trigger_pct
                     FROM pattern_scan
