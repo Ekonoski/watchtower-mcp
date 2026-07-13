@@ -29,9 +29,10 @@ Data notes:
     market (not just our stored universe) comes from Polygon's grouped-
     daily endpoint: one call per session, 21 sessions kept in ticker_stats
     (avg_vol_20d, close_2w, last_big_day).
-  - float lives in ticker_stats: FMP bulk endpoint when the plan allows,
-    else per-symbol fetches for current scanner names, cached and topped
-    up every pass (float moves slowly; rows refresh after 14 days).
+  - float lives in ticker_stats: FMP (bulk, else per-symbol) when the
+    plan allows; otherwise Polygon shares outstanding — an upper bound
+    on float, so the <=20M gate stays conservative. Fetched for current
+    scanner names hottest-first, cached 14 days, topped up every pass.
   - "Momo memory" = the name printed a +25% close-to-close day recently —
     momentum names repeat, and traders trust a ticker that has proven it
     can move.
@@ -109,15 +110,18 @@ def refresh_ticker_stats() -> dict:
 
 
 def refresh_floats_for(tickers: list, cap: int = FLOAT_FETCH_CAP) -> int:
-    """Per-symbol FMP float fetch — the fallback when the bulk endpoint
-    isn't on the plan. Only touches names missing a float or whose cached
-    value is older than FLOAT_TTL_DAYS; capped and paced so a pass stays
-    inside FMP rate limits. Caller passes tickers hottest-first so the
-    cap spends its budget on the names that matter."""
+    """Per-symbol float fetch — the fallback when FMP's bulk endpoint
+    isn't on the plan. Tries FMP's per-symbol float first (true float);
+    the moment that proves unavailable too, switches to Polygon ticker
+    details and stores shares outstanding — an upper bound on float, so
+    the <=20M pillar stays conservative. Only touches names missing a
+    value or older than FLOAT_TTL_DAYS; capped and paced. Caller passes
+    tickers hottest-first so the cap spends its budget on the names that
+    matter."""
     import requests
     from screen.reversal_screen import _conn
     key = _fmp_key()
-    if not key or not tickers:
+    if not tickers:
         return 0
     tickers = [str(t).upper() for t in tickers]
     conn = _conn()
@@ -134,19 +138,41 @@ def refresh_floats_for(tickers: list, cap: int = FLOAT_FETCH_CAP) -> int:
         if not todo:
             return 0
         got = []
+        use_fmp = bool(key)
+        poly = None
         for t in todo:
-            try:
-                resp = requests.get(
-                    "https://financialmodelingprep.com/api/v4/shares_float",
-                    params={"symbol": t, "apikey": key}, timeout=10)
-                resp.raise_for_status()
-                data = resp.json() or []
-                flt = (data[0] or {}).get("floatShares") if data else None
-                if flt:
+            flt = None
+            if use_fmp:
+                try:
+                    resp = requests.get(
+                        "https://financialmodelingprep.com/api/v4/shares_float",
+                        params={"symbol": t, "apikey": key}, timeout=10)
+                    resp.raise_for_status()
+                    data = resp.json() or []
+                    flt = (data[0] or {}).get("floatShares") if data else None
+                    time.sleep(0.25)   # ~240 calls/min ceiling
+                except Exception as e:
+                    log.warning(f"[momentum] FMP per-symbol float failed "
+                                f"({e}) — using Polygon shares outstanding")
+                    use_fmp = False
+            if flt is None and not use_fmp:
+                if poly is None:
+                    from analysis.polygon_data import get_client
+                    poly = get_client()
+                    if not poly:
+                        break
+                try:
+                    det = poly.get_ticker_details(t)
+                    flt = (getattr(det, "share_class_shares_outstanding", None)
+                           or getattr(det, "weighted_shares_outstanding", None))
+                    time.sleep(0.05)
+                except Exception:
+                    continue
+            if flt:
+                try:
                     got.append((t, int(float(flt))))
-            except Exception:
-                continue
-            time.sleep(0.25)   # ~240 calls/min ceiling
+                except (TypeError, ValueError):
+                    continue
         if got:
             with conn.cursor() as cur:
                 cur.executemany("""
