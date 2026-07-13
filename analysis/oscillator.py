@@ -68,7 +68,9 @@ PERF_MIN_CONFLUENCE = 60
 # v3: loaded_spring (the replay-validated "RSI holds 50 while flow/%R dip"
 #     cohort) promoted to a signal; coil demoted from screens (no excess
 #     edge vs SPY in 61k replayed events — kept computed for continuity).
-SIGNALS_VERSION = 3
+# v4: ETF universe (etf_theme_map) joins the fleet scan — index/sector
+#     structures are where-the-market-leans information.
+SIGNALS_VERSION = 4
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -832,6 +834,7 @@ def run_oscillator_scan(include_4h: bool = True,
                 cur.execute("""
                     SELECT ticker FROM screener_snapshot
                     UNION SELECT ticker FROM watchlist WHERE active = true
+                    UNION SELECT ticker FROM etf_theme_map
                 """)
                 tickers = sorted({r[0] for r in cur.fetchall() if r[0]})
             log.info(f"[oscillator] daily/weekly scan over {len(tickers)} names")
