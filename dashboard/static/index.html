@@ -988,7 +988,7 @@
     </div>
     <div class="tblwrap">
       <table>
-        <thead><tr><th class="left">Ticker</th><th>Price</th><th>Chg %</th><th>Vol vs prev day</th><th class="left">Notes</th><th class="left">Added</th><th></th></tr></thead>
+        <thead><tr><th class="left">Ticker</th><th>Price</th><th>Chg %</th><th>Vol vs prev day</th><th title="next earnings report — ⚠ amber once inside a week: trim-into-strength decisions come before the print">Earnings</th><th class="left">Notes</th><th class="left">Added</th><th></th></tr></thead>
         <tbody id="wl-body"></tbody>
       </table>
       <div id="wl-empty" class="empty" style="display:none">Watchlist is empty. Click any ticker in the scanner and hit "+ Add to watchlist" to track a position here.</div>
@@ -1431,8 +1431,10 @@ function renderPatterns() {
       ? Math.max(0, Math.round((Date.now() - new Date(r.detected_at).getTime()) / 86400000)) : null;
     const stCls = r.status === "breakout" ? "pos" : "";
     const stStyle = r.status === "retest" ? ` style="color:var(--yellow);font-weight:600"` : "";
+    const er = (r.er_days != null && r.er_days <= 7)
+      ? ` <span style="color:var(--yellow);font-size:11px;font-weight:600" title="earnings ${r.er_date || ""} — inside a week">⚠${r.er_days === 0 ? "" : r.er_days + "d"}</span>` : "";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
-      <td class="left"><b>${esc(r.ticker)}</b></td>
+      <td class="left"><b>${esc(r.ticker)}</b>${er}</td>
       <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> ${esc(name)}</td>
       <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
       <td class="num">${esc(tfLabel[r.timeframe] || r.timeframe)}</td>
@@ -2971,6 +2973,9 @@ async function loadWatchlist() {
     <td class="num">${w.price ? "$" + fmtNum(w.price) : "—"}</td>
     <td class="num ${(w.change_pct ?? 0) >= 0 ? "pos" : "neg"}">${w.price ? ((w.change_pct >= 0 ? "+" : "") + fmtNum(w.change_pct, 1) + "%") : "—"}</td>
     <td class="num">${w.vol_ratio ? fmtNum(w.vol_ratio, 1) + "x" : "—"}</td>
+    <td class="num">${w.er_date == null ? "—" : (w.er_days <= 7
+      ? `<span style="color:var(--yellow);font-weight:600" title="reports ${esc(w.er_date)}">⚠ ${w.er_days === 0 ? "today" : (w.er_days === 1 ? "tmrw" : w.er_days + "d")}</span>`
+      : new Date(w.er_date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</td>
     <td class="left">${esc(w.notes)}</td>
     <td class="left num">${w.added_at ? new Date(w.added_at).toLocaleDateString() : ""}</td>
     <td>${w.own === false ? "" : `<button onclick="removeFromWatchlist('${esc(w.ticker)}')">Remove</button>`}</td></tr>`).join("");
