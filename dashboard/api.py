@@ -1432,7 +1432,15 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
                        p.dist_to_trigger_pct, p.score, p.points, p.anchor_date,
                        p.detected_at, p.scanned_at,
                        s.company_name, s.sector, s.rs_pct,
-                       w.direction AS weekly_dir
+                       w.direction AS weekly_dir,
+                       (SELECT min(ec.report_date)
+                          FROM earnings_calendar ec
+                         WHERE ec.ticker = p.ticker
+                           AND ec.report_date >= CURRENT_DATE) AS er_date,
+                       (SELECT min(ec.report_date) - CURRENT_DATE
+                          FROM earnings_calendar ec
+                         WHERE ec.ticker = p.ticker
+                           AND ec.report_date >= CURRENT_DATE) AS er_days
                 FROM pattern_scan p
                 LEFT JOIN screener_snapshot s ON s.ticker = p.ticker
                 LEFT JOIN oscillator_scan w
@@ -1494,6 +1502,8 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
             "company_name": r[15] or "", "sector": r[16] or "",
             "rs_pct": int(r[17]) if r[17] is not None else None,
             "weekly_dir": r[18],
+            "er_date": r[19].isoformat() if r[19] is not None else None,
+            "er_days": int(r[20]) if r[20] is not None else None,
         }
         if estimate_resolution is not None:
             row["est"] = estimate_resolution(r[2], r[1], r[12], timing)
@@ -2442,6 +2452,22 @@ def register_routes(mcp) -> None:
                          "owner": r[3], "own": r[3] == me_user}
                         for r in cur.fetchall()
                     ]
+                    # Next earnings per name — a watchlist row is usually a
+                    # position, and positions don't get surprised by prints.
+                    if rows:
+                        cur.execute("""
+                            SELECT ticker, min(report_date),
+                                   min(report_date) - CURRENT_DATE
+                            FROM earnings_calendar
+                            WHERE ticker = ANY(%s)
+                              AND report_date >= CURRENT_DATE
+                            GROUP BY ticker
+                        """, ([r["ticker"] for r in rows],))
+                        er = {t: (d.isoformat(), int(n))
+                              for t, d, n in cur.fetchall()}
+                        for r in rows:
+                            r["er_date"], r["er_days"] = er.get(
+                                r["ticker"], (None, None))
             finally:
                 conn.close()
             # Live quotes so the watchlist works as a position monitor —

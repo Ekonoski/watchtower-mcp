@@ -305,6 +305,51 @@ def _build_market_pulse_section(pulse: dict) -> str:
     </div>"""
 
 
+def _build_earnings_radar(is_market_hours: bool) -> str:
+    """Morning-email banner: watchlist names reporting within a week.
+    Watchlist rows are usually positions, and positions shouldn't get
+    surprised by a print — surfacing the countdown pre-market means the
+    trim-into-strength decision happens on the holder's schedule, not
+    the calendar's. Suppressed during market hours to keep the intraday
+    stream about intraday signals."""
+    if is_market_hours:
+        return ""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT w.ticker, min(ec.report_date),
+                           min(ec.report_date) - CURRENT_DATE
+                    FROM watchlist w
+                    JOIN earnings_calendar ec ON ec.ticker = w.ticker
+                    WHERE w.active = true AND ec.report_date >= CURRENT_DATE
+                    GROUP BY w.ticker
+                    HAVING min(ec.report_date) - CURRENT_DATE <= 7
+                    ORDER BY 2, 1
+                """)
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    items = " &nbsp;·&nbsp; ".join(
+        f"<strong>{t}</strong> "
+        f"{'TODAY' if d == 0 else ('tomorrow' if d == 1 else f'in {d}d')}"
+        f" ({rd.strftime('%b %-d')})"
+        for t, rd, d in rows)
+    return f"""
+    <div style="padding:12px 28px;background:#fffbeb;border-bottom:1px solid #fde68a;">
+      <p style="margin:0;color:#92400e;font-size:13px;">
+        ⚠ <strong>Earnings radar</strong> — watchlist names reporting within a week:
+        {items}. Trim decisions come before the print.
+      </p>
+    </div>"""
+
+
 def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool,
                 news_alerts: Optional[List[dict]] = None,
                 market_pulse: Optional[dict] = None) -> str:
@@ -400,6 +445,8 @@ def _build_html(results: List[dict], minutes_elapsed: int, is_market_hours: bool
         {"<strong>No setups</strong> above threshold this scan — market quiet." if not results else f"<strong>{len(results)} setup{'s' if len(results) != 1 else ''}</strong> found above threshold."}
       </p>
     </div>
+
+    {_build_earnings_radar(is_market_hours)}
 
     <!-- Table -->
     <div style="overflow-x:auto;">
