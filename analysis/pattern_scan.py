@@ -1163,6 +1163,11 @@ def _universe(conn) -> list:
             SELECT ticker FROM screener_snapshot
             UNION
             SELECT ticker FROM watchlist WHERE active = true
+            UNION
+            -- Index/sector/theme ETFs: tradeable in their own right, and an
+            -- index-level pattern (QQQ diamond, IWM base) is where-the-
+            -- market-leans information the stock book can't provide.
+            SELECT ticker FROM etf_theme_map
         """)
         return sorted({r[0] for r in cur.fetchall() if r[0]})
 
