@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 10
+ENGINE_VERSION = 11
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -327,6 +327,13 @@ def _det_inverse_hs(ctx):
     depth = (neck - l2) / l2
     if depth < min_depth:
         return None
+    # Shoulders must also rhyme in AMPLITUDE: each shoulder needs to stand
+    # a real fraction of the head's depth below the neckline. GILD's weekly
+    # "left shoulder" sat 1% off the line while the head sat 23% — that's a
+    # pause in an ascent, not a shoulder.
+    head_amp = neck - l2
+    if (neck - l1) < 0.25 * head_amp or (neck - l3) < 0.25 * head_amp:
+        return None
     pre = [x for x in ctx["highs"][max(0, l1_idx - (l3_idx - l1_idx)):l1_idx] if x is not None]
     if not pre or max(pre) < neck * (1 + 0.03 * s):
         return None  # didn't come DOWN into this — basing noise, not a reversal
@@ -387,6 +394,11 @@ def _det_hs_top(ctx):
         return None
     depth = (h2 - neck) / h2
     if depth < min_depth:
+        return None
+    # Amplitude mirror of the iHS rule: each shoulder must stand a real
+    # fraction of the head's height above the neckline.
+    head_amp = h2 - neck
+    if (h1 - neck) < 0.25 * head_amp or (h3 - neck) < 0.25 * head_amp:
         return None
     pre = [x for x in ctx["lows"][max(0, h1_idx - (h3_idx - h1_idx)):h1_idx] if x is not None]
     if not pre or min(pre) > neck * (1 - 0.03 * s):
@@ -691,8 +703,17 @@ def _det_falling_wedge(ctx):
     pls = [(i, p) for i, p in ctx["plows"] if i >= start]
     if len(phs) < 3:
         return None
-    # The wedge's lows live INSIDE it — a stray pivot low before the first
-    # high (the top of the structure) would poison the range pairing.
+    # A falling wedge hangs from its TOP: anchor at the window's highest
+    # pivot high and discard everything before it. Requiring the WHOLE
+    # window to be wedge-shaped made GILD's textbook Feb-Jul weekly wedge
+    # invisible — the window reached back into the pre-top base and the
+    # base's pivots poisoned every monotonicity and convergence check.
+    top = max(range(len(phs)), key=lambda j: phs[j][1])
+    phs = phs[top:]
+    if len(phs) < 3:
+        return None
+    # The wedge's lows live INSIDE it — a stray pivot low before the top
+    # would poison the range pairing.
     pls = [x for x in pls if x[0] > phs[0][0]]
     if len(pls) < 2:
         return None
@@ -702,8 +723,10 @@ def _det_falling_wedge(ctx):
         return None
     first_range = phs[0][1] - pls[0][1]
     last_range = phs[-1][1] - pls[-1][1]
-    if first_range <= 0 or last_range <= 0 or last_range > first_range * 0.65:
-        return None  # not converging
+    if first_range <= 0 or last_range <= 0 or last_range > first_range * 0.75:
+        return None  # not converging (0.75: range pairing uses the first
+        # pivot low AFTER the top, which understates the opening range —
+        # GILD's clean wedge measured 0.69 under that pairing)
     if phs[-1][1] > phs[0][1] * (1 - decline_min):
         return None  # not enough of a decline to reverse
     if (n - 1) - phs[-1][0] > cfg["recent"] and (n - 1) - pls[-1][0] > cfg["recent"]:
@@ -732,7 +755,14 @@ def _det_rising_wedge(ctx):
     pls = [(i, p) for i, p in ctx["plows"] if i >= start]
     if len(pls) < 3:
         return None
-    # Mirror of the falling wedge: highs must sit INSIDE the structure.
+    # A rising wedge stands on its BOTTOM: anchor at the window's lowest
+    # pivot low, discard everything before it (mirror of the falling
+    # wedge's top-anchor fix).
+    bot = min(range(len(pls)), key=lambda j: pls[j][1])
+    pls = pls[bot:]
+    if len(pls) < 3:
+        return None
+    # Highs must sit INSIDE the structure.
     phs = [x for x in phs if x[0] > pls[0][0]]
     if len(phs) < 2:
         return None
@@ -742,7 +772,7 @@ def _det_rising_wedge(ctx):
         return None
     first_range = phs[0][1] - pls[0][1]
     last_range = phs[-1][1] - pls[-1][1]
-    if first_range <= 0 or last_range <= 0 or last_range > first_range * 0.65:
+    if first_range <= 0 or last_range <= 0 or last_range > first_range * 0.75:
         return None
     if pls[0][1] <= 0 or pls[-1][1] < pls[0][1] * (1 + climb_min):
         return None
