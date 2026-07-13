@@ -951,13 +951,13 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 @mcp.tool()
 def watchtower_momentum(scanner: str = "gappers", top_n: int = 15) -> str:
     """
-    Day-trading momentum scanners (Warrior Trading-class) on the latest
-    full-market pass, each row annotated with the name's live Watchtower
-    swing structure — the column no momentum scanner has.
+    Watchtower's day-trading momentum scanners on the latest full-market
+    pass, each row annotated with the name's live Watchtower swing
+    structure — the column no momentum scanner has.
 
     Args:
         scanner: gappers (±4% vs prior close; the 8:50 AM pass is the
-                 Gap & Go watchlist) | pillars (Ross's 5 Pillars composite:
+                 pre-market watchlist) | pillars (the Ignition composite:
                  price $1-20, +10% day, relvol >=5x, float <=20M, news —
                  scored 0-5) | continuation (2-week movers >=30%) |
                  earnings_gap (reported within a day AND gapping) | all

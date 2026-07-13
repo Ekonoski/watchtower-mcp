@@ -575,7 +575,7 @@ def run_iv_snapshot_job():
 
 
 def run_momentum_scan_job():
-    """Momentum scanner pass (gappers / 5 Pillars / continuation /
+    """Momentum scanner pass (gappers / Ignition / continuation /
     earnings-gap). Skips non-trading days; never raises."""
     try:
         from screen.market_calendar import is_trading_day
@@ -592,13 +592,23 @@ def run_momentum_scan_job():
 
 
 def run_ticker_stats_job():
-    """Nightly FMP float refresh into ticker_stats."""
+    """Nightly ticker_stats refresh: whole-market volume/close history via
+    Polygon grouped-daily bars (feeds relvol / 2-week move / momo memory
+    for every listed name), then floats — the FMP bulk endpoint when the
+    plan allows it, with per-symbol fetches during scan passes covering
+    the gap otherwise."""
     if not _claim_daily_job("ticker_stats"):
         return
     try:
+        from analysis.momentum_scan import refresh_market_history
+        res = refresh_market_history()
+        log.info(f"[momentum] market history: {res}")
+    except Exception as e:
+        log.error(f"[momentum] market history error: {e}")
+    try:
         from analysis.momentum_scan import refresh_ticker_stats
         res = refresh_ticker_stats()
-        log.info(f"[momentum] ticker_stats: {res}")
+        log.info(f"[momentum] ticker_stats floats: {res}")
     except Exception as e:
         log.error(f"[momentum] ticker_stats error: {e}")
 
@@ -611,17 +621,25 @@ def _seed_momentum_if_empty():
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM ticker_stats LIMIT 1")
+                cur.execute("SELECT 1 FROM ticker_stats "
+                            "WHERE float_shares IS NOT NULL LIMIT 1")
                 stats_empty = cur.fetchone() is None
+                cur.execute("SELECT 1 FROM ticker_stats "
+                            "WHERE avg_vol_20d IS NOT NULL LIMIT 1")
+                hist_empty = cur.fetchone() is None
                 cur.execute("SELECT 1 FROM momentum_scan LIMIT 1")
                 scan_empty = cur.fetchone() is None
         finally:
             conn.close()
+        if hist_empty:
+            from analysis.momentum_scan import refresh_market_history
+            log.info("[momentum] seeding market history...")
+            refresh_market_history()
         if stats_empty:
             from analysis.momentum_scan import refresh_ticker_stats
-            log.info("[momentum] seeding ticker_stats...")
+            log.info("[momentum] seeding ticker_stats floats...")
             refresh_ticker_stats()
-        if scan_empty or stats_empty:
+        if scan_empty or stats_empty or hist_empty:
             from analysis.momentum_scan import run_momentum_scan
             log.info("[momentum] seeding first scan pass...")
             run_momentum_scan()
@@ -953,10 +971,10 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # Momentum scanners (Warrior-class, Phase A): pre-market Gap & Go pass
-    # at 8:50 AM ET, then every 10 minutes through the session. One full-
-    # market snapshot per pass; freshness is whatever the data plan allows
-    # and is labeled on the tab.
+    # Momentum scanners (Phase A): pre-market gappers pass at 8:50 AM ET,
+    # then every 10 minutes through the session. One full-market snapshot
+    # per pass; freshness is whatever the data plan allows and is labeled
+    # on the tab.
     scheduler.add_job(
         run_momentum_scan_job,
         CronTrigger(day_of_week="mon-fri", hour="8", minute="50", timezone=et),
@@ -975,7 +993,7 @@ def start_scheduler():
         id="momentum_session",
         replace_existing=True,
     )
-    # Nightly float refresh feeding the 5-Pillars float pillar.
+    # Nightly market history + float refresh feeding relvol/2W/float.
     scheduler.add_job(
         run_ticker_stats_job,
         CronTrigger(day_of_week="mon-fri", hour="17", minute="15", timezone=et),

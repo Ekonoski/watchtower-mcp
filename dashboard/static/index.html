@@ -672,13 +672,13 @@
   <section id="tab-momentum" class="tabpane">
     <div class="pane-head">
       <h3>Momentum Scanners</h3>
-      <p>Warrior-class day-trade scanners on a full-market snapshot, refreshed every
-      10 minutes in-session plus an <b>8:50 AM pre-market Gap &amp; Go pass</b>.
-      <b>Gappers</b> = ±4% vs prior close. <b>5 Pillars</b> (Ross Cameron's published
-      composite): price $1–20 · +10% day · rel volume ≥5× (time-of-day adjusted) ·
-      float ≤20M · news catalyst — scored, so near-misses rank below qualifiers.
+      <p>Watchtower's day-trade scanners on a full-market snapshot, refreshed every
+      10 minutes in-session plus an <b>8:50 AM pre-market watchlist pass</b>.
+      <b>Gappers</b> = ±4% vs prior close. <b>Ignition</b> — our composite of the classic
+      small-cap momentum recipe: price $1–20 · +10% day · rel volume ≥5× (time-of-day
+      adjusted) · float ≤20M · news catalyst — scored, so near-misses rank below qualifiers.
       <b>Continuation</b> = 2-week movers ≥30%. <b>Earnings gap</b> = reported within a
-      day and gapping. 🔁 = Former Momo (a +25% day inside the trailing year — proven movers repeat).
+      day and gapping. 🔁 = Momo memory (a +25% day inside the trailing year — proven movers repeat).
       The Structure column is the edge no momentum scanner has: the name's live swing
       pattern and oscillator read. Data is delayed per the current plan — the seconds-class
       alerts (HOD bursts, squeezes, halts) arrive with the real-time upgrade, not faked before it.</p>
@@ -686,7 +686,7 @@
     <div class="controls">
       <div class="seg" id="mom-scanner">
         <button data-sc="gappers" class="on">Gappers</button>
-        <button data-sc="pillars">5 Pillars</button>
+        <button data-sc="pillars">Ignition</button>
         <button data-sc="continuation">Continuation</button>
         <button data-sc="earnings_gap">Earnings gap</button>
         <button data-sc="all">All</button>
@@ -703,9 +703,9 @@
           <th title="change vs prior close">Chg%</th>
           <th title="open (or pre-market last) vs prior close">Gap%</th>
           <th>Volume</th>
-          <th title="today's volume vs 20-day average, prorated by session time elapsed — the Warrior 'daily rate'">RelVol</th>
-          <th title="shares float (FMP, nightly refresh)">Float</th>
-          <th title="5 Pillars score: price $1-20, +10% day, relvol ≥5x, float ≤20M, news">Pillars</th>
+          <th title="today's volume vs 20-day average, prorated by session time elapsed — the 'daily rate'">RelVol</th>
+          <th title="shares float (FMP, cached 14 days, hottest names first)">Float</th>
+          <th title="Ignition score: price $1-20, +10% day, relvol ≥5x, float ≤20M, news">Ignition</th>
           <th title="2-week move">2W%</th>
           <th class="left" title="news catalyst headline (last ~16h)">News</th>
           <th class="left" title="best live Watchtower pattern + distance to trigger">Structure</th>
@@ -1341,7 +1341,7 @@ function renderMomentum() {
       ? `<span class="${r.osc_dir === "bullish" ? "pos" : "neg"}">${r.osc_dir === "bullish" ? "▲" : "▼"}</span>${r.osc_conf != null ? " " + r.osc_conf : ""}`
       : "—";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
-      <td class="left"><b>${esc(r.ticker)}</b>${r.former_momo ? ' <span title="Former Momo — a +25% day inside the trailing year">🔁</span>' : ""}${r.earnings_gap ? ' <span title="reported earnings within the last day">📊</span>' : ""}</td>
+      <td class="left"><b>${esc(r.ticker)}</b>${r.former_momo ? ' <span title="Momo memory — a +25% day inside the trailing year">🔁</span>' : ""}${r.earnings_gap ? ' <span title="reported earnings within the last day">📊</span>' : ""}</td>
       <td class="num">$${r.price != null ? r.price.toFixed(2) : "—"}</td>
       <td class="num"><span class="${chgCls}">${r.chg_pct != null ? (r.chg_pct > 0 ? "+" : "") + r.chg_pct.toFixed(1) + "%" : "—"}</span></td>
       <td class="num"><span class="${gapCls}">${r.gap_pct != null ? (r.gap_pct > 0 ? "+" : "") + r.gap_pct.toFixed(1) + "%" : "—"}</span></td>

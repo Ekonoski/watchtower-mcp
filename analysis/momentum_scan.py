@@ -1,36 +1,40 @@
 """
-Watchtower Momentum — the day-trading scanner layer (Warrior Trading-class).
+Watchtower Momentum — the day-trading scanner layer.
 
-One full-market Polygon snapshot per pass feeds a set of momentum scanners
-built on Ross Cameron's published criteria, with the column Watchtower adds
-that no momentum scanner has: the name's SWING STRUCTURE (live pattern,
-trigger distance, oscillator state) joined in at read time.
+One full-market Polygon snapshot per pass feeds the momentum scanners,
+each row joined at read time with the column no momentum scanner has:
+the name's SWING STRUCTURE (live pattern, trigger distance, oscillator
+state).
 
 Scanners (Phase A — runs on delayed data; freshness is labeled, not faked):
   gappers       gap >= 4% vs prior close (both directions listed; the
-                8:50 AM pre-market pass is the Gap & Go watchlist builder)
-  pillars       Ross's 5 Pillars composite, SCORED not just filtered:
-                price $1-20 · day change >= +10% · relative volume >= 5x
-                · float <= 20M · news catalyst. 5/5 = textbook; 4/5 rows
-                rank below so near-misses are visible.
+                8:50 AM pre-market pass is the morning watchlist builder)
+  pillars       the Ignition score — the classic small-cap momentum
+                recipe, SCORED not just filtered: price $1-20 · day
+                change >= +10% · relative volume >= 5x · float <= 20M ·
+                news catalyst. 5/5 = textbook; 4/5 ranks below so
+                near-misses stay visible.
   continuation  2-week movers (>= 30% off the 10-session-ago close) — the
                 multi-day tape, and the bridge to the swing book.
   earnings_gap  reported within the last day AND gapping >= 4%.
 
-Phase B (needs the real-time upgrade): HOD momentum bursts, Running Up/Down
-velocity alerts, squeeze events (up 5%/5min, 10%/10min), halts. Those are
-seconds-class signals; on 15-minute-delayed data they would be history
-dressed as alerts, so they are absent until the data supports them.
+Phase B (needs the real-time upgrade): HOD momentum bursts, velocity
+alerts (up 5%/5min, 10%/10min), halts. Those are seconds-class signals;
+on delayed data they would be history dressed as alerts, so they are
+absent until the data supports them.
 
 Data notes:
   - relvol (daily rate) = today's cumulative volume vs the 20-day average
-    volume prorated by session elapsed time — the time-of-day-adjusted
-    metric Warrior displays, computable from daily history.
-  - float / short interest live in ticker_stats, refreshed nightly from
-    FMP's bulk shares-float endpoint (short interest best-effort).
-  - "Former Momo" = the name printed a +25% close-to-close day inside the
-    trailing year — momentum names repeat, and day traders trust a ticker
-    that has proven it can move.
+    volume prorated by session elapsed time. Volume history for the WHOLE
+    market (not just our stored universe) comes from Polygon's grouped-
+    daily endpoint: one call per session, 21 sessions kept in ticker_stats
+    (avg_vol_20d, close_2w, last_big_day).
+  - float lives in ticker_stats: FMP bulk endpoint when the plan allows,
+    else per-symbol fetches for current scanner names, cached and topped
+    up every pass (float moves slowly; rows refresh after 14 days).
+  - "Momo memory" = the name printed a +25% close-to-close day recently —
+    momentum names repeat, and traders trust a ticker that has proven it
+    can move.
 """
 import json
 import logging
@@ -40,7 +44,7 @@ from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger(__name__)
 
-GAP_MIN = 4.0            # Warrior gapper threshold (%)
+GAP_MIN = 4.0            # gapper threshold (%)
 PILLAR_PRICE = (1.0, 20.0)
 PILLAR_CHG = 10.0        # day change %
 PILLAR_RELVOL = 5.0
@@ -48,6 +52,8 @@ PILLAR_FLOAT = 20_000_000
 CONTINUATION_MIN = 30.0  # 2-week move %
 FORMER_MOMO_DAY = 25.0   # single-day close-to-close gain %
 MAX_ROWS = 1200          # snapshot table cap per pass
+FLOAT_TTL_DAYS = 14      # per-symbol float cache lifetime
+FLOAT_FETCH_CAP = 250    # max per-symbol float fetches per pass
 
 
 def _fmp_key() -> str:
@@ -55,8 +61,10 @@ def _fmp_key() -> str:
 
 
 def refresh_ticker_stats() -> dict:
-    """Nightly float (and best-effort short interest) refresh from FMP's
-    bulk endpoint into ticker_stats. One call, whole market."""
+    """Nightly float refresh from FMP's bulk endpoint into ticker_stats.
+    One call, whole market — works only on plans that include the bulk
+    endpoint; on plans without it the per-symbol fallback
+    (refresh_floats_for) carries the load instead."""
     import requests
     from screen.reversal_screen import _conn
     key = _fmp_key()
@@ -77,7 +85,8 @@ def refresh_ticker_stats() -> dict:
                 except (TypeError, ValueError):
                     continue
     except Exception as e:
-        log.warning(f"[momentum] float refresh failed: {e}")
+        log.warning(f"[momentum] bulk float refresh failed "
+                    f"(plan may not include it): {e}")
         return {"error": str(e)[:120]}
     if not rows:
         return {"stored": 0}
@@ -85,16 +94,167 @@ def refresh_ticker_stats() -> dict:
     try:
         with conn.cursor() as cur:
             cur.executemany("""
-                INSERT INTO ticker_stats (ticker, float_shares, updated_at)
-                VALUES (%s, %s, now())
+                INSERT INTO ticker_stats
+                    (ticker, float_shares, float_updated_at, updated_at)
+                VALUES (%s, %s, now(), now())
                 ON CONFLICT (ticker) DO UPDATE SET
-                    float_shares = EXCLUDED.float_shares, updated_at = now()
+                    float_shares = EXCLUDED.float_shares,
+                    float_updated_at = now(), updated_at = now()
             """, rows)
         conn.commit()
     finally:
         conn.close()
     log.info(f"[momentum] ticker_stats refreshed: {len(rows)} floats")
     return {"stored": len(rows)}
+
+
+def refresh_floats_for(tickers: list, cap: int = FLOAT_FETCH_CAP) -> int:
+    """Per-symbol FMP float fetch — the fallback when the bulk endpoint
+    isn't on the plan. Only touches names missing a float or whose cached
+    value is older than FLOAT_TTL_DAYS; capped and paced so a pass stays
+    inside FMP rate limits. Caller passes tickers hottest-first so the
+    cap spends its budget on the names that matter."""
+    import requests
+    from screen.reversal_screen import _conn
+    key = _fmp_key()
+    if not key or not tickers:
+        return 0
+    tickers = [str(t).upper() for t in tickers]
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ticker FROM ticker_stats
+                WHERE ticker = ANY(%s)
+                  AND float_shares IS NOT NULL
+                  AND float_updated_at > now() - make_interval(days => %s)
+            """, (tickers, FLOAT_TTL_DAYS))
+            fresh = {r[0] for r in cur.fetchall()}
+        todo = [t for t in tickers if t not in fresh][:cap]
+        if not todo:
+            return 0
+        got = []
+        for t in todo:
+            try:
+                resp = requests.get(
+                    "https://financialmodelingprep.com/api/v4/shares_float",
+                    params={"symbol": t, "apikey": key}, timeout=10)
+                resp.raise_for_status()
+                data = resp.json() or []
+                flt = (data[0] or {}).get("floatShares") if data else None
+                if flt:
+                    got.append((t, int(float(flt))))
+            except Exception:
+                continue
+            time.sleep(0.25)   # ~240 calls/min ceiling
+        if got:
+            with conn.cursor() as cur:
+                cur.executemany("""
+                    INSERT INTO ticker_stats
+                        (ticker, float_shares, float_updated_at, updated_at)
+                    VALUES (%s, %s, now(), now())
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        float_shares = EXCLUDED.float_shares,
+                        float_updated_at = now(), updated_at = now()
+                """, got)
+            conn.commit()
+        log.info(f"[momentum] per-symbol floats: {len(got)}/{len(todo)} "
+                 f"fetched ({len(fresh)} cached fresh)")
+        return len(got)
+    finally:
+        conn.close()
+
+
+def refresh_market_history(days: int = 21) -> dict:
+    """Whole-market volume/close history from Polygon's grouped-daily
+    endpoint (one call per session, every listed name in the response).
+    Fills ticker_stats.avg_vol_20d / close_2w / last_big_day so relvol,
+    2-week move and momo memory work for the ENTIRE tape, not just the
+    names our swing universe happens to store in daily_prices.
+
+    last_big_day only moves forward (GREATEST on conflict), so momo
+    memory accumulates across nightly runs instead of being limited to
+    the ~21-session window each run can see."""
+    from analysis.polygon_data import get_client
+    from screen.reversal_screen import _conn
+    client = get_client()
+    if not client:
+        return {"error": "no polygon client"}
+
+    t0 = time.time()
+    sessions = []   # newest-first: (date, {ticker: (close, volume)})
+    d = datetime.now(timezone.utc).date()
+    probes = 0
+    while len(sessions) < days and probes < days * 2 + 10:
+        d -= timedelta(days=1)
+        if d.weekday() >= 5:
+            continue
+        probes += 1
+        try:
+            bars = client.get_grouped_daily_aggs(d.isoformat(), adjusted=True)
+        except Exception as e:
+            log.warning(f"[momentum] grouped daily {d} failed: {e}")
+            continue
+        day = {}
+        for b in bars or []:
+            try:
+                tkr = str(b.ticker).upper()
+                c = float(b.close or 0)
+                v = float(b.volume or 0)
+                if c > 0:
+                    day[tkr] = (c, v)
+            except Exception:
+                continue
+        if day:
+            sessions.append((d, day))
+    if not sessions:
+        return {"error": "no grouped-daily sessions returned"}
+
+    # Per ticker: newest-first closes/vols across the sessions we pulled.
+    tickers = set()
+    for _, day in sessions:
+        tickers.update(day)
+    rows = []
+    for t in tickers:
+        vols, closes = [], []   # aligned to sessions (newest first)
+        for _, day in sessions:
+            c, v = day.get(t, (None, None))
+            closes.append(c)
+            vols.append(v)
+        known_vols = [v for v in vols[:20] if v is not None]
+        av20 = sum(known_vols) / len(known_vols) if known_vols else None
+        c2w = closes[10] if len(closes) > 10 else None
+        big = None   # latest date with a close-to-close day >= threshold
+        for i in range(len(sessions) - 1):
+            c_now, c_prev = closes[i], closes[i + 1]
+            if c_now and c_prev and (c_now / c_prev - 1) * 100 >= FORMER_MOMO_DAY:
+                big = sessions[i][0]
+                break
+        if av20 is None and c2w is None and big is None:
+            continue
+        rows.append((t, av20, c2w, big))
+
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            for i in range(0, len(rows), 1000):
+                cur.executemany("""
+                    INSERT INTO ticker_stats
+                        (ticker, avg_vol_20d, close_2w, last_big_day, updated_at)
+                    VALUES (%s, %s, %s, %s, now())
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        avg_vol_20d = EXCLUDED.avg_vol_20d,
+                        close_2w = EXCLUDED.close_2w,
+                        last_big_day = GREATEST(ticker_stats.last_big_day,
+                                                EXCLUDED.last_big_day),
+                        updated_at = now()
+                """, rows[i:i + 1000])
+        conn.commit()
+    finally:
+        conn.close()
+    log.info(f"[momentum] market history: {len(sessions)} sessions, "
+             f"{len(rows)} tickers in {time.time()-t0:.1f}s")
+    return {"sessions": len(sessions), "tickers": len(rows)}
 
 
 def _session_now():
@@ -205,24 +365,37 @@ def run_momentum_scan() -> dict:
                     hist[t] = (float(av20) if av20 else None,
                                float(c2w) if c2w else None,
                                float(mx) if mx is not None else None)
-            cur.execute("SELECT ticker, float_shares, short_interest "
-                        "FROM ticker_stats WHERE ticker = ANY(%s)", (tickers,))
-            stats = {t: (f, si) for t, f, si in cur.fetchall()}
+            cur.execute("""
+                SELECT ticker, float_shares, short_interest,
+                       avg_vol_20d, close_2w, last_big_day
+                FROM ticker_stats WHERE ticker = ANY(%s)
+            """, (tickers,))
+            stats = {r[0]: r[1:] for r in cur.fetchall()}
             cur.execute("""
                 SELECT DISTINCT ticker FROM earnings_calendar
                 WHERE report_date BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE
             """)
             reported = {r[0] for r in cur.fetchall()}
 
+        momo_floor = (datetime.now(timezone.utc) - timedelta(days=370)).date()
         rows = []
         for t, c in cands.items():
             av20, c2w, mx = hist.get(t, (None, None, None))
+            flt, si, ts_av20, ts_c2w, big_day = \
+                stats.get(t, (None, None, None, None, None))
+            # daily_prices history (deeper) wins; grouped-daily market
+            # history in ticker_stats covers everything else on the tape.
+            if av20 is None and ts_av20:
+                av20 = float(ts_av20)
+            if c2w is None and ts_c2w:
+                c2w = float(ts_c2w)
+            momo = bool(mx and mx >= FORMER_MOMO_DAY) or \
+                bool(big_day and big_day >= momo_floor)
             relvol = None
             if av20 and av20 > 0 and frac > 0:
                 relvol = round(c["vol"] / (av20 * frac), 2)
             move2w = (round((c["price"] / c2w - 1) * 100, 1)
                       if c2w and c2w > 0 else None)
-            flt, si = stats.get(t, (None, None))
             headline = news.get(t)
             pillars = {
                 "price": PILLAR_PRICE[0] <= c["price"] <= PILLAR_PRICE[1],
@@ -235,7 +408,7 @@ def run_momentum_scan() -> dict:
                 t, c["price"], c["chg"], c["gap"], c["vol"], relvol,
                 flt, si, bool(headline), (headline or "")[:200],
                 json.dumps(pillars), sum(pillars.values()), move2w,
-                bool(mx and mx >= FORMER_MOMO_DAY), t in reported, session))
+                momo, t in reported, session))
         rows.sort(key=lambda r: abs(r[2] or 0), reverse=True)
         rows = rows[:MAX_ROWS]
 
@@ -267,4 +440,13 @@ def run_momentum_scan() -> dict:
     finally:
         conn.close()
     log.info(f"[momentum] stored {len(rows)} rows in {time.time()-t0:.1f}s")
+
+    # Float top-up: rows are already sorted hottest-first, so the fetch
+    # cap goes to the biggest movers still missing a float.
+    try:
+        missing = [r[0] for r in rows if r[6] is None]
+        if missing:
+            refresh_floats_for(missing)
+    except Exception as e:
+        log.warning(f"[momentum] float top-up failed: {e}")
     return {"rows": len(rows), "session": session}
