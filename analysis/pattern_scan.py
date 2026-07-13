@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 9
+ENGINE_VERSION = 10
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -303,10 +303,21 @@ def _det_inverse_hs(ctx):
     lows_after = [x for x in ctx["lows"][l2_idx + 1:] if x is not None]
     if not lows_after or min(lows_after) < l2 * 0.999:
         return None  # something after the head undercut it
-    ls_cands = [(i, p) for i, p in plows if win_start <= i <= l2_idx - cfg["min_sep"]]
+    # Shoulders must rhyme in TIME as well as price. Searching the whole
+    # window for the extreme pivot actively selected DISTANT shoulders
+    # (EOG weekly: left shoulder 721 days before the head, right 49 days
+    # after — a geometry match, not a pattern; 54% of the book failed
+    # 3:1). Search only within 3x the right shoulder's width so patterns
+    # re-anchor to their real shoulder instead of the two-year extreme.
+    rw = l3_idx - l2_idx
+    sym_start = max(win_start, l2_idx - 3 * rw)
+    ls_cands = [(i, p) for i, p in plows
+                if sym_start <= i <= l2_idx - cfg["min_sep"]]
     if not ls_cands:
         return None
     l1_idx, l1 = min(ls_cands, key=lambda t: t[1])
+    if (l2_idx - l1_idx) * 3 < rw:
+        return None  # left shoulder hugging the head — asymmetric other way
     if l2 > l1 * (1 - min_hl):
         return None  # head barely below left shoulder — twin lows, that's a
         # double bottom's shape and its detector owns it
@@ -357,10 +368,17 @@ def _det_hs_top(ctx):
     highs_after = [x for x in ctx["highs"][h2_idx + 1:] if x is not None]
     if not highs_after or max(highs_after) > h2 * 1.001:
         return None
-    ls_cands = [(i, p) for i, p in phighs if win_start <= i <= h2_idx - cfg["min_sep"]]
+    # Mirror of the iHS shoulder-symmetry rule: search for the left
+    # shoulder only within 3x the right shoulder's width from the head.
+    rw = h3_idx - h2_idx
+    sym_start = max(win_start, h2_idx - 3 * rw)
+    ls_cands = [(i, p) for i, p in phighs
+                if sym_start <= i <= h2_idx - cfg["min_sep"]]
     if not ls_cands:
         return None
     h1_idx, h1 = max(ls_cands, key=lambda t: t[1])
+    if (h2_idx - h1_idx) * 3 < rw:
+        return None  # left shoulder hugging the head — asymmetric other way
     if h2 < h1 * (1 + min_lh):
         return None  # head barely above left shoulder — twin highs, that's a
         # double top's shape and its detector owns it
