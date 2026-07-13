@@ -949,6 +949,59 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 
 
 @mcp.tool()
+def watchtower_momentum(scanner: str = "gappers", top_n: int = 15) -> str:
+    """
+    Day-trading momentum scanners (Warrior Trading-class) on the latest
+    full-market pass, each row annotated with the name's live Watchtower
+    swing structure — the column no momentum scanner has.
+
+    Args:
+        scanner: gappers (±4% vs prior close; the 8:50 AM pass is the
+                 Gap & Go watchlist) | pillars (Ross's 5 Pillars composite:
+                 price $1-20, +10% day, relvol >=5x, float <=20M, news —
+                 scored 0-5) | continuation (2-week movers >=30%) |
+                 earnings_gap (reported within a day AND gapping) | all
+        top_n: max rows (default 15)
+    """
+    try:
+        from dashboard.api import _momentum_rows
+        from analysis.pattern_scan import PATTERN_NAMES
+        data = _momentum_rows(scanner.lower().strip())
+        rows = (data.get("rows") or [])[:max(1, min(top_n, 50))]
+        if not rows:
+            return (f"No names on the '{scanner}' momentum scanner right now. "
+                    "Passes run every 10 minutes in-session (first at 8:50 AM ET).")
+        lines = [f"**Momentum — {scanner}** ({len(rows)} shown, "
+                 f"as of {data.get('as_of') or 'n/a'}, {data.get('session') or ''}; "
+                 "data delayed per plan)", ""]
+        for r in rows:
+            flt = (f"{r['float_shares']/1e6:.1f}M" if r.get("float_shares") else "?")
+            rv = f"{r['relvol']:.1f}x" if r.get("relvol") else "?"
+            badges = ("🔁" if r.get("former_momo") else "") + \
+                     ("📊" if r.get("earnings_gap") else "")
+            pat = ""
+            if r.get("pattern"):
+                d = r.get("pattern_dist")
+                pat = (f" · {PATTERN_NAMES.get(r['pattern'], r['pattern'])} "
+                       f"({r.get('pattern_tf','')} {r.get('pattern_status','')}"
+                       + (f", {d:+.1f}%" if d is not None else "") + ")")
+            osc = (f" · osc {r['osc_dir']} {r.get('osc_conf') or ''}"
+                   if r.get("osc_dir") else "")
+            news = f" · 🔥 {r['headline'][:70]}" if r.get("news") else ""
+            lines.append(
+                f"- **{r['ticker']}**{badges} ${r['price']:,.2f} "
+                f"({r['chg_pct']:+.1f}% day, {r['gap_pct']:+.1f}% gap) — "
+                f"vol {r['volume']:,}, relvol {rv}, float {flt}, "
+                f"pillars {r['pillar_count']}/5{pat}{osc}{news}")
+        lines.append("")
+        lines.append("Structure column = live Watchtower pattern; deep-dive any "
+                     "name with watchtower_analyze_ticker.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error reading momentum scanners: {e}"
+
+
+@mcp.tool()
 def watchtower_option_ticket(ticker: str) -> str:
     """
     Turn a ticker's best live pattern into a concrete options ticket:
