@@ -647,6 +647,45 @@ def _seed_momentum_if_empty():
         log.warning(f"[momentum] seed skipped: {e}")
 
 
+def _seed_iv_snapshot_if_missing():
+    """Deploy backstop for the 5:35 PM IV snapshot: if today's rows are
+    missing after the close on a trading day, run it now. Options
+    snapshots still show the session's quotes after hours, so a crashed
+    nightly job doesn't have to cost a day of IV-rank history. Window is
+    4:10-8:00 PM ET — past 8 PM the UTC date rolls over and CURRENT_DATE
+    would stamp the snapshot on the wrong day."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        mins = now.hour * 60 + now.minute
+        if not (16 * 60 + 10 <= mins < 20 * 60):
+            return
+        try:
+            from screen.market_calendar import is_trading_day
+            if not is_trading_day():
+                return
+        except Exception:
+            pass
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM iv_history "
+                            "WHERE as_of = CURRENT_DATE LIMIT 1")
+                have = cur.fetchone() is not None
+        finally:
+            conn.close()
+        if have:
+            return
+        from analysis.options_picker import run_iv_snapshot
+        log.info("[options] today's IV snapshot missing — seeding...")
+        res = run_iv_snapshot()
+        log.info(f"[options] IV snapshot seed: {res}")
+    except Exception as e:
+        log.warning(f"[options] IV snapshot seed skipped: {e}")
+
+
 def _run_oscillator_scan_safe(include_daily_weekly: bool = True):
     """Watchtower Oscillator scan, chained after each pattern scan so the
     structural-confluence bucket reads fresh pattern rows. Never raises —
@@ -1016,6 +1055,7 @@ def start_scheduler():
         _seed_pattern_scan_if_stale()
         _seed_oscillator_if_empty()
         _seed_momentum_if_empty()
+        _seed_iv_snapshot_if_missing()
         _seed_oscillator_backtest_if_empty()
         _seed_pattern_backtest_if_empty()
 
