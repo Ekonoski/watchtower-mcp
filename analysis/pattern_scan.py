@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 11
+ENGINE_VERSION = 12
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -321,8 +321,20 @@ def _det_inverse_hs(ctx):
     if l2 > l1 * (1 - min_hl):
         return None  # head barely below left shoulder — twin lows, that's a
         # double bottom's shape and its detector owns it
-    neck = _robust_extreme(ctx["highs"][l2_idx:l3_idx + 1], "high")
-    if not neck or neck <= 0 or l3 >= neck * 0.995 or l1 >= neck:
+    # The neckline is defined by BOTH inter-trough rallies. Using only the
+    # head->right-shoulder rally let a single blowoff own the line (ZS
+    # weekly: the late-May spike put the "neckline" at $191 while every
+    # other rally in the structure stalled at ~$155 — a trigger 35% above
+    # price is a spike artifact, not a level). The LOWER rally is the
+    # honest line: price has actually contested it from both sides. This
+    # also demands a REAL rally between left shoulder and head — without
+    # one, the "left shoulder" is just a step in the decline.
+    peak_l = _robust_extreme(ctx["highs"][l1_idx:l2_idx + 1], "high")
+    peak_r = _robust_extreme(ctx["highs"][l2_idx:l3_idx + 1], "high")
+    if not peak_l or not peak_r:
+        return None
+    neck = min(peak_l, peak_r)
+    if neck <= 0 or l3 >= neck * 0.995 or l1 >= neck:
         return None
     depth = (neck - l2) / l2
     if depth < min_depth:
@@ -389,8 +401,14 @@ def _det_hs_top(ctx):
     if h2 < h1 * (1 + min_lh):
         return None  # head barely above left shoulder — twin highs, that's a
         # double top's shape and its detector owns it
-    neck = _robust_extreme(ctx["lows"][h2_idx:h3_idx + 1], "low")
-    if not neck or neck <= 0 or h3 <= neck * 1.005 or h1 <= neck:
+    # Mirror of the iHS neckline rule: the HIGHER of the two inter-peak
+    # valleys — a level price defended twice, not a one-off flush.
+    val_l = _robust_extreme(ctx["lows"][h1_idx:h2_idx + 1], "low")
+    val_r = _robust_extreme(ctx["lows"][h2_idx:h3_idx + 1], "low")
+    if not val_l or not val_r:
+        return None
+    neck = max(val_l, val_r)
+    if neck <= 0 or h3 <= neck * 1.005 or h1 <= neck:
         return None
     depth = (h2 - neck) / h2
     if depth < min_depth:
