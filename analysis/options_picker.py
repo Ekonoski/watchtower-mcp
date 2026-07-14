@@ -29,7 +29,7 @@ fine on liquid strikes, which is what the OI gate enforces; the broker's
 screen is the final price check at execution.
 """
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -320,6 +320,18 @@ def atm_iv_snapshot(ticker: str, close: float):
     }
 
 
+def iv_session_date() -> date:
+    """The completed session an after-hours IV snapshot belongs to.
+    Options don't trade overnight, so from the 4 PM close until the next
+    open the chain still shows that session's closing quotes — shifting
+    ET back 16 hours maps any time in that window onto the session's
+    date. (The old CURRENT_DATE stamp was UTC: after 8 PM ET it rolled
+    to tomorrow and would have labeled tonight's IV with the wrong day.)"""
+    from zoneinfo import ZoneInfo
+    et = datetime.now(ZoneInfo("America/New_York"))
+    return (et - timedelta(hours=16)).date()
+
+
 def run_iv_snapshot(top_n: int = 500) -> dict:
     """Nightly: store ATM IV + OI for every name with a live pattern (by
     score, bounded) plus the watchlist. This is how Watchtower grows its
@@ -339,44 +351,61 @@ def run_iv_snapshot(top_n: int = 500) -> dict:
             names = {r[0] for r in cur.fetchall()}
             cur.execute("SELECT ticker FROM watchlist WHERE active = true")
             names |= {r[0] for r in cur.fetchall()}
+            # Latest close per name via bounded index probes (LATERAL
+            # top-1). The old DISTINCT ON walked and sorted every stored
+            # bar for the whole universe and blew the 120s statement
+            # timeout under evening load — killing the run before a
+            # single chain was fetched.
             cur.execute("""
-                SELECT ticker, close FROM (
-                    SELECT DISTINCT ON (ticker) ticker, close
-                    FROM daily_prices WHERE ticker = ANY(%s)
-                    ORDER BY ticker, trade_date DESC
-                ) x
+                SELECT t.ticker, d.close
+                FROM unnest(%s::text[]) AS t(ticker)
+                JOIN LATERAL (
+                    SELECT close FROM daily_prices
+                    WHERE ticker = t.ticker
+                    ORDER BY trade_date DESC LIMIT 1
+                ) d ON true
             """, (sorted(names),))
             closes = dict(cur.fetchall())
-        log.info(f"[options] IV snapshot over {len(closes)} names")
+    finally:
+        conn.close()
+    log.info(f"[options] IV snapshot over {len(closes)} names")
 
-        def _one(t):
-            snap = atm_iv_snapshot(t, float(closes[t]))
-            return (t, snap) if snap else None
+    def _one(t):
+        snap = atm_iv_snapshot(t, float(closes[t]))
+        return (t, snap) if snap else None
 
-        rows = []
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            futs = {ex.submit(_one, t): t for t in closes}
-            for f in as_completed(futs):
-                try:
-                    r = f.result()
-                    if r:
-                        rows.append(r)
-                except Exception:
-                    pass
-        with conn.cursor() as cur:
-            for t, s in rows:
-                cur.execute("""
+    rows = []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {ex.submit(_one, t): t for t in closes}
+        for f in as_completed(futs):
+            try:
+                r = f.result()
+                if r:
+                    rows.append(r)
+            except Exception:
+                pass
+    # Fresh connection for the write: the chain fetches take minutes, and
+    # a connection held idle across that window is exactly the kind the
+    # pooler reaps — which would lose the night's snapshots at the last
+    # step. Setup conn is closed above; this one lives only for the write.
+    if rows:
+        as_of = iv_session_date()
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.executemany("""
                     INSERT INTO iv_history (ticker, as_of, atm_iv, call_oi, put_oi)
-                    VALUES (%s, CURRENT_DATE, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (ticker, as_of) DO UPDATE SET
                         atm_iv = EXCLUDED.atm_iv, call_oi = EXCLUDED.call_oi,
                         put_oi = EXCLUDED.put_oi
-                """, (t, s["atm_iv"], s["call_oi"], s["put_oi"]))
-        conn.commit()
-        log.info(f"[options] IV snapshot stored {len(rows)} names")
-        return {"stored": len(rows), "universe": len(closes)}
-    finally:
-        conn.close()
+                """, [(t, as_of, s["atm_iv"], s["call_oi"], s["put_oi"])
+                      for t, s in rows])
+            conn.commit()
+        finally:
+            conn.close()
+    log.info(f"[options] IV snapshot stored {len(rows)} names")
+    return {"stored": len(rows), "universe": len(closes)}
 
 
 def iv_rank(conn, ticker: str):

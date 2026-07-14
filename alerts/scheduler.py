@@ -647,6 +647,50 @@ def _seed_momentum_if_empty():
         log.warning(f"[momentum] seed skipped: {e}")
 
 
+def _seed_iv_snapshot_if_missing():
+    """Deploy backstop for the 5:35 PM IV snapshot: if the just-closed
+    session has no iv_history rows, run the snapshot now. Options don't
+    trade overnight, so from the close until the next open the chain
+    still shows that session's quotes — the snapshot stamps
+    iv_session_date(), not the wall-clock date, so even a midnight
+    deploy banks the right day. A crashed nightly job doesn't have to
+    cost a day of IV-rank history."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        mins = now.hour * 60 + now.minute
+        # After-hours through pre-open: 4:10 PM onward, or before 9:00 AM.
+        if not (mins >= 16 * 60 + 10 or mins < 9 * 60):
+            return
+        from analysis.options_picker import iv_session_date, run_iv_snapshot
+        session = iv_session_date()
+        try:
+            from screen.market_calendar import is_trading_day
+            if not is_trading_day(session):
+                return
+        except TypeError:
+            pass   # calendar helper takes no args on older versions
+        except Exception:
+            pass
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM iv_history WHERE as_of = %s "
+                            "LIMIT 1", (session,))
+                have = cur.fetchone() is not None
+        finally:
+            conn.close()
+        if have:
+            return
+        log.info(f"[options] IV snapshot missing for {session} — seeding...")
+        res = run_iv_snapshot()
+        log.info(f"[options] IV snapshot seed: {res}")
+    except Exception as e:
+        log.warning(f"[options] IV snapshot seed skipped: {e}")
+
+
 def _run_oscillator_scan_safe(include_daily_weekly: bool = True):
     """Watchtower Oscillator scan, chained after each pattern scan so the
     structural-confluence bucket reads fresh pattern rows. Never raises —
@@ -1016,6 +1060,7 @@ def start_scheduler():
         _seed_pattern_scan_if_stale()
         _seed_oscillator_if_empty()
         _seed_momentum_if_empty()
+        _seed_iv_snapshot_if_missing()
         _seed_oscillator_backtest_if_empty()
         _seed_pattern_backtest_if_empty()
 
