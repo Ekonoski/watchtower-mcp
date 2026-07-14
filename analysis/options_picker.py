@@ -29,7 +29,7 @@ fine on liquid strikes, which is what the OI gate enforces; the broker's
 screen is the final price check at execution.
 """
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -320,6 +320,18 @@ def atm_iv_snapshot(ticker: str, close: float):
     }
 
 
+def iv_session_date() -> date:
+    """The completed session an after-hours IV snapshot belongs to.
+    Options don't trade overnight, so from the 4 PM close until the next
+    open the chain still shows that session's closing quotes — shifting
+    ET back 16 hours maps any time in that window onto the session's
+    date. (The old CURRENT_DATE stamp was UTC: after 8 PM ET it rolled
+    to tomorrow and would have labeled tonight's IV with the wrong day.)"""
+    from zoneinfo import ZoneInfo
+    et = datetime.now(ZoneInfo("America/New_York"))
+    return (et - timedelta(hours=16)).date()
+
+
 def run_iv_snapshot(top_n: int = 500) -> dict:
     """Nightly: store ATM IV + OI for every name with a live pattern (by
     score, bounded) plus the watchlist. This is how Watchtower grows its
@@ -377,16 +389,17 @@ def run_iv_snapshot(top_n: int = 500) -> dict:
     # pooler reaps — which would lose the night's snapshots at the last
     # step. Setup conn is closed above; this one lives only for the write.
     if rows:
+        as_of = iv_session_date()
         conn = _conn()
         try:
             with conn.cursor() as cur:
                 cur.executemany("""
                     INSERT INTO iv_history (ticker, as_of, atm_iv, call_oi, put_oi)
-                    VALUES (%s, CURRENT_DATE, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (ticker, as_of) DO UPDATE SET
                         atm_iv = EXCLUDED.atm_iv, call_oi = EXCLUDED.call_oi,
                         put_oi = EXCLUDED.put_oi
-                """, [(t, s["atm_iv"], s["call_oi"], s["put_oi"])
+                """, [(t, as_of, s["atm_iv"], s["call_oi"], s["put_oi"])
                       for t, s in rows])
             conn.commit()
         finally:

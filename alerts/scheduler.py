@@ -648,38 +648,43 @@ def _seed_momentum_if_empty():
 
 
 def _seed_iv_snapshot_if_missing():
-    """Deploy backstop for the 5:35 PM IV snapshot: if today's rows are
-    missing after the close on a trading day, run it now. Options
-    snapshots still show the session's quotes after hours, so a crashed
-    nightly job doesn't have to cost a day of IV-rank history. Window is
-    4:10-8:00 PM ET — past 8 PM the UTC date rolls over and CURRENT_DATE
-    would stamp the snapshot on the wrong day."""
+    """Deploy backstop for the 5:35 PM IV snapshot: if the just-closed
+    session has no iv_history rows, run the snapshot now. Options don't
+    trade overnight, so from the close until the next open the chain
+    still shows that session's quotes — the snapshot stamps
+    iv_session_date(), not the wall-clock date, so even a midnight
+    deploy banks the right day. A crashed nightly job doesn't have to
+    cost a day of IV-rank history."""
     try:
         from datetime import datetime
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("America/New_York"))
         mins = now.hour * 60 + now.minute
-        if not (16 * 60 + 10 <= mins < 20 * 60):
+        # After-hours through pre-open: 4:10 PM onward, or before 9:00 AM.
+        if not (mins >= 16 * 60 + 10 or mins < 9 * 60):
             return
+        from analysis.options_picker import iv_session_date, run_iv_snapshot
+        session = iv_session_date()
         try:
             from screen.market_calendar import is_trading_day
-            if not is_trading_day():
+            if not is_trading_day(session):
                 return
+        except TypeError:
+            pass   # calendar helper takes no args on older versions
         except Exception:
             pass
         from screen.reversal_screen import _conn
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM iv_history "
-                            "WHERE as_of = CURRENT_DATE LIMIT 1")
+                cur.execute("SELECT 1 FROM iv_history WHERE as_of = %s "
+                            "LIMIT 1", (session,))
                 have = cur.fetchone() is not None
         finally:
             conn.close()
         if have:
             return
-        from analysis.options_picker import run_iv_snapshot
-        log.info("[options] today's IV snapshot missing — seeding...")
+        log.info(f"[options] IV snapshot missing for {session} — seeding...")
         res = run_iv_snapshot()
         log.info(f"[options] IV snapshot seed: {res}")
     except Exception as e:
