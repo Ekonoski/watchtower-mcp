@@ -122,6 +122,71 @@ def _earnings_inside(conn, ticker: str, until: date):
         return None
 
 
+def chain_lite(ticker: str) -> dict:
+    """Chain summary for the drawer's manual Option Projector — works for
+    ANY optionable name, no pattern required. One windowed fetch (5-400
+    DTE, strikes 0.6-1.5x spot), returned compact so the browser can
+    switch expiry/strike instantly without refetching."""
+    from itertools import islice
+    from analysis.polygon_data import get_client
+    from screen.reversal_screen import _conn
+    ticker = ticker.upper().strip()
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT close FROM daily_prices WHERE ticker = %s "
+                        "ORDER BY trade_date DESC LIMIT 1", (ticker,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"error": "no price history for " + ticker}
+    spot = float(row[0])
+    client = get_client()
+    if not client:
+        return {"error": "no polygon client"}
+    today = date.today()
+    contracts = []
+    try:
+        snaps = islice(client.list_snapshot_options_chain(
+            ticker,
+            params={
+                "expiration_date.gte": (today + timedelta(days=5)).isoformat(),
+                "expiration_date.lte": (today + timedelta(days=400)).isoformat(),
+                "strike_price.gte": spot * 0.6,
+                "strike_price.lte": spot * 1.5,
+                "limit": 250,
+            },
+        ), 4000)
+        for s in snaps:
+            det = getattr(s, "details", None)
+            if det is None:
+                continue
+            oi = getattr(s, "open_interest", None)
+            if not oi:
+                continue    # dead strikes just clutter the dropdowns
+            greeks = getattr(s, "greeks", None)
+            day = getattr(s, "day", None)
+            lt = getattr(s, "last_trade", None)
+            price = (getattr(day, "close", None) if day else None) \
+                or (getattr(lt, "price", None) if lt else None)
+            iv = getattr(s, "implied_volatility", None)
+            contracts.append([
+                str(getattr(det, "expiration_date", "")),
+                str(getattr(det, "contract_type", ""))[:1],   # 'c' | 'p'
+                float(getattr(det, "strike_price", 0) or 0),
+                round(float(iv), 4) if iv else None,
+                round(float(price), 2) if price else None,
+                int(oi),
+            ])
+    except Exception as e:
+        log.warning(f"[options] chain_lite {ticker} failed: {e}")
+        return {"error": str(e)[:120]}
+    if not contracts:
+        return {"error": "no open interest on any listed contract"}
+    return {"ticker": ticker, "spot": round(spot, 2), "contracts": contracts}
+
+
 def build_ticket(ticker: str) -> dict:
     """Full ticket for the ticker's best live pattern. Returns {} when
     there's no live pattern; {'error': ...} on data problems."""
