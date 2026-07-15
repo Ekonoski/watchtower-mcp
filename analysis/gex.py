@@ -33,6 +33,7 @@ stamped with iv_session_date() so late-evening runs label the right day.
 """
 import logging
 import math
+import os
 import time
 from datetime import date, timedelta
 
@@ -42,6 +43,8 @@ INDEXES = ("SPY", "QQQ", "IWM", "DIA")
 EXP_WINDOW_DAYS = 120     # gamma beyond ~4 months is noise at this grain
 MAX_CONTRACTS = 6000      # safety cap per underlying
 MIN_CONTRACTS = 50        # below this the chain is too thin to map
+MIN_TOTAL_OI = 5000       # chain-wide OI floor — walls from less are noise
+UNIVERSE_CAP = int(os.environ.get("GEX_UNIVERSE_CAP", "250"))
 RISK_FREE = 0.04
 
 
@@ -129,7 +132,8 @@ def compute_gex(ticker: str, fallback_spot: float = None) -> dict:
     spot, contracts = _fetch_gex_chain(ticker)
     if spot is None:
         spot = fallback_spot
-    if spot is None or len(contracts) < MIN_CONTRACTS:
+    if spot is None or len(contracts) < MIN_CONTRACTS \
+            or sum(c["oi"] for c in contracts) < MIN_TOTAL_OI:
         return {}
     per_strike: dict = {}
     call_side: dict = {}
@@ -187,19 +191,51 @@ def compute_gex(ticker: str, fallback_spot: float = None) -> dict:
     }
 
 
+def _gex_universe(conn) -> list:
+    """Priority-ordered candidate list, capped at UNIVERSE_CAP: indexes,
+    the watchlist, the theme-ETF book, then the screener's biggest names
+    by market cap. The post-fetch liquidity gate (MIN_TOTAL_OI) does the
+    real filtering — a candidate with a dead chain simply stores nothing,
+    so casting a wide-but-capped net here is cheap and honest."""
+    ordered = list(INDEXES)
+    seen = set(ordered)
+    with conn.cursor() as cur:
+        cur.execute("SELECT ticker FROM watchlist WHERE active = true "
+                    "ORDER BY ticker")
+        for (t,) in cur.fetchall():
+            if t not in seen:
+                ordered.append(t)
+                seen.add(t)
+        cur.execute("SELECT DISTINCT ticker FROM etf_theme_map ORDER BY ticker")
+        for (t,) in cur.fetchall():
+            if t not in seen:
+                ordered.append(t)
+                seen.add(t)
+        cur.execute("""
+            SELECT ticker FROM screener_snapshot
+            WHERE market_cap IS NOT NULL
+            ORDER BY market_cap DESC LIMIT 400
+        """)
+        for (t,) in cur.fetchall():
+            if t not in seen:
+                ordered.append(t)
+                seen.add(t)
+    return ordered[:UNIVERSE_CAP]
+
+
 def run_gex_scan() -> dict:
-    """Nightly: indexes + active watchlist names into gex_levels, stamped
-    on the completed session's date."""
+    """Nightly: every liquid-chain name in the capped universe into
+    gex_levels, stamped on the completed session's date. Four chain
+    fetches in flight at a time — ~250 names in roughly 10 minutes."""
     import json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from screen.reversal_screen import _conn
     from analysis.options_picker import iv_session_date
     t0 = time.time()
     conn = _conn()
     try:
+        names = _gex_universe(conn)
         with conn.cursor() as cur:
-            cur.execute("SELECT ticker FROM watchlist WHERE active = true")
-            names = list(INDEXES) + sorted(
-                {r[0] for r in cur.fetchall()} - set(INDEXES))
             cur.execute("""
                 SELECT t.ticker, d.close
                 FROM unnest(%s::text[]) AS t(ticker)
@@ -215,18 +251,22 @@ def run_gex_scan() -> dict:
     as_of = iv_session_date()
     stored, thin = 0, []
     rows = []
-    for t in names:
-        try:
-            g = compute_gex(t, fallback_spot=closes.get(t))
-        except Exception as e:
-            log.warning(f"[gex] {t} failed: {e}")
-            continue
-        if not g:
-            thin.append(t)
-            continue
-        rows.append((t, as_of, g["spot"], g["call_wall"], g["put_wall"],
-                     g["gamma_flip"], g["net_gex_bn"], g["regime"],
-                     json.dumps(g["top_strikes"]), g["contracts"]))
+    log.info(f"[gex] scanning {len(names)} candidates...")
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(compute_gex, t, closes.get(t)): t for t in names}
+        for f in as_completed(futs):
+            t = futs[f]
+            try:
+                g = f.result()
+            except Exception as e:
+                log.warning(f"[gex] {t} failed: {e}")
+                continue
+            if not g:
+                thin.append(t)
+                continue
+            rows.append((t, as_of, g["spot"], g["call_wall"], g["put_wall"],
+                         g["gamma_flip"], g["net_gex_bn"], g["regime"],
+                         json.dumps(g["top_strikes"]), g["contracts"]))
     if rows:
         conn = _conn()
         try:
@@ -251,4 +291,5 @@ def run_gex_scan() -> dict:
             conn.close()
     log.info(f"[gex] stored {stored} names for {as_of} "
              f"({len(thin)} thin/skipped) in {time.time()-t0:.0f}s")
-    return {"stored": stored, "as_of": str(as_of), "thin": thin}
+    return {"stored": stored, "as_of": str(as_of),
+            "thin_count": len(thin), "thin_sample": thin[:15]}
