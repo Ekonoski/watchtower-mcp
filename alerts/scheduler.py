@@ -278,6 +278,20 @@ def run_scheduled_scan(force: bool = False):
         except Exception as e:
             log.warning(f"[scheduler] Watchlist levels error (non-fatal): {e}")
 
+        # Gamma flip crosses: an index switching dealer-hedging regimes
+        # since the last scan. Rare, high-context; rides the normal
+        # pipeline like the level alerts above.
+        try:
+            from analysis.gex import build_gamma_flip_alerts
+            gfa = build_gamma_flip_alerts()
+            if gfa:
+                results.extend(gfa)
+                log.info(f"[scheduler] Gamma flips: "
+                         + ", ".join(f"{r['ticker']} {r['signal_type']}"
+                                     for r in gfa))
+        except Exception as e:
+            log.warning(f"[scheduler] Gamma flip error (non-fatal): {e}")
+
         # Pattern triggers: forming chart patterns (inverse H&S, flags,
         # triangles, wedges…) whose neckline/trigger line was crossed since
         # the last scan. Same signal-shaped ride through the pipeline.

@@ -223,6 +223,86 @@ def _gex_universe(conn) -> list:
     return ordered[:UNIVERSE_CAP]
 
 
+# Per-process flip baseline; resets on deploy (first scan after a restart
+# just re-baselines — no false crosses). Same pattern as watchlist levels.
+_flip_state: dict = {}
+
+
+def build_gamma_flip_alerts() -> list:
+    """Signal-shaped rows when an index crosses its gamma flip since the
+    previous scan — the regime tripwire. A reclaim means dealer hedging
+    turns stabilizing; a loss means it starts amplifying moves. Rides the
+    normal alert pipeline (dashboard, email gating, alert_log tracking).
+    Prices are the delayed feed's — ~15 min behind the tape, labeled so
+    in the rationale; goes instant with the real-time upgrade."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (ticker) ticker, gamma_flip,
+                       put_wall, call_wall
+                FROM gex_levels
+                WHERE ticker = ANY(%s) AND gamma_flip IS NOT NULL
+                ORDER BY ticker, as_of DESC
+            """, (list(INDEXES),))
+            flips = {r[0]: (float(r[1]),
+                            float(r[2]) if r[2] is not None else None,
+                            float(r[3]) if r[3] is not None else None)
+                     for r in cur.fetchall()}
+    finally:
+        conn.close()
+    if not flips:
+        return []
+    try:
+        from analysis.news_scanner import _fetch_snapshot_map
+        snaps = _fetch_snapshot_map(sorted(flips))
+    except Exception as e:
+        log.warning(f"[gex] flip snapshot fetch failed: {e}")
+        return []
+    rows = []
+    for t in sorted(flips):
+        flip, pw, cw = flips[t]
+        snap = snaps.get(t) or {}
+        price = snap.get("price")
+        if not price:
+            continue
+        price = float(price)
+        above = price >= flip
+        prev = _flip_state.get(t)
+        _flip_state[t] = above
+        if prev is None or prev == above:
+            continue   # first sighting baselines; no change = no alert
+        if above:
+            sig = "GAMMA_RECLAIM"
+            msg = (f"reclaimed its gamma flip ${flip:,.2f} — dealer hedging "
+                   f"turns stabilizing (pinning tape)"
+                   + (f"; walls ${pw:,.0f}/${cw:,.0f}" if pw and cw else ""))
+        else:
+            sig = "GAMMA_SLIP"
+            msg = (f"lost its gamma flip ${flip:,.2f} — dealer hedging now "
+                   f"amplifies moves (slippery tape)"
+                   + (f"; next dealer support ~${pw:,.0f} put wall"
+                      if pw else ""))
+        rows.append({
+            "ticker": t,
+            "sleeve": "gamma_flip",
+            "signal_type": sig,
+            "score": 80.0,
+            "rationale": (f"Gamma regime: {t} {msg} "
+                          f"(delayed feed, now ${price:,.2f})")[:200],
+            "current_price": price,
+            "change_pct": round(float(snap.get("change_pct") or 0), 2),
+            "vol_pace_ratio": round(float(snap.get("vol_ratio") or 0), 2),
+            "today_volume": int(snap.get("volume") or 0),
+            "gap_pct": 0.0,
+            "above_vwap": above,
+            "company_name": "",
+            "sector": "",
+        })
+    return rows
+
+
 def run_gex_scan() -> dict:
     """Nightly: every liquid-chain name in the capped universe into
     gex_levels, stamped on the completed session's date. Four chain
