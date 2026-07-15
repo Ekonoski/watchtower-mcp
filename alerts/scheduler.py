@@ -843,19 +843,12 @@ def _seed_pattern_backtest_if_empty():
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM pattern_backtest "
-                            "WHERE bt_version >= %s LIMIT 1", (BT_VERSION,))
-                stale = cur.fetchone() is None
-                need = stale
-                if not stale:
-                    # v2 rows exist — but was the run interrupted? A run
-                    # that finished has recent breakouts (within ~40 days
-                    # of the data edge); a truncated one usually died in
-                    # the alphabet and left the tail unscanned. Cheap
-                    # heuristic: rerun if fewer than 500 v2 rows exist.
-                    cur.execute("SELECT count(*) FROM pattern_backtest "
-                                "WHERE bt_version >= %s", (BT_VERSION,))
-                    need = (cur.fetchone() or [0])[0] < 500
+                # Re-fire until the run has written its completion marker —
+                # an interrupted run resumes (already-stored names skip).
+                cur.execute("SELECT 1 FROM scheduler_job_claims "
+                            "WHERE job_name = %s LIMIT 1",
+                            (f"pattern_bt_v{BT_VERSION}_complete",))
+                need = cur.fetchone() is None
         finally:
             conn.close()
         if need:

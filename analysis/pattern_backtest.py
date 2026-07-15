@@ -246,6 +246,18 @@ def run_pattern_backtest() -> dict:
         if len(universe) > SAMPLE:
             stride = len(universe) / SAMPLE
             universe = [universe[int(i * stride)] for i in range(SAMPLE)]
+        with conn.cursor() as cur:
+            # Resume: a deploy mid-run restarts this thread; skip names the
+            # interrupted run already stored (eventless names re-scan — a
+            # little waste beats a silently unscanned tail).
+            cur.execute("SELECT DISTINCT ticker FROM pattern_backtest "
+                        "WHERE bt_version = %s", (BT_VERSION,))
+            done = {r[0] for r in cur.fetchall()}
+        if done:
+            before = len(universe)
+            universe = [t for t in universe if t not in done]
+            log.info(f"[patterns] backtest resuming: {before - len(universe)} "
+                     f"names already stored, {len(universe)} to go")
         spy_above = _spy_regime_map(conn)
         log.info(f"[patterns] backtest v{BT_VERSION} replay over "
                  f"{len(universe)} names (step {STEP} bars, "
@@ -286,6 +298,15 @@ def run_pattern_backtest() -> dict:
             if i % 600 == 0 and i:
                 log.info(f"[patterns] backtest {i}/{len(universe)} names, "
                          f"{total} breakouts so far")
+        with conn.cursor() as cur:
+            # Permanent completion marker — the seed re-fires until this
+            # exists, so an interrupted run always resumes on next deploy.
+            cur.execute("""
+                INSERT INTO scheduler_job_claims (job_name, run_date)
+                VALUES (%s, CURRENT_DATE)
+                ON CONFLICT (job_name, run_date) DO NOTHING
+            """, (f"pattern_bt_v{BT_VERSION}_complete",))
+        conn.commit()
         log.info(f"[patterns] backtest v{BT_VERSION} stored {total} breakouts "
                  f"in {time.time() - t0:.0f}s")
         return {"breakouts": total, "tickers": len(universe),
