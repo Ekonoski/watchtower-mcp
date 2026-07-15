@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 12
+ENGINE_VERSION = 13   # v13: diamond top/bottom (two-regime pivot detector)
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -79,6 +79,7 @@ PATTERN_NAMES = {
     "bull_flag": "Bull Flag", "bear_flag": "Bear Flag",
     "asc_triangle": "Asc Triangle", "desc_triangle": "Desc Triangle",
     "falling_wedge": "Falling Wedge", "rising_wedge": "Rising Wedge",
+    "diamond_top": "Diamond Top", "diamond_bottom": "Diamond Bottom",
     "cup_handle": "Cup & Handle",
     "range_breakout": "Range Breakout", "range_breakdown": "Range Breakdown",
     "ema_bounce": "EMA 8/13 Bounce", "ema_reject": "EMA 8/13 Reject",
@@ -813,6 +814,139 @@ def _det_rising_wedge(ctx):
 
 # ── Cup & handle ─────────────────────────────────────────────────────────────
 
+def _det_diamond(ctx, direction: str):
+    """Diamond: swings EXPAND into the widest point (broadening half —
+    higher highs AND lower lows), then CONTRACT out of it (lower highs AND
+    higher lows). Two pivot regimes in sequence — the last classical
+    pattern to join the engine and the strictest-gated one, because a
+    sloppy diamond detector calls every messy consolidation a diamond.
+    Gates: the bulge (apex high + valley low) must sit in the MIDDLE band
+    of the span (an edge apex is a triangle/top — their detectors own
+    those); both halves must show NET expansion/contraction with pivots
+    ordered within noise tolerance; real height; real trend INTO it; v10
+    time symmetry between halves. Trigger = the last contracting pivot on
+    the breakout side (spike-resistant, engine convention); measured move
+    = full pattern height projected from the trigger. QQQ's Jul-2026
+    daily diamond top is the reference chart."""
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    bearish = direction == "bearish"
+    min_h = 0.05 * s          # pattern height, fraction of price
+    min_exp = 0.01 * s        # net expansion/contraction per side
+    tol = 0.005               # pivot-ordering noise tolerance
+    # Wedge lesson (v11): a fixed lookback reaches into whatever came
+    # before the pattern and poisons the middle-band and monotonicity
+    # checks. Try nested spans, widest first — the first clean diamond
+    # wins.
+    for span in (cfg["max_width"], cfg["max_width"] // 2,
+                 cfg["max_width"] // 3, 40):
+        r = _diamond_in_window(ctx, direction, span, min_h, min_exp, tol)
+        if r:
+            return r
+    return None
+
+
+def _diamond_in_window(ctx, direction, span, min_h, min_exp, tol):
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    bearish = direction == "bearish"
+    win_start = max(cfg["pivot_k"], (n - 1) - span)
+    H = [(i, p) for i, p in ctx["phighs"] if i >= win_start]
+    L = [(i, p) for i, p in ctx["plows"] if i >= win_start]
+    if len(H) < 3 or len(L) < 3:
+        return None
+    a_idx, a_val = max(H, key=lambda t: t[1])      # apex high
+    v_idx, v_val = min(L, key=lambda t: t[1])      # valley low
+    hgt = a_val - v_val
+    if v_val <= 0 or hgt / ctx["last"] < min_h:
+        return None
+    start = min(H[0][0], L[0][0])
+    last_piv = max(H[-1][0], L[-1][0])
+    width = last_piv - start
+    if width < 20:
+        return None
+    # The bulge lives in the middle: both extremes inside the 25-75% band
+    # of the span, and near each other (one bulge, not two humps).
+    for mid in (a_idx, v_idx):
+        pos = (mid - start) / width
+        if not (0.25 <= pos <= 0.75):
+            return None
+    if abs(a_idx - v_idx) > width * 0.45:
+        return None
+    # Broadening left half: net expansion on BOTH sides, pivots ordered
+    # within tolerance (real charts breathe; strict monotonicity is for
+    # textbooks).
+    lh = [p for i, p in H if i <= a_idx]
+    ll = [p for i, p in L if i <= v_idx]
+    if len(lh) < 2 or len(ll) < 2:
+        return None
+    if lh[0] > a_val * (1 - min_exp) or ll[0] < v_val * (1 + min_exp):
+        return None                                   # no real expansion
+    if any(lh[j + 1] < lh[j] * (1 - tol) for j in range(len(lh) - 1)):
+        return None
+    if any(ll[j + 1] > ll[j] * (1 + tol) for j in range(len(ll) - 1)):
+        return None
+    # Contracting right half: mirror — lower highs and higher lows out of
+    # the bulge, with net contraction on both sides.
+    rh = [(i, p) for i, p in H if i >= a_idx]
+    rl = [(i, p) for i, p in L if i >= v_idx]
+    if len(rh) < 2 or len(rl) < 2:
+        return None
+    if rh[-1][1] > a_val * (1 - min_exp) or rl[-1][1] < v_val * (1 + min_exp):
+        return None                                   # no real contraction
+    if any(rh[j + 1][1] > rh[j][1] * (1 + tol) for j in range(len(rh) - 1)):
+        return None
+    if any(rl[j + 1][1] < rl[j][1] * (1 - tol) for j in range(len(rl) - 1)):
+        return None
+    # v10 time symmetry between the halves.
+    lw = max(a_idx, v_idx) - start
+    rw = last_piv - min(a_idx, v_idx)
+    if lw <= 0 or rw <= 0 or not (1 / 3 <= rw / lw <= 3):
+        return None
+    if (n - 1) - last_piv > cfg["recent"]:
+        return None                                   # gone stale
+    # Real trend INTO the pattern: a diamond TOP caps a rally (the run-in
+    # must start well below the valley); a bottom caps a decline.
+    pre = [x for x in (ctx["lows"] if bearish else ctx["highs"])
+           [max(0, start - width):start] if x is not None]
+    if not pre:
+        return None
+    if bearish and min(pre) > v_val * (1 - 0.04 * s):
+        return None
+    if not bearish and max(pre) < a_val * (1 + 0.04 * s):
+        return None
+    if bearish:
+        trigger = rl[-1][1]                # contracting support
+        target = trigger - hgt
+        invalid = rh[-1][1]                # the last lower high overhead
+        anchor_idx, anchor_val = a_idx, a_val
+    else:
+        trigger = rh[-1][1]                # contracting resistance
+        target = trigger + hgt
+        invalid = rl[-1][1]
+        anchor_idx, anchor_val = v_idx, v_val
+    if trigger <= 0 or not (v_val < trigger < a_val):
+        return None
+    status = _status(ctx, last_piv, trigger, direction, target=target)
+    if status is None:
+        return None
+    quality = min(8.0, 4.0 * (hgt / ctx["last"]) / min_h) \
+        + min(8.0, 2.0 * (len(H) + len(L) - 6)) \
+        + (6.0 if 0.6 <= rw / lw <= 1.67 else 2.0)
+    points = {"apex": _pt(ctx, a_idx, a_val), "valley": _pt(ctx, v_idx, v_val),
+              "width_bars": width, "height_pct": round(hgt / ctx["last"] * 100, 2),
+              "_anchor_price": anchor_val}
+    return _mk(ctx, "diamond_top" if bearish else "diamond_bottom",
+               direction, status, trigger, target, invalid,
+               anchor_idx, start, points, quality)
+
+
+def _det_diamond_top(ctx):
+    return _det_diamond(ctx, "bearish")
+
+
+def _det_diamond_bottom(ctx):
+    return _det_diamond(ctx, "bullish")
+
+
 def _det_cup_handle(ctx):
     """Rounded base between two rims at the same level, then a shallow handle
     pause under the rim — breakout over the rim completes it."""
@@ -1131,6 +1265,7 @@ def _det_range_break(ctx):
 DETECTORS = [_det_inverse_hs, _det_hs_top, _det_double_bottom, _det_double_top,
              _det_bull_flag, _det_bear_flag, _det_asc_triangle,
              _det_desc_triangle, _det_falling_wedge, _det_rising_wedge,
+             _det_diamond_top, _det_diamond_bottom,
              _det_cup_handle, _det_range_break,
              _det_ema_bounce, _det_ema_reject]
 
@@ -1405,10 +1540,16 @@ def _forming_patterns() -> dict:
         conn = _conn()
         try:
             with conn.cursor() as cur:
+                # Diamonds are QUARANTINED from intraday trigger alerts
+                # until the honest backtest grades them and the owner has
+                # eyeballed the detections — they show on the Patterns tab
+                # like everything else, but a new detector doesn't get to
+                # page anyone before it earns trust.
                 cur.execute("""
                     SELECT ticker, timeframe, pattern, direction,
                            trigger_price, target, score
                     FROM pattern_scan WHERE status IN ('forming', 'retest')
+                      AND pattern NOT IN ('diamond_top', 'diamond_bottom')
                 """)
                 for t, tf, pat, direction, trig, tgt, score in cur.fetchall():
                     out.setdefault(t, []).append({

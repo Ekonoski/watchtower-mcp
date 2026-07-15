@@ -853,15 +853,19 @@ def _seed_pattern_backtest_if_empty():
     resumes on the next deploy). Feeds 'Est. resolution / DTE'."""
     try:
         from analysis.pattern_backtest import BT_VERSION
+        from analysis.pattern_scan import ENGINE_VERSION
         from screen.reversal_screen import _conn
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                # Re-fire until the run has written its completion marker —
-                # an interrupted run resumes (already-stored names skip).
+                # Re-fire until the current (measurement, engine) pair has
+                # written its completion marker — an engine bump re-grades
+                # every pattern automatically, and an interrupted run
+                # resumes (already-stored names skip).
                 cur.execute("SELECT 1 FROM scheduler_job_claims "
                             "WHERE job_name = %s LIMIT 1",
-                            (f"pattern_bt_v{BT_VERSION}_complete",))
+                            (f"pattern_bt_v{BT_VERSION}_e{ENGINE_VERSION}"
+                             "_complete",))
                 need = cur.fetchone() is None
         finally:
             conn.close()
