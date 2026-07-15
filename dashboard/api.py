@@ -2082,11 +2082,36 @@ def register_routes(mcp) -> None:
             def _member():
                 return "memberships", _ticker_memberships(ticker)
 
-            with ThreadPoolExecutor(max_workers=5) as pool:
+            def _gamma():
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT as_of, spot, call_wall, put_wall,
+                                   gamma_flip, net_gex, regime
+                            FROM gex_levels WHERE ticker = %s
+                            ORDER BY as_of DESC LIMIT 1
+                        """, (ticker,))
+                        r = cur.fetchone()
+                finally:
+                    conn.close()
+                if not r:
+                    return "gamma", None
+                return "gamma", {
+                    "as_of": r[0].isoformat(),
+                    "spot": float(r[1]) if r[1] is not None else None,
+                    "call_wall": float(r[2]) if r[2] is not None else None,
+                    "put_wall": float(r[3]) if r[3] is not None else None,
+                    "gamma_flip": float(r[4]) if r[4] is not None else None,
+                    "net_gex": float(r[5]) if r[5] is not None else None,
+                    "regime": r[6]}
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
                 futures = {pool.submit(fn): name for fn, name in
                            ((_levels, "levels"), (_social, "social"),
                             (_profile, "profile"), (_fair, "fair_value"),
-                            (_member, "memberships"))}
+                            (_member, "memberships"), (_gamma, "gamma"))}
                 for fut, name in futures.items():
                     try:
                         key, val = fut.result(timeout=45)

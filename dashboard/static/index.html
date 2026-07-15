@@ -2675,6 +2675,23 @@ async function openDrawer(ticker) {
   html += renderFairValue(d.fair_value);
   html += renderFundamentals(d.fundamentals);
   html += renderLevels(d.levels, d.levels_error);
+  const gx = d.gamma;
+  if (gx) {
+    const pin = gx.regime === "pinning";
+    html += `<div class="social-box">
+      <b>Gamma (dealer positioning)</b> — <span class="chip ${pin ? "bullish" : "bearish"}" title="above the flip, hedging dampens moves; below it, hedging amplifies them">${esc(gx.regime || "?")}</span>
+      <span class="chip" title="session the chain was read from — OI updates once daily">${esc(gx.as_of)}</span>
+      <div class="grid2" style="margin-top:8px">
+        <div><div class="k">Put wall</div><b class="num">$${fmtNum(gx.put_wall)}</b></div>
+        <div><div class="k">Gamma flip</div><b class="num">$${fmtNum(gx.gamma_flip)}</b></div>
+        <div><div class="k">Call wall</div><b class="num">$${fmtNum(gx.call_wall)}</b></div>
+        <div><div class="k">Net GEX</div><b class="num">${gx.net_gex != null ? (gx.net_gex >= 0 ? "+" : "") + fmtNum(gx.net_gex, 2) + "bn" : "—"}</b></div>
+      </div>
+      <div style="margin-top:6px;color:var(--muted)">${pin
+        ? "Hedging leans against moves — walls act as S/R; fades toward the middle favored."
+        : "Below the flip hedging amplifies moves — respect momentum, wider stops."}</div>
+    </div>`;
+  }
   const s = d.social;
   if (s && s.source !== "unavailable") {
     html += `<div class="social-box">
