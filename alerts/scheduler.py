@@ -647,6 +647,64 @@ def _seed_momentum_if_empty():
         log.warning(f"[momentum] seed skipped: {e}")
 
 
+def run_gex_job():
+    """Nightly gamma-levels compute (walls / flip / net GEX) after the
+    close, once fresh OI has settled. Regime label + S/R candidates for
+    the next session."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("gex_levels"):
+        return
+    try:
+        from analysis.gex import run_gex_scan
+        res = run_gex_scan()
+        log.info(f"[gex] nightly levels: {res}")
+    except Exception as e:
+        log.error(f"[gex] nightly error: {e}")
+
+
+def _seed_gex_if_missing():
+    """Deploy backstop mirroring the IV-snapshot seed: if the completed
+    session has no gamma levels, compute them now (options chains still
+    show the session's OI/greeks after hours)."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        mins = now.hour * 60 + now.minute
+        if not (mins >= 16 * 60 + 10 or mins < 9 * 60):
+            return
+        from analysis.options_picker import iv_session_date
+        from analysis.gex import run_gex_scan
+        session = iv_session_date()
+        try:
+            from screen.market_calendar import is_trading_day
+            if not is_trading_day(session):
+                return
+        except Exception:
+            pass
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM gex_levels WHERE as_of = %s "
+                            "LIMIT 1", (session,))
+                have = cur.fetchone() is not None
+        finally:
+            conn.close()
+        if have:
+            return
+        log.info(f"[gex] levels missing for {session} — seeding...")
+        res = run_gex_scan()
+        log.info(f"[gex] seed: {res}")
+    except Exception as e:
+        log.warning(f"[gex] seed skipped: {e}")
+
+
 def _seed_iv_snapshot_if_missing():
     """Deploy backstop for the 5:35 PM IV snapshot: if the just-closed
     session has no iv_history rows, run the snapshot now. Options don't
@@ -773,26 +831,36 @@ def _seed_oscillator_backtest_if_empty():
 
 
 def _seed_pattern_backtest_if_empty():
-    """One-time pattern time-to-target replay (runs at deploy while the
-    table is empty; ~10 minutes over a 1,500-name sample). Feeds the
-    'Est. resolution / DTE' column on the Patterns tab."""
+    """Deploy-time replay refresh: re-runs whenever the stored rows predate
+    the current measurement rules (BT_VERSION) — the audited failure mode
+    was stats from a retired engine silently surviving version bumps. The
+    v2 run covers ~2,500 names incl. delisted from 2021 on (~1-2h in this
+    background thread; inserts land incrementally, so an interrupted run
+    resumes on the next deploy). Feeds 'Est. resolution / DTE'."""
     try:
+        from analysis.pattern_backtest import BT_VERSION
         from screen.reversal_screen import _conn
         conn = _conn()
         try:
             with conn.cursor() as cur:
-                # Re-run when empty OR when the replay predates the newest
-                # schema/detector (win_1r arrived with engine v7's
-                # vol-normalized EMA bounce; idempotent upsert refreshes
-                # existing rows too).
                 cur.execute("SELECT 1 FROM pattern_backtest "
-                            "WHERE win_1r IS NOT NULL LIMIT 1")
-                need = cur.fetchone() is None
+                            "WHERE bt_version >= %s LIMIT 1", (BT_VERSION,))
+                stale = cur.fetchone() is None
+                need = stale
+                if not stale:
+                    # v2 rows exist — but was the run interrupted? A run
+                    # that finished has recent breakouts (within ~40 days
+                    # of the data edge); a truncated one usually died in
+                    # the alphabet and left the tail unscanned. Cheap
+                    # heuristic: rerun if fewer than 500 v2 rows exist.
+                    cur.execute("SELECT count(*) FROM pattern_backtest "
+                                "WHERE bt_version >= %s", (BT_VERSION,))
+                    need = (cur.fetchone() or [0])[0] < 500
         finally:
             conn.close()
         if need:
             from analysis.pattern_backtest import run_pattern_backtest
-            log.info("[patterns] backtest missing newest detector — replaying...")
+            log.info("[patterns] backtest predates BT_VERSION — replaying...")
             res = run_pattern_backtest()
             log.info(f"[patterns] timing backtest done: {res}")
     except Exception as e:
@@ -1037,6 +1105,15 @@ def start_scheduler():
         id="momentum_session",
         replace_existing=True,
     )
+    # Nightly gamma levels — 5:50 PM ET, after the IV snapshot: walls,
+    # flip, net GEX for indexes + watchlist from the settled chain.
+    scheduler.add_job(
+        run_gex_job,
+        CronTrigger(day_of_week="mon-fri", hour="17", minute="50", timezone=et),
+        id="gex_levels",
+        replace_existing=True,
+    )
+
     # Nightly market history + float refresh feeding relvol/2W/float.
     scheduler.add_job(
         run_ticker_stats_job,
@@ -1061,6 +1138,7 @@ def start_scheduler():
         _seed_oscillator_if_empty()
         _seed_momentum_if_empty()
         _seed_iv_snapshot_if_missing()
+        _seed_gex_if_missing()
         _seed_oscillator_backtest_if_empty()
         _seed_pattern_backtest_if_empty()
 

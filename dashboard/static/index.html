@@ -371,6 +371,7 @@
   <span class="lbl">X PULSE</span>
   <span id="pulse-sent" class="chip">—</span>
   <span id="pulse-mood" class="chip">—</span>
+  <span id="pulse-gamma" title="dealer-gamma regime from last night's option chains — pinning: hedging dampens moves (fade toward walls); slippery: hedging amplifies (respect momentum)"></span>
   <span id="pulse-themes"></span>
   <span id="pulse-tickers"></span>
 </div>
@@ -1719,9 +1720,24 @@ function renderHeader() {
   if (s.scan_running) $("last-scan").textContent += " · scanning…";
 }
 
+async function loadGamma() {
+  try {
+    const g = await api("/api/gamma");
+    const rows = g.gamma || [];
+    if (!rows.length) return;
+    $("pulse-gamma").innerHTML = rows.map(r => {
+      const pin = r.regime === "pinning";
+      return `<span class="chip ${pin ? "bullish" : "bearish"}" title="flip ${r.gamma_flip ? "$" + fmtNum(r.gamma_flip) : "n/a"} · spot $${fmtNum(r.spot)} · walls $${fmtNum(r.put_wall)}-$${fmtNum(r.call_wall)} (${r.as_of})">Γ ${esc(r.ticker)} ${pin ? "PIN" : "SLIP"}</span>`;
+    }).join(" ");
+    if (rows.length) $("pulse").style.display = "flex";
+  } catch {}
+}
+loadGamma();
+
 function renderPulse() {
   const p = (state.snapshot || {}).market_pulse || {};
-  if (!p.overall_sentiment && !(p.top_tickers || []).length) { $("pulse").style.display = "none"; return; }
+  if (!p.overall_sentiment && !(p.top_tickers || []).length
+      && !$("pulse-gamma").innerHTML) { $("pulse").style.display = "none"; return; }
   $("pulse").style.display = "flex";
   const sent = p.overall_sentiment || "—";
   $("pulse-sent").textContent = sent.toUpperCase();

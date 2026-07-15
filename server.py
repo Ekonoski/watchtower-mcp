@@ -1002,6 +1002,77 @@ def watchtower_momentum(scanner: str = "gappers", top_n: int = 15) -> str:
 
 
 @mcp.tool()
+def watchtower_gamma(ticker: str = "SPY") -> str:
+    """
+    Dealer-gamma (GEX) levels computed in-house from the nightly options
+    chain: call wall (rally resistance from dealer hedging), put wall
+    (dip support), gamma flip (above = pinning/mean-reversion tape,
+    below = slippery/trending tape), net GEX, and the top gamma strikes.
+    Session levels — OI updates once daily, so these are marks for the
+    NEXT session, recomputed every evening. Evidence-calibrated use:
+    regime label + S/R candidates, not a return forecast.
+
+    Args:
+        ticker: underlying (default SPY; QQQ/IWM/DIA + watchlist names
+                are computed nightly)
+    """
+    try:
+        import json as _json
+        from screen.reversal_screen import _conn
+        tk = ticker.upper().strip()
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT as_of, spot, call_wall, put_wall, gamma_flip,
+                           net_gex, regime, top_strikes, contracts
+                    FROM gex_levels WHERE ticker = %s
+                    ORDER BY as_of DESC LIMIT 1
+                """, (tk,))
+                row = cur.fetchone()
+                cur.execute("""
+                    SELECT DISTINCT ON (ticker) ticker, regime, gamma_flip, spot
+                    FROM gex_levels WHERE ticker = ANY(%s)
+                    ORDER BY ticker, as_of DESC
+                """, (["SPY", "QQQ", "IWM", "DIA"],))
+                idx = cur.fetchall()
+        finally:
+            conn.close()
+        if not row:
+            return (f"No gamma levels stored for {tk} yet — the nightly "
+                    "job covers SPY/QQQ/IWM/DIA plus watchlist names with "
+                    "liquid chains (5:50 PM ET).")
+        as_of, spot, cw, pw, flip, net, regime, tops, ncon = row
+        f = lambda v: f"${float(v):,.2f}" if v is not None else "n/a"
+        lines = [f"**{tk} gamma levels** (session {as_of}, "
+                 f"{ncon} contracts, spot {f(spot)})", ""]
+        lines.append(f"- Call wall {f(cw)} · Put wall {f(pw)} · "
+                     f"Gamma flip {f(flip)}")
+        lines.append(f"- Net GEX {float(net):+,.2f}bn per 1% move → "
+                     f"**{regime or 'n/a'}** tape "
+                     + ("(hedging dampens moves — fade edges toward walls)"
+                        if regime == "pinning" else
+                        "(hedging amplifies moves — respect momentum, wider stops)"
+                        if regime == "slippery" else ""))
+        if tops:
+            ts = tops if isinstance(tops, list) else _json.loads(tops)
+            lines.append("- Top gamma strikes: " + ", ".join(
+                f"{t_['strike']:g} ({t_['gex_bn']:+.2f}bn)" for t_ in ts[:5]))
+        if idx:
+            lines.append("")
+            lines.append("Index regimes: " + " · ".join(
+                f"{t_} {r_ or '?'}" + (f" (flip {float(fl):,.0f})" if fl else "")
+                for t_, r_, fl, _ in idx))
+        lines.append("")
+        lines.append("Walls/flip are computed from overnight OI — session "
+                     "marks, not live. Confirm on the tape before treating "
+                     "a wall as S/R.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error reading gamma levels: {e}"
+
+
+@mcp.tool()
 def watchtower_option_ticket(ticker: str) -> str:
     """
     Turn a ticker's best live pattern into a concrete options ticket:

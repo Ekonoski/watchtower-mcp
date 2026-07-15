@@ -2383,6 +2383,43 @@ def register_routes(mcp) -> None:
             return JSONResponse({"tiles": [], "count": 0, "error": str(e)[:160]})
         return JSONResponse(data)
 
+    @mcp.custom_route("/api/gamma", methods=["GET"])
+    async def gamma(request: Request):
+        """Latest dealer-gamma regime per index — feeds the pulse-bar chip."""
+        if not _is_authed(request):
+            return _unauthorized()
+
+        def _rows():
+            from screen.reversal_screen import _conn
+            conn = _conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT DISTINCT ON (ticker) ticker, as_of, spot,
+                               call_wall, put_wall, gamma_flip, net_gex, regime
+                        FROM gex_levels
+                        WHERE ticker = ANY(%s)
+                        ORDER BY ticker, as_of DESC
+                    """, (["SPY", "QQQ"],))
+                    return [
+                        {"ticker": r[0], "as_of": r[1].isoformat(),
+                         "spot": float(r[2]) if r[2] is not None else None,
+                         "call_wall": float(r[3]) if r[3] is not None else None,
+                         "put_wall": float(r[4]) if r[4] is not None else None,
+                         "gamma_flip": float(r[5]) if r[5] is not None else None,
+                         "net_gex": float(r[6]) if r[6] is not None else None,
+                         "regime": r[7]}
+                        for r in cur.fetchall()
+                    ]
+            finally:
+                conn.close()
+
+        try:
+            rows = await asyncio.to_thread(_rows)
+        except Exception:
+            rows = []
+        return JSONResponse({"gamma": rows})
+
     @mcp.custom_route("/api/vantage/lookup", methods=["GET"])
     async def vantage_lookup(request: Request):
         if not _is_authed(request):
