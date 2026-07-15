@@ -2948,7 +2948,8 @@ function _renderProj() {
     </div>`;
   }
   let rows = "";
-  for (const { p, label } of lvls) {
+  lvls.forEach((lv, ri) => {
+    const { p, label } = lv;
     let cells = "";
     for (const hd of hz) {
       const px = _bsPrice(p, +strike, Math.max(dte - hd, 0) / 365, 0.04, +iv, type);
@@ -2959,9 +2960,13 @@ function _renderProj() {
         <b>$${px.toFixed(2)}</b><br><span style="font-size:10.5px;color:${pct >= 0 ? "var(--green)" : "var(--red)"}">${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%</span></td>`;
     }
     const isNow = label === "Now";
+    // Your added rows get an ×; the system rows are the trade plan and stay.
+    const rm = lv.custom
+      ? ` <button data-rml="${ri}" title="remove this level" style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px;line-height:1">×</button>`
+      : "";
     rows += `<tr><td style="padding:5px 10px;white-space:nowrap;${isNow ? "color:var(--yellow);font-weight:600" : ""}">
-      $${(+p).toFixed(2)} <span style="font-size:10.5px;color:${isNow ? "var(--yellow)" : "var(--muted)"}">${esc(label)}</span></td>${cells}</tr>`;
-  }
+      $${(+p).toFixed(2)} <span style="font-size:10.5px;color:${isNow ? "var(--yellow)" : "var(--muted)"}">${esc(label)}</span>${rm}</td>${cells}</tr>`;
+  });
   box.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:8px">
     <b>Projector</b> <span class="num">${esc(legLabel)} $${strike} ${type} ${esc(exp)}</span>
     <span style="color:var(--muted)">· IV ${(iv * 100).toFixed(0)}% · prem $${(+prem).toFixed(2)}</span>${toggle}
@@ -2994,14 +2999,22 @@ function _renderProj() {
     const ps = document.getElementById("pc-strike");
     if (ps) ps.onchange = () => { cu.sel.strike = parseFloat(ps.value); _renderProj(); };
   }
+  box.querySelectorAll("[data-rml]").forEach(b => b.onclick = () => {
+    _proj.lvls.splice(+b.dataset.rml, 1);
+    _renderProj();
+  });
   const addBtn = document.getElementById("proj-add-btn");
   if (addBtn) addBtn.onclick = () => {
     const v = parseFloat(document.getElementById("proj-add").value);
-    if (v && v > 0) {
-      _proj.lvls.push({ p: v, label: "Custom" });
-      _proj.lvls.sort((a, b) => b.p - a.p);
-      _renderProj();
+    if (!v || v <= 0) return;
+    // Duplicate guard: within ~0.15% of an existing row = same line.
+    if (_proj.lvls.some(x => Math.abs(x.p - v) <= Math.max(0.02, v * 0.0015))) {
+      toast(`$${v.toFixed(2)} is already on the board`);
+      return;
     }
+    _proj.lvls.push({ p: v, label: "Custom", custom: true });
+    _proj.lvls.sort((a, b) => b.p - a.p);
+    _renderProj();
   };
 }
 function rsColor(rs) { return rs >= 80 ? "var(--green)" : rs >= 60 ? "#9dd44a" : rs >= 40 ? "var(--yellow)" : "var(--red)"; }
