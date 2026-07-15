@@ -2735,9 +2735,10 @@ async function loadOptionTicket(ticker, tok) {
   catch { if (el() && !seqStale("drawer", tok)) el().innerHTML = ""; return; }
   if (seqStale("drawer", tok) || !el()) return;
   if (!t || !t.ticker || t.error) {
-    el().innerHTML = t && t.error
-      ? `<div class="social-box" style="color:var(--muted)">Options: ${esc(t.error)}${t.note ? " — " + esc(t.note) : ""}</div>`
-      : "";                                  // no live pattern → no ticket, stay quiet
+    // No live pattern (or chain trouble) → offer the manual projector:
+    // pick any contract from the real chain, project it at your levels.
+    loadManualProjector(ticker, tok,
+      t && t.error ? `${t.error}${t.note ? " — " + t.note : ""}` : null);
     return;
   }
   const bull = t.direction === "bullish";
@@ -2804,6 +2805,81 @@ function _bsImplied(prem, S, K, T, r, type) {
 }
 let _projGamma = null;
 let _proj = null;
+let _mchain = null;   // manual-projector chain cache for the open ticker
+
+async function loadManualProjector(ticker, tok, ticketErr) {
+  const el = () => document.getElementById("d-opt");
+  if (!el()) return;
+  el().innerHTML = `<div class="social-box" style="color:var(--muted)">Loading option chain…</div>`;
+  let c;
+  try { c = await api("/api/option-chain-lite?ticker=" + encodeURIComponent(ticker)); }
+  catch { if (el() && !seqStale("drawer", tok)) el().innerHTML = ""; return; }
+  if (seqStale("drawer", tok) || !el()) return;
+  if (!c || c.error || !(c.contracts || []).length) {
+    el().innerHTML = `<div class="social-box" style="color:var(--muted)">Options: ${esc((c && c.error) || ticketErr || "no chain")}</div>`;
+    return;
+  }
+  _mchain = c;
+  const expiries = [...new Set(c.contracts.map(x => x[0]))].sort();
+  // Default: nearest expiry >= 30 days out, ATM strike, call side.
+  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  _mchain.sel = { type: "c", exp: expiries.find(e => e >= in30) || expiries[expiries.length - 1] };
+  el().innerHTML = `<div class="social-box"><b>Option Projector</b>
+    <span style="color:var(--muted)">— no live pattern on ${esc(ticker)}; pick your contract, the math does the rest</span>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+      <span class="seg" id="mp-type"><button data-t="c" class="on" style="font-size:11px;padding:3px 9px">CALL</button><button data-t="p" style="font-size:11px;padding:3px 9px">PUT</button></span>
+      <select id="mp-exp" style="font-size:12px"></select>
+      <select id="mp-strike" style="font-size:12px"></select>
+    </div>
+    <div id="d-proj" style="margin-top:8px"></div></div>`;
+  const expSel = document.getElementById("mp-exp");
+  expSel.innerHTML = expiries.map(e => `<option value="${e}"${e === _mchain.sel.exp ? " selected" : ""}>${e}</option>`).join("");
+  expSel.onchange = () => { _mchain.sel.exp = expSel.value; _mFillStrikes(); };
+  document.querySelectorAll("#mp-type button").forEach(b => b.onclick = () => {
+    document.querySelectorAll("#mp-type button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); _mchain.sel.type = b.dataset.t; _mFillStrikes();
+  });
+  _mFillStrikes();
+}
+function _mFillStrikes() {
+  const c = _mchain; if (!c) return;
+  const side = c.contracts.filter(x => x[0] === c.sel.exp && x[1] === c.sel.type && (x[3] || x[4]));
+  const sel = document.getElementById("mp-strike"); if (!sel) return;
+  if (!side.length) { sel.innerHTML = `<option>no strikes</option>`; const b = document.getElementById("d-proj"); if (b) b.innerHTML = ""; return; }
+  side.sort((a, b) => a[2] - b[2]);
+  const atm = side.reduce((best, x) => Math.abs(x[2] - c.spot) < Math.abs(best[2] - c.spot) ? x : best, side[0]);
+  sel.innerHTML = side.map(x =>
+    `<option value="${x[2]}"${x === atm ? " selected" : ""}>$${x[2]}${x[4] != null ? " · $" + x[4].toFixed(2) : ""}${x[5] ? " · OI " + x[5].toLocaleString() : ""}</option>`).join("");
+  sel.onchange = () => _mProject();
+  _mProject();
+}
+function _mProject() {
+  const c = _mchain; if (!c) return;
+  const sel = document.getElementById("mp-strike"); if (!sel) return;
+  const strike = parseFloat(sel.value); if (!strike) return;
+  const row = c.contracts.find(x => x[0] === c.sel.exp && x[1] === c.sel.type && x[2] === strike);
+  if (!row) return;
+  const lvls = [];
+  const push = (p, label) => { p = p != null ? +p : null;
+    if (p && p > 0 && !lvls.some(x => Math.abs(x.p - p) < 0.005)) lvls.push({ p, label }); };
+  push(c.spot, "Now");
+  if (_projGamma) { push(_projGamma.call_wall, "Call wall"); push(_projGamma.gamma_flip, "Γ flip"); push(_projGamma.put_wall, "Put wall"); }
+  // Strongest starred S/R lines from the Levels ladder, near the money.
+  if (_lvlData && !_lvlData.error) {
+    [..._lvlData.resistance || [], ..._lvlData.support || []]
+      .filter(l => (l.stars || 0) >= 4 && l.price > c.spot * 0.7 && l.price < c.spot * 1.4)
+      .sort((a, b) => (b.stars || 0) - (a.stars || 0)).slice(0, 5)
+      .forEach(l => push(l.price, _stars(l.stars).replace(/☆/g, "")));
+  }
+  lvls.sort((a, b) => b.p - a.p);
+  _proj = {
+    t: { direction: c.sel.type === "c" ? "bullish" : "bearish", last_close: c.spot },
+    usable: [{ name: c.sel.type === "c" ? "Call" : "Put", exp: c.sel.exp,
+               leg: { strike, iv: row[3], last: row[4] } }],
+    li: 0, lvls, spot: c.spot,
+  };
+  _renderProj();
+}
 function _initProjector(t) {
   const box = document.getElementById("d-proj");
   if (!box) { _proj = null; return; }

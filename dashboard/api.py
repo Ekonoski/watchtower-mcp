@@ -2408,6 +2408,21 @@ def register_routes(mcp) -> None:
             return JSONResponse({"tiles": [], "count": 0, "error": str(e)[:160]})
         return JSONResponse(data)
 
+    @mcp.custom_route("/api/option-chain-lite", methods=["GET"])
+    async def option_chain_lite(request: Request):
+        """Chain for the manual Option Projector — any ticker, no pattern."""
+        if not _is_authed(request):
+            return _unauthorized()
+        ticker = (request.query_params.get("ticker") or "").upper().strip()
+        if not ticker or len(ticker) > 6:
+            return JSONResponse({"error": "invalid ticker"}, status_code=400)
+        try:
+            from analysis.options_picker import chain_lite
+            data = await asyncio.to_thread(chain_lite, ticker)
+        except Exception as e:
+            data = {"error": str(e)[:120]}
+        return JSONResponse(data)
+
     @mcp.custom_route("/api/gamma", methods=["GET"])
     async def gamma(request: Request):
         """Latest dealer-gamma regime per index — feeds the pulse-bar chip."""
