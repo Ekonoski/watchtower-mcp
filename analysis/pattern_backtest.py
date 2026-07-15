@@ -2,26 +2,44 @@
 Chart-pattern backtest: how long does each pattern take to play out?
 
 Replays the SAME detectors the live scanner uses (analysis.pattern_scan.
-detect_patterns) as-of every Nth historical session, so each detection is
-exactly what the scanner would have shown that evening — same tolerances,
-same spent-move rule, same freshness windows, no lookahead. Every fresh
-BREAKOUT found in the replay is tracked forward to its resolution:
+detect_patterns) as-of historical sessions, so each detection is exactly
+what the scanner would have shown that evening. Every fresh BREAKOUT is
+tracked forward to its resolution:
 
   outcome 'target'  — measured-move objective touched (bars_to_outcome)
   outcome 'invalid' — closed through the invalidation level first
   outcome 'open'    — neither within the horizon (130 bars) / end of data
 
-The point is Eric's options question: median bars-from-breakout-to-target
-per pattern is the empirical answer to "what expiry do I buy?" — the
-Patterns tab converts these bar counts into an estimated-resolution window
-and a suggested DTE. Daily bars only in v1 (weekly history is too short
-for a sample; the bar-count stats transfer across timeframes on the
-fractal assumption — a pattern takes similar BAR counts at any scale).
+BT_VERSION 2 — the measurement rules, hardened after a five-way
+adversarial audit of v1 found its stats inflated:
+  * ENTRY IS THE NEXT BAR'S OPEN after the evening the cross printed —
+    never the trigger price. v1 booked fills at the trigger even though
+    the signal is only knowable at that bar's close; on tight-stop EMA
+    patterns that gifted ~0.5R per trade and ~20% of "entries" were
+    already past +1R. All R math (stop distance, +1R trim, realized_r)
+    anchors at entry_price now.
+  * NO BACKDATING: a breakout is entered when the replay grid first sees
+    it (cross within the last STEP bars), not excavated up to 7 bars back
+    — v1's backdating let the status filter silently drop breakouts that
+    had already thrown back, censoring post-entry losers.
+  * POINT-IN-TIME UNIVERSE: every ticker with enough history in
+    daily_prices — including delisted names — not today's survivor
+    screen. (Residual bias remains where delisted histories are missing
+    from daily_prices; backfill narrows it over time.)
+  * FULL WINDOW: history from 2021-06 (all we store), so the 2022 bear
+    is in-sample instead of structurally excluded.
+  * EPISODE DEDUP: one event per (ticker, pattern) until the prior event
+    resolves — evolving formations no longer emit correlated duplicates.
+  * REGIME TAG: each event stores spy_above (SPY vs its 200-day SMA on
+    entry day) so every stat can be split by tape.
+  * realized_r records the true loss size on stops (close through the
+    level, not -1R), and engine_version/bt_version stamp provenance;
+    the table is truncated when BT_VERSION advances so retired-engine
+    rows can never blend in again.
 
-Results land in pattern_backtest (migration 0068), UNIQUE per
-(ticker, pattern, breakout_date) — idempotent to re-run. Seeds once at
-deploy while the table is empty; ~1,500-name deterministic sample of the
-universe (PATTERN_BT_SAMPLE env overrides), roughly 10 minutes.
+Results land in pattern_backtest, UNIQUE per (ticker, pattern,
+breakout_date) — idempotent to re-run, inserted incrementally per batch
+so an interrupted run keeps its progress.
 """
 import logging
 import os
@@ -30,8 +48,10 @@ from datetime import date
 
 log = logging.getLogger(__name__)
 
-STEP = int(os.environ.get("PATTERN_BT_STEP", "5"))        # as-of stride, bars
-SAMPLE = int(os.environ.get("PATTERN_BT_SAMPLE", "1500"))  # universe sample
+BT_VERSION = 2
+STEP = int(os.environ.get("PATTERN_BT_STEP", "2"))        # as-of stride, bars
+SAMPLE = int(os.environ.get("PATTERN_BT_SAMPLE", "2500"))  # universe sample
+HISTORY_START = "2021-06-01"   # everything daily_prices has
 HORIZON = 130          # bars to wait for resolution before calling it open
 WINDOW = 420           # bars of history per as-of detection (covers max lookback)
 MIN_BARS = 90
@@ -45,9 +65,9 @@ def _bars_for(conn, tickers: list) -> dict:
                    COALESCE(high, close), COALESCE(low, close), close,
                    COALESCE(volume, 0)
             FROM daily_prices
-            WHERE ticker = ANY(%s) AND trade_date >= CURRENT_DATE - 1200
+            WHERE ticker = ANY(%s) AND trade_date >= %s
             ORDER BY ticker, trade_date
-        """, (tickers,))
+        """, (tickers, HISTORY_START))
         rows = cur.fetchall()
     out: dict = {}
     for t, d, o, h, lo, c, v in rows:
@@ -74,17 +94,21 @@ def _breakout_idx(bars: list, as_of: int, trigger: float, direction: str,
     return as_of
 
 
-def _resolve(bars: list, j: int, trigger: float, target: float, invalid,
+def _resolve(bars: list, j: int, entry: float, target: float, invalid,
              direction: str):
-    """Walk forward from the breakout bar: measured-move touch vs a CLOSE
-    through the invalidation level (closes define structure; wicks don't).
-    Same-bar ties go to 'invalid' — the conservative read. Also tracks the
-    FIRST TRIM: did +1R (trigger plus one stop-distance) get touched before
-    a stop-close — the win metric for trim-along-the-way management."""
-    r1 = None
-    if invalid is not None and abs(trigger - invalid) > 1e-9:
-        r1 = trigger + (trigger - invalid) if direction == "bullish" \
-            else trigger - (invalid - trigger)
+    """Walk forward from the ENTRY bar (j+1, filled at its open): measured-
+    move touch vs a CLOSE through the invalidation level (closes define
+    structure; wicks don't). Same-bar ties go to 'invalid' — the
+    conservative read. +1R is one stop-distance beyond the ENTRY price —
+    the first executable fill — not the trigger; that half-R of "free"
+    fill was v1's largest inflation. realized_r on stops records the true
+    loss (stop-close vs entry, in R), which routinely exceeds -1R.
+    Returns (outcome, bars_to_outcome, win_1r, bars_to_1r, realized_r,
+    end_index)."""
+    r1 = risk = None
+    if invalid is not None and abs(entry - invalid) > 1e-9:
+        risk = abs(entry - invalid)
+        r1 = entry + risk if direction == "bullish" else entry - risk
     win_1r = False if r1 is not None else None
     bars_1r = None
     end = min(len(bars), j + 1 + HORIZON)
@@ -99,39 +123,56 @@ def _resolve(bars: list, j: int, trigger: float, target: float, invalid,
             if (b["high"] >= r1 if direction == "bullish" else b["low"] <= r1):
                 win_1r, bars_1r = True, i - j
         if stopped:
-            return "invalid", i - j, win_1r, bars_1r
+            rr = None
+            if risk:
+                rr = round((b["close"] - entry) / risk
+                           if direction == "bullish"
+                           else (entry - b["close"]) / risk, 3)
+            return "invalid", i - j, win_1r, bars_1r, rr, i
         if hit:
             if win_1r is False:
                 win_1r, bars_1r = True, i - j
-            return "target", i - j, win_1r, bars_1r
-    return "open", None, win_1r, bars_1r
+            rr = None
+            if risk:
+                rr = round(abs(target - entry) / risk, 3)
+            return "target", i - j, win_1r, bars_1r, rr, i
+    return "open", None, win_1r, bars_1r, None, end - 1
 
 
-def _replay_ticker(bars: list) -> list:
+def _replay_ticker(bars: list, spy_above: dict) -> list:
     """All fresh breakouts the live scanner would have flagged for one
-    ticker, each tracked to resolution. Dedupe on the breakout bar."""
+    ticker, entered at the NEXT bar's open, each tracked to resolution.
+    One live episode per pattern at a time (no correlated duplicates)."""
     from analysis.pattern_scan import detect_patterns, TF
     n = len(bars)
     if n < MIN_BARS + 10:
         return []
     break_recent = TF["daily"]["break_recent"]
     dates = [b["date"] for b in bars]
-    seen = set()
+    active: dict = {}   # pattern -> index its last episode resolved at
     out = []
-    for as_of in range(MIN_BARS, n, STEP):
+    for as_of in range(MIN_BARS, n - 1, STEP):
         window = bars[max(0, as_of + 1 - WINDOW):as_of + 1]
         for det in detect_patterns(window, "daily"):
             if det["status"] != "breakout":
                 continue
             j = _breakout_idx(bars, as_of, det["trigger_price"],
                               det["direction"], break_recent)
-            key = (det["pattern"], j)
-            if key in seen:
+            # Enter only when the grid FIRST sees the cross (within the
+            # last STEP bars) — no excavating breakouts the status filter
+            # already had hindsight on.
+            if as_of - j >= STEP:
                 continue
-            seen.add(key)
-            outcome, bto, w1, b1 = _resolve(bars, j, det["trigger_price"],
-                                            det["target"], det["invalid_level"],
-                                            det["direction"])
+            pat = det["pattern"]
+            if active.get(pat, -1) >= as_of:
+                continue    # prior episode still running
+            entry = bars[as_of + 1]["open"] or bars[as_of + 1]["close"]
+            if not entry or entry <= 0:
+                continue
+            outcome, bto, w1, b1, rr, end_i = _resolve(
+                bars, as_of, entry, det["target"], det["invalid_level"],
+                det["direction"])
+            active[pat] = end_i
             anchor = det.get("anchor_date")
             width = None
             if anchor is not None:
@@ -141,13 +182,38 @@ def _replay_ticker(bars: list) -> list:
                     pass
             out.append((det["pattern"], det["direction"], anchor, dates[j],
                         width, det["trigger_price"], det["target"],
-                        det["invalid_level"], outcome, bto, w1, b1))
+                        det["invalid_level"], outcome, bto, w1, b1,
+                        round(entry, 4), rr, spy_above.get(dates[as_of])))
+    return out
+
+
+def _spy_regime_map(conn) -> dict:
+    """{trade_date: bool} — SPY close vs its 200-day SMA. None-padded
+    implicitly: dates before 200 bars of history just won't be in the map."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT trade_date, close FROM daily_prices
+            WHERE ticker = 'SPY' AND trade_date >= %s
+            ORDER BY trade_date
+        """, (HISTORY_START,))
+        rows = cur.fetchall()
+    out, window = {}, []
+    for d, c in rows:
+        window.append(float(c))
+        if len(window) > 200:
+            window.pop(0)
+        if len(window) == 200:
+            out[d] = float(c) >= sum(window) / 200.0
     return out
 
 
 def run_pattern_backtest() -> dict:
-    """Replay a deterministic sample of the universe and store results."""
+    """Replay a deterministic sample of every name daily_prices knows —
+    delisted included — and store results incrementally. Truncates the
+    table first when it holds rows from an older BT_VERSION, so retired
+    measurement rules never blend into the stats."""
     from screen.reversal_screen import _conn
+    from analysis.pattern_scan import ENGINE_VERSION
     from psycopg2.extras import execute_values
     conn = _conn()
     t0 = time.time()
@@ -160,46 +226,70 @@ def run_pattern_backtest() -> dict:
             pass
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT ticker FROM screener_snapshot
-                UNION SELECT ticker FROM watchlist WHERE active = true
-            """)
+                SELECT 1 FROM pattern_backtest
+                WHERE bt_version IS NULL OR bt_version < %s LIMIT 1
+            """, (BT_VERSION,))
+            if cur.fetchone():
+                log.info("[patterns] backtest table holds pre-v%d rows — "
+                         "truncating before re-measure", BT_VERSION)
+                cur.execute("TRUNCATE pattern_backtest")
+        conn.commit()
+        with conn.cursor() as cur:
+            # Point-in-time universe: anything with enough history,
+            # including names that later died — not today's screen.
+            cur.execute("""
+                SELECT ticker FROM daily_prices
+                WHERE trade_date >= %s
+                GROUP BY ticker HAVING count(*) >= %s
+            """, (HISTORY_START, MIN_BARS + 10))
             universe = sorted({r[0] for r in cur.fetchall() if r[0]})
         if len(universe) > SAMPLE:
             stride = len(universe) / SAMPLE
             universe = [universe[int(i * stride)] for i in range(SAMPLE)]
-        log.info(f"[patterns] backtest replay over {len(universe)} names "
-                 f"(step {STEP} bars)")
-        rows = []
+        spy_above = _spy_regime_map(conn)
+        log.info(f"[patterns] backtest v{BT_VERSION} replay over "
+                 f"{len(universe)} names (step {STEP} bars, "
+                 f"engine v{ENGINE_VERSION})")
+        total = 0
         for i in range(0, len(universe), 120):
             frames = _bars_for(conn, universe[i:i + 120])
+            rows = []
             for t, bars in frames.items():
                 try:
-                    for ev in _replay_ticker(bars):
-                        rows.append((t,) + ev)
+                    for ev in _replay_ticker(bars, spy_above):
+                        rows.append((t,) + ev + (ENGINE_VERSION, BT_VERSION))
                 except Exception as e:
                     log.debug(f"[patterns] backtest {t} failed: {e}")
+            if rows:
+                with conn.cursor() as cur:
+                    execute_values(cur, """
+                        INSERT INTO pattern_backtest
+                            (ticker, pattern, direction, anchor_date,
+                             breakout_date, base_width_bars, trigger_price,
+                             target, invalid_level, outcome, bars_to_outcome,
+                             win_1r, bars_to_1r, entry_price, realized_r,
+                             spy_above, engine_version, bt_version)
+                        VALUES %s
+                        ON CONFLICT (ticker, pattern, breakout_date) DO UPDATE SET
+                            outcome = EXCLUDED.outcome,
+                            bars_to_outcome = EXCLUDED.bars_to_outcome,
+                            win_1r = EXCLUDED.win_1r,
+                            bars_to_1r = EXCLUDED.bars_to_1r,
+                            entry_price = EXCLUDED.entry_price,
+                            realized_r = EXCLUDED.realized_r,
+                            spy_above = EXCLUDED.spy_above,
+                            engine_version = EXCLUDED.engine_version,
+                            bt_version = EXCLUDED.bt_version
+                    """, rows, page_size=2000)
+                conn.commit()   # incremental — an interrupted run keeps progress
+                total += len(rows)
             if i % 600 == 0 and i:
                 log.info(f"[patterns] backtest {i}/{len(universe)} names, "
-                         f"{len(rows)} breakouts so far")
-        if rows:
-            with conn.cursor() as cur:
-                execute_values(cur, """
-                    INSERT INTO pattern_backtest
-                        (ticker, pattern, direction, anchor_date,
-                         breakout_date, base_width_bars, trigger_price,
-                         target, invalid_level, outcome, bars_to_outcome,
-                         win_1r, bars_to_1r)
-                    VALUES %s
-                    ON CONFLICT (ticker, pattern, breakout_date) DO UPDATE SET
-                        outcome = EXCLUDED.outcome,
-                        bars_to_outcome = EXCLUDED.bars_to_outcome,
-                        win_1r = EXCLUDED.win_1r,
-                        bars_to_1r = EXCLUDED.bars_to_1r
-                """, rows, page_size=2000)
-            conn.commit()
-        log.info(f"[patterns] backtest stored {len(rows)} breakouts "
+                         f"{total} breakouts so far")
+        log.info(f"[patterns] backtest v{BT_VERSION} stored {total} breakouts "
                  f"in {time.time() - t0:.0f}s")
-        return {"breakouts": len(rows), "tickers": len(universe),
+        return {"breakouts": total, "tickers": len(universe),
+                "bt_version": BT_VERSION,
                 "seconds": round(time.time() - t0)}
     finally:
         conn.close()
