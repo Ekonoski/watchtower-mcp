@@ -283,11 +283,17 @@ def refresh_market_history(days: int = 21) -> dict:
     return {"sessions": len(sessions), "tickers": len(rows)}
 
 
+DATA_DELAY_MIN = 15   # our feed lags the tape by this much
+
+
 def _session_now():
-    """('premarket'|'regular'|'closed', fraction of regular session elapsed)."""
+    """('premarket'|'regular'|'closed', fraction of regular session elapsed
+    AS SEEN BY OUR DELAYED FEED — relvol divides today's volume by this, so
+    the fraction must match the data's clock, not the wall clock. The first
+    ~15 minutes after the open are still 'premarket' to the feed."""
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("America/New_York"))
-    mins = now.hour * 60 + now.minute
+    mins = now.hour * 60 + now.minute - DATA_DELAY_MIN
     if mins < 4 * 60 or now.weekday() >= 5:
         return "closed", 0.0
     if mins < 9 * 60 + 30:
@@ -342,7 +348,11 @@ def run_momentum_scan() -> dict:
                 continue
             last = float(getattr(day, "close", 0) or 0) \
                 or float(getattr(mn, "close", 0) or 0) or prev_c
-            vol = float(getattr(day, "volume", 0) or 0)
+            # Delayed feeds leave the day block zeroed until well after the
+            # open; the minute block's accumulated_volume carries today's
+            # running total (pre-market included) the whole time.
+            vol = float(getattr(day, "volume", 0) or 0) \
+                or float(getattr(mn, "accumulated_volume", 0) or 0)
             open_ = float(getattr(day, "open", 0) or 0)
             chg = (last / prev_c - 1) * 100
             gap = ((open_ or last) / prev_c - 1) * 100
