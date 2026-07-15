@@ -2715,6 +2715,7 @@ async function openDrawer(ticker) {
   html += `<div id="d-opt"></div>`;
   html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
   $("d-body").innerHTML = html;
+  _projGamma = d.gamma || null;   // walls/flip feed the option projector rows
   loadOptionTicket(ticker, tok);
   // Membership chips → jump straight into the ETF holdings / theme modals.
   // Bound via data-attributes (not inline onclick) so names with quotes can't
@@ -2766,8 +2767,121 @@ async function loadOptionTicket(ticker, tok) {
   if (iv) h += `<div style="margin-top:6px"><span class="k">IV:</span> ${iv.iv_rank != null ? `rank <b class="num">${iv.iv_rank}</b> (${iv.obs} obs)` : `ATM <b class="num">${(iv.atm_iv * 100).toFixed(0)}%</b> vs realized <b class="num">${(iv.realized_21d * 100).toFixed(0)}%</b>`} — <b>${esc(iv.read)}</b></div>`;
   if (t.earnings) h += `<div style="margin-top:6px;color:var(--yellow)">⚠ Earnings ${esc(t.earnings.date)} ${esc(t.earnings.when || "")} — inside this option's life</div>`;
   if (t.oi_note) h += `<div style="margin-top:6px;color:var(--yellow)">⚠ ${esc(t.oi_note)}</div>`;
+  h += `<div id="d-proj" style="margin-top:10px"></div>`;
   h += `<div style="margin-top:6px;color:var(--muted);font-size:11px">15-min delayed snapshot — confirm live pricing at your broker.</div></div>`;
   el().innerHTML = h;
+  _initProjector(t);
+}
+
+/* ── Option price projector — Black-Scholes repricing of the ticket's leg
+   at every level the system already knows (stop/entry/1R/target/gamma
+   walls). Answers "what is my option worth AT my line, N days from now"
+   so targets and stops get set in premium terms, not guesses. ── */
+function _normCDF(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804014327 * Math.exp(-x * x / 2);
+  const p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return x >= 0 ? 1 - p : p;
+}
+function _bsPrice(S, K, T, r, sig, type) {
+  if (T <= 0 || sig <= 0) return type === "call" ? Math.max(S - K, 0) : Math.max(K - S, 0);
+  const st = sig * Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + sig * sig / 2) * T) / st;
+  const d2 = d1 - st;
+  return type === "call"
+    ? S * _normCDF(d1) - K * Math.exp(-r * T) * _normCDF(d2)
+    : K * Math.exp(-r * T) * _normCDF(-d2) - S * _normCDF(-d1);
+}
+function _bsImplied(prem, S, K, T, r, type) {
+  const intr = type === "call" ? Math.max(S - K, 0) : Math.max(K - S, 0);
+  if (prem <= intr + 1e-6) return null;
+  let lo = 0.001, hi = 5.0;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (_bsPrice(S, K, T, r, mid, type) > prem) hi = mid; else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
+let _projGamma = null;
+let _proj = null;
+function _initProjector(t) {
+  const box = document.getElementById("d-proj");
+  if (!box) { _proj = null; return; }
+  const legs = [];
+  if (t.swing && t.swing.leg) legs.push({ name: "Swing", exp: t.swing.expiry, leg: t.swing.leg });
+  if (t.directional && t.directional.strike) legs.push({ name: "Runner", exp: t.expiry, leg: t.directional });
+  const usable = legs.filter(L => L.leg && L.leg.strike && (L.leg.iv || L.leg.last));
+  const spot = t.last_close;
+  if (!usable.length || !spot) { box.innerHTML = ""; _proj = null; return; }
+  const lvls = [];
+  const push = (p, label) => {
+    p = p != null ? +p : null;
+    if (p && p > 0 && !lvls.some(x => Math.abs(x.p - p) < 0.005)) lvls.push({ p, label });
+  };
+  push(t.target, "Target"); push(t.trim_1r, "1R trim"); push(t.entry, "Entry");
+  push(spot, "Now"); push(t.stop, "Stop");
+  if (_projGamma) {
+    push(_projGamma.call_wall, "Call wall");
+    push(_projGamma.gamma_flip, "Γ flip");
+    push(_projGamma.put_wall, "Put wall");
+  }
+  lvls.sort((a, b) => b.p - a.p);
+  _proj = { t, usable, li: 0, lvls, spot };
+  _renderProj();
+}
+function _renderProj() {
+  const box = document.getElementById("d-proj");
+  if (!box || !_proj) return;
+  const { t, usable, li, lvls, spot } = _proj;
+  const L = usable[li];
+  const type = t.direction === "bullish" ? "call" : "put";
+  const dte = Math.max(1, Math.round((new Date(L.exp + "T16:00:00") - Date.now()) / 86400000));
+  let iv = L.leg.iv, prem = L.leg.last;
+  if (!iv && prem) iv = _bsImplied(+prem, +spot, +L.leg.strike, dte / 365, 0.04, type);
+  if (!prem && iv) prem = _bsPrice(+spot, +L.leg.strike, dte / 365, 0.04, +iv, type);
+  if (!iv || !prem) { box.innerHTML = ""; return; }
+  const hz = [0, Math.max(1, Math.round(dte / 3)), Math.max(2, Math.round(dte * 2 / 3))];
+  const toggle = usable.length > 1
+    ? `<span class="seg" style="margin-left:8px">` + usable.map((u, i) =>
+        `<button data-pl="${i}" class="${i === li ? "on" : ""}" style="font-size:11px;padding:2px 8px">${esc(u.name)}</button>`).join("") + `</span>`
+    : "";
+  let rows = "";
+  for (const { p, label } of lvls) {
+    let cells = "";
+    for (const hd of hz) {
+      const px = _bsPrice(p, +L.leg.strike, Math.max(dte - hd, 0) / 365, 0.04, +iv, type);
+      const pct = (px / prem - 1) * 100;
+      const a = Math.min(Math.abs(pct) / 120, 1) * 0.35 + 0.06;
+      const bg = pct >= 0 ? `rgba(63,182,139,${a.toFixed(2)})` : `rgba(229,103,78,${a.toFixed(2)})`;
+      cells += `<td class="num" style="background:${bg};padding:5px 10px;text-align:right">
+        <b>$${px.toFixed(2)}</b><br><span style="font-size:10.5px;color:${pct >= 0 ? "var(--green)" : "var(--red)"}">${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%</span></td>`;
+    }
+    const isNow = label === "Now";
+    rows += `<tr><td style="padding:5px 10px;white-space:nowrap;${isNow ? "color:var(--yellow);font-weight:600" : ""}">
+      $${(+p).toFixed(2)} <span style="font-size:10.5px;color:${isNow ? "var(--yellow)" : "var(--muted)"}">${esc(label)}</span></td>${cells}</tr>`;
+  }
+  box.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:8px">
+    <b>Projector</b> <span class="num">${esc(L.name)} $${L.leg.strike} ${type} ${esc(L.exp)}</span>
+    <span style="color:var(--muted)">· IV ${(iv * 100).toFixed(0)}% · prem $${(+prem).toFixed(2)}</span>${toggle}
+    <div class="tblwrap" style="margin-top:6px"><table style="border-collapse:collapse;font-size:12.5px;min-width:340px">
+      <thead><tr><th style="text-align:left;padding:4px 10px;color:var(--muted);font-size:10.5px">LEVEL</th>
+      ${hz.map(hd => `<th style="text-align:right;padding:4px 10px;color:var(--muted);font-size:10.5px">${hd === 0 ? "TODAY" : "+" + hd + "d"}</th>`).join("")}</tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div style="margin-top:5px;display:flex;gap:6px;align-items:center">
+      <input type="number" id="proj-add" placeholder="Add level…" style="width:100px;font-size:12px">
+      <button id="proj-add-btn" style="font-size:11px">Add</button>
+      <span style="color:var(--muted);font-size:10.5px;flex:1">Cells = projected option price at that stock level, with that much time gone (theta baked in). Assumes IV holds — a grind-up usually bleeds IV, so fills can come in under; earnings crush it. Math, not a promise.</span>
+    </div></div>`;
+  box.querySelectorAll("[data-pl]").forEach(b => b.onclick = () => { _proj.li = +b.dataset.pl; _renderProj(); });
+  const addBtn = document.getElementById("proj-add-btn");
+  if (addBtn) addBtn.onclick = () => {
+    const v = parseFloat(document.getElementById("proj-add").value);
+    if (v && v > 0) {
+      _proj.lvls.push({ p: v, label: "Custom" });
+      _proj.lvls.sort((a, b) => b.p - a.p);
+      _renderProj();
+    }
+  };
 }
 function rsColor(rs) { return rs >= 80 ? "var(--green)" : rs >= 60 ? "#9dd44a" : rs >= 40 ? "var(--yellow)" : "var(--red)"; }
 function renderRS(m) {
