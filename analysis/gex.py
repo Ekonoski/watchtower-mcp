@@ -120,10 +120,15 @@ def _net_gex_at(contracts: list, spot: float) -> float:
     return total
 
 
-def compute_gex(ticker: str) -> dict:
+def compute_gex(ticker: str, fallback_spot: float = None) -> dict:
     """One underlying: walls, flip, net GEX, top strikes. {} if the chain
-    is too thin or data is missing."""
+    is too thin or data is missing. fallback_spot covers plans where the
+    chain snapshot's nested underlying quote is not populated (ours) —
+    same reason options_picker always passes the close in from
+    daily_prices instead of trusting underlying_asset.price."""
     spot, contracts = _fetch_gex_chain(ticker)
+    if spot is None:
+        spot = fallback_spot
     if spot is None or len(contracts) < MIN_CONTRACTS:
         return {}
     per_strike: dict = {}
@@ -195,6 +200,16 @@ def run_gex_scan() -> dict:
             cur.execute("SELECT ticker FROM watchlist WHERE active = true")
             names = list(INDEXES) + sorted(
                 {r[0] for r in cur.fetchall()} - set(INDEXES))
+            cur.execute("""
+                SELECT t.ticker, d.close
+                FROM unnest(%s::text[]) AS t(ticker)
+                JOIN LATERAL (
+                    SELECT close FROM daily_prices
+                    WHERE ticker = t.ticker
+                    ORDER BY trade_date DESC LIMIT 1
+                ) d ON true
+            """, (names,))
+            closes = {r[0]: float(r[1]) for r in cur.fetchall() if r[1]}
     finally:
         conn.close()
     as_of = iv_session_date()
@@ -202,7 +217,7 @@ def run_gex_scan() -> dict:
     rows = []
     for t in names:
         try:
-            g = compute_gex(t)
+            g = compute_gex(t, fallback_spot=closes.get(t))
         except Exception as e:
             log.warning(f"[gex] {t} failed: {e}")
             continue
