@@ -225,13 +225,20 @@ def run_pattern_backtest() -> dict:
         except Exception:
             pass
         with conn.cursor() as cur:
+            # Truncate on EITHER version bump: measurement rules
+            # (BT_VERSION) or detector rules (ENGINE_VERSION). Blending
+            # events from different engines was the audit's worst finding
+            # — this makes it structurally impossible.
             cur.execute("""
                 SELECT 1 FROM pattern_backtest
-                WHERE bt_version IS NULL OR bt_version < %s LIMIT 1
-            """, (BT_VERSION,))
+                WHERE bt_version IS NULL OR bt_version < %s
+                   OR engine_version IS NULL OR engine_version < %s
+                LIMIT 1
+            """, (BT_VERSION, ENGINE_VERSION))
             if cur.fetchone():
-                log.info("[patterns] backtest table holds pre-v%d rows — "
-                         "truncating before re-measure", BT_VERSION)
+                log.info("[patterns] backtest table holds rows from older "
+                         "rules (bt v%d / engine v%d current) — truncating "
+                         "before re-measure", BT_VERSION, ENGINE_VERSION)
                 cur.execute("TRUNCATE pattern_backtest")
         conn.commit()
         with conn.cursor() as cur:
@@ -251,7 +258,8 @@ def run_pattern_backtest() -> dict:
             # interrupted run already stored (eventless names re-scan — a
             # little waste beats a silently unscanned tail).
             cur.execute("SELECT DISTINCT ticker FROM pattern_backtest "
-                        "WHERE bt_version = %s", (BT_VERSION,))
+                        "WHERE bt_version = %s AND engine_version = %s",
+                        (BT_VERSION, ENGINE_VERSION))
             done = {r[0] for r in cur.fetchall()}
         if done:
             before = len(universe)
@@ -305,7 +313,7 @@ def run_pattern_backtest() -> dict:
                 INSERT INTO scheduler_job_claims (job_name, run_date)
                 VALUES (%s, CURRENT_DATE)
                 ON CONFLICT (job_name, run_date) DO NOTHING
-            """, (f"pattern_bt_v{BT_VERSION}_complete",))
+            """, (f"pattern_bt_v{BT_VERSION}_e{ENGINE_VERSION}_complete",))
         conn.commit()
         log.info(f"[patterns] backtest v{BT_VERSION} stored {total} breakouts "
                  f"in {time.time() - t0:.0f}s")
