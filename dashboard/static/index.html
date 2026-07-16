@@ -2676,23 +2676,7 @@ async function openDrawer(ticker) {
   html += renderFairValue(d.fair_value);
   html += renderFundamentals(d.fundamentals);
   html += renderLevels(d.levels, d.levels_error);
-  const gx = d.gamma;
-  if (gx) {
-    const pin = gx.regime === "pinning";
-    html += `<div class="social-box">
-      <b>Gamma (dealer positioning)</b> — <span class="chip ${pin ? "bullish" : "bearish"}" title="above the flip, hedging dampens moves; below it, hedging amplifies them">${esc(gx.regime || "?")}</span>
-      <span class="chip" title="session the chain was read from — OI updates once daily">${esc(gx.as_of)}</span>
-      <div class="grid2" style="margin-top:8px">
-        <div><div class="k">Put wall</div><b class="num">$${fmtNum(gx.put_wall)}</b></div>
-        <div><div class="k">Gamma flip</div><b class="num">$${fmtNum(gx.gamma_flip)}</b></div>
-        <div><div class="k">Call wall</div><b class="num">$${fmtNum(gx.call_wall)}</b></div>
-        <div><div class="k">Net GEX</div><b class="num">${gx.net_gex != null ? (gx.net_gex >= 0 ? "+" : "") + fmtNum(gx.net_gex, 2) + "bn" : "—"}</b></div>
-      </div>
-      <div style="margin-top:6px;color:var(--muted)">${pin
-        ? "Hedging leans against moves — walls act as S/R; fades toward the middle favored."
-        : "Below the flip hedging amplifies moves — respect momentum, wider stops."}</div>
-    </div>`;
-  }
+  html += `<div id="gx-box">${_gammaBoxHtml(d.gamma)}</div>`;
   const s = d.social;
   if (s && s.source !== "unavailable") {
     html += `<div class="social-box">
@@ -2717,6 +2701,7 @@ async function openDrawer(ticker) {
   html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
   $("d-body").innerHTML = html;
   _projGamma = d.gamma || null;   // walls/flip feed the option projector rows
+  _wireGammaCompute(ticker);
   loadOptionTicket(ticker, tok);
   // Membership chips → jump straight into the ETF holdings / theme modals.
   // Bound via data-attributes (not inline onclick) so names with quotes can't
@@ -2807,6 +2792,52 @@ function _bsImplied(prem, S, K, T, r, type) {
 let _projGamma = null;
 let _proj = null;
 let _mchain = null;   // chain-lite cache for the open ticker
+
+function _gammaBoxHtml(gx) {
+  if (!gx) {
+    return `<div class="social-box"><b>Gamma (dealer positioning)</b>
+      <span style="color:var(--muted)">— not in the nightly sweep (indexes + watchlist + ETFs + biggest caps)</span>
+      <button id="gx-compute" style="margin-left:8px;font-size:11px">Compute now</button>
+      <span id="gx-msg" style="color:var(--muted);font-size:11px;margin-left:6px"></span></div>`;
+  }
+  const pin = gx.regime === "pinning";
+  return `<div class="social-box">
+    <b>Gamma (dealer positioning)</b> — <span class="chip ${pin ? "bullish" : "bearish"}" title="above the flip, hedging dampens moves; below it, hedging amplifies them">${esc(gx.regime || "?")}</span>
+    <span class="chip" title="session the chain was read from — OI updates once daily">${esc(gx.as_of)}</span>
+    <div class="grid2" style="margin-top:8px">
+      <div><div class="k">Put wall</div><b class="num">$${fmtNum(gx.put_wall)}</b></div>
+      <div><div class="k">Gamma flip</div><b class="num">$${fmtNum(gx.gamma_flip)}</b></div>
+      <div><div class="k">Call wall</div><b class="num">$${fmtNum(gx.call_wall)}</b></div>
+      <div><div class="k">Net GEX</div><b class="num">${gx.net_gex != null ? (gx.net_gex >= 0 ? "+" : "") + fmtNum(gx.net_gex, 2) + "bn" : "—"}</b></div>
+    </div>
+    <div style="margin-top:6px;color:var(--muted)">${pin
+      ? "Hedging leans against moves — walls act as S/R; fades toward the middle favored."
+      : "Below the flip hedging amplifies moves — respect momentum, wider stops."}</div>
+  </div>`;
+}
+function _wireGammaCompute(ticker) {
+  const btn = document.getElementById("gx-compute");
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const msg = document.getElementById("gx-msg");
+    if (msg) msg.textContent = "reading the chain… (~5s)";
+    try {
+      const g = await api("/api/gamma/compute?ticker=" + encodeURIComponent(ticker), { method: "POST" });
+      if (g && !g.error) {
+        _projGamma = g;
+        const box = document.getElementById("gx-box");
+        if (box) box.innerHTML = _gammaBoxHtml(g);
+        if (_proj) { _proj.lvls = _proj.lvls.filter(x => !["Call wall", "Γ flip", "Put wall"].includes(x.label));
+          [[g.call_wall, "Call wall"], [g.gamma_flip, "Γ flip"], [g.put_wall, "Put wall"]].forEach(([p, l]) => {
+            if (p && !_proj.lvls.some(x => Math.abs(x.p - p) < 0.005)) _proj.lvls.push({ p: +p, label: l });
+          });
+          _proj.lvls.sort((a, b) => b.p - a.p); _renderProj();
+        }
+      } else if (msg) { msg.textContent = (g && g.error) || "failed"; btn.disabled = false; }
+    } catch { if (msg) { msg.textContent = "failed"; } btn.disabled = false; }
+  };
+}
 
 async function _fetchChainLite(ticker) {
   if (_mchain && _mchain.ticker === ticker && (_mchain.contracts || []).length)
