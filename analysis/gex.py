@@ -328,6 +328,20 @@ def run_gex_scan() -> dict:
             closes = {r[0]: float(r[1]) for r in cur.fetchall() if r[1]}
     finally:
         conn.close()
+    # Prefer today's snapshot close for spot: the 5:50 PM run happens
+    # before the nightly price ingest, so daily_prices' "latest" close is
+    # yesterday's — a stale spot mislabels the regime on names sitting
+    # near their flip (QQQ's first sweep, exactly). The 15-min-delayed
+    # snapshot IS today's close by 5:50.
+    try:
+        from analysis.news_scanner import _fetch_snapshot_map
+        snaps = _fetch_snapshot_map(names)
+        for t, sn in (snaps or {}).items():
+            p = sn.get("price")
+            if p:
+                closes[t] = float(p)
+    except Exception as e:
+        log.warning(f"[gex] snapshot spots unavailable, using daily closes: {e}")
     as_of = iv_session_date()
     stored, thin = 0, []
     rows = []
