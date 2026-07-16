@@ -2423,6 +2423,73 @@ def register_routes(mcp) -> None:
             data = {"error": str(e)[:120]}
         return JSONResponse(data)
 
+    @mcp.custom_route("/api/gamma/compute", methods=["POST"])
+    async def gamma_compute(request: Request):
+        """On-demand gamma levels for any optionable ticker — the drawer's
+        'Compute now' button for names outside the nightly sweep. Stores
+        the result so the session's levels persist and the ticker shows
+        instantly on the next open."""
+        if not _is_authed(request):
+            return _unauthorized()
+        ticker = (request.query_params.get("ticker") or "").upper().strip()
+        if not ticker or len(ticker) > 6:
+            return JSONResponse({"error": "invalid ticker"}, status_code=400)
+
+        def _run():
+            import json as _json
+            from analysis.gex import compute_gex
+            from analysis.options_picker import iv_session_date
+            from screen.reversal_screen import _conn
+            spot = None
+            try:
+                from analysis.news_scanner import _fetch_snapshot_map
+                spot = (_fetch_snapshot_map([ticker]).get(ticker) or {}).get("price")
+            except Exception:
+                pass
+            conn = _conn()
+            try:
+                if not spot:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT close FROM daily_prices WHERE ticker=%s "
+                                    "ORDER BY trade_date DESC LIMIT 1", (ticker,))
+                        r = cur.fetchone()
+                        spot = float(r[0]) if r else None
+                g = compute_gex(ticker, fallback_spot=spot)
+                if not g:
+                    return {"error": "chain too thin for meaningful gamma "
+                                     "levels (needs real open interest)"}
+                as_of = iv_session_date()
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO gex_levels
+                            (ticker, as_of, spot, call_wall, put_wall,
+                             gamma_flip, net_gex, regime, top_strikes, contracts)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                        ON CONFLICT (ticker, as_of) DO UPDATE SET
+                            spot=EXCLUDED.spot, call_wall=EXCLUDED.call_wall,
+                            put_wall=EXCLUDED.put_wall,
+                            gamma_flip=EXCLUDED.gamma_flip,
+                            net_gex=EXCLUDED.net_gex, regime=EXCLUDED.regime,
+                            top_strikes=EXCLUDED.top_strikes,
+                            contracts=EXCLUDED.contracts, computed_at=now()
+                    """, (ticker, as_of, g["spot"], g["call_wall"],
+                          g["put_wall"], g["gamma_flip"], g["net_gex_bn"],
+                          g["regime"], _json.dumps(g["top_strikes"]),
+                          g["contracts"]))
+                conn.commit()
+                return {"as_of": str(as_of), "spot": g["spot"],
+                        "call_wall": g["call_wall"], "put_wall": g["put_wall"],
+                        "gamma_flip": g["gamma_flip"], "net_gex": g["net_gex_bn"],
+                        "regime": g["regime"]}
+            finally:
+                conn.close()
+
+        try:
+            data = await asyncio.to_thread(_run)
+        except Exception as e:
+            data = {"error": str(e)[:140]}
+        return JSONResponse(data)
+
     @mcp.custom_route("/api/gamma", methods=["GET"])
     async def gamma(request: Request):
         """Latest dealer-gamma regime per index — feeds the pulse-bar chip."""
