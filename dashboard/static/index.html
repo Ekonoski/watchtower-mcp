@@ -2793,6 +2793,15 @@ let _projGamma = null;
 let _proj = null;
 let _mchain = null;   // chain-lite cache for the open ticker
 
+function _fmtGex(v) {
+  // stored in $bn; small names round to +0.00bn and read like a bug — drop to $M
+  if (v == null) return "—";
+  const sign = v >= 0 ? "+" : "-";
+  const a = Math.abs(v);
+  if (a >= 0.05) return sign + fmtNum(a, 2) + "bn";
+  if (a >= 0.0005) return sign + fmtNum(a * 1000, a * 1000 >= 10 ? 0 : 1) + "M";
+  return "≈0";
+}
 function _gammaBoxHtml(gx) {
   if (!gx) {
     return `<div class="social-box"><b>Gamma (dealer positioning)</b>
@@ -2808,7 +2817,7 @@ function _gammaBoxHtml(gx) {
       <div><div class="k">Put wall</div><b class="num">$${fmtNum(gx.put_wall)}</b></div>
       <div><div class="k">Gamma flip</div><b class="num">$${fmtNum(gx.gamma_flip)}</b></div>
       <div><div class="k">Call wall</div><b class="num">$${fmtNum(gx.call_wall)}</b></div>
-      <div><div class="k">Net GEX</div><b class="num">${gx.net_gex != null ? (gx.net_gex >= 0 ? "+" : "") + fmtNum(gx.net_gex, 2) + "bn" : "—"}</b></div>
+      <div><div class="k">Net GEX</div><b class="num" title="dollars of dealer hedging per 1% move — billions are load-bearing, millions are decoration">${_fmtGex(gx.net_gex)}</b></div>
     </div>
     <div style="margin-top:6px;color:var(--muted)">${pin
       ? "Hedging leans against moves — walls act as S/R; fades toward the middle favored."
