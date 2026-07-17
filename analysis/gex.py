@@ -52,18 +52,26 @@ def _fetch_gex_chain(ticker: str) -> tuple:
     """(spot, [{strike, exp_days, iv, oi, gamma, is_call}]) for every
     contract with OI inside the expiry window."""
     from itertools import islice
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
     from analysis.polygon_data import get_client
     client = get_client()
     if not client:
         return None, []
-    today = date.today()
+    et_now = datetime.now(ZoneInfo("America/New_York"))
+    today = et_now.date()
+    # After the close, same-day expirations are dead OI — the snapshot
+    # still lists them until the overnight settle, and on an OPEX Friday
+    # they're the biggest piles on the board. Counting them would hand
+    # Monday a map full of phantom walls.
+    start = today + timedelta(days=1) if et_now.hour >= 16 else today
     spot = None
     out = []
     try:
         snaps = islice(client.list_snapshot_options_chain(
             ticker,
             params={
-                "expiration_date.gte": today.isoformat(),
+                "expiration_date.gte": start.isoformat(),
                 "expiration_date.lte": (today + timedelta(
                     days=EXP_WINDOW_DAYS)).isoformat(),
                 "limit": 250,
@@ -383,10 +391,14 @@ def run_gex_intraday() -> dict:
     return {"stored": len(results), "session": str(session)}
 
 
-def run_gex_scan() -> dict:
-    """Nightly: every liquid-chain name in the capped universe into
-    gex_levels, stamped on the completed session's date. Four chain
-    fetches in flight at a time — ~250 names in roughly 10 minutes."""
+def run_gex_scan(as_of=None) -> dict:
+    """Full-universe sweep: every liquid-chain name in the capped universe
+    into gex_levels. Four chain fetches in flight at a time — ~250 names
+    in roughly 10 minutes. Runs twice a day: the 5:50 PM preview (stamped
+    on the completed session via iv_session_date) and the 8:15 AM morning
+    read (pass as_of = today), which is the authoritative one — OI settles
+    overnight, so the morning chain is fresher AND free of yesterday's
+    expired contracts."""
     import json
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from screen.reversal_screen import _conn
@@ -422,7 +434,7 @@ def run_gex_scan() -> dict:
                 closes[t] = float(p)
     except Exception as e:
         log.warning(f"[gex] snapshot spots unavailable, using daily closes: {e}")
-    as_of = iv_session_date()
+    as_of = as_of or iv_session_date()
     stored, thin = 0, []
     rows = []
     log.info(f"[gex] scanning {len(names)} candidates...")
