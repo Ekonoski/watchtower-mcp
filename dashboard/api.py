@@ -2527,6 +2527,48 @@ def register_routes(mcp) -> None:
             rows = []
         return JSONResponse({"gamma": rows})
 
+    @mcp.custom_route("/api/gamma/intraday", methods=["GET"])
+    async def gamma_intraday(request: Request):
+        """Today's 15-minute net-GEX path for one index — the drawer's
+        day-path sparkline. Empty list for names outside the intraday
+        sweep (single names are nightly + on-demand only)."""
+        if not _is_authed(request):
+            return _unauthorized()
+        ticker = (request.query_params.get("ticker") or "").upper().strip()
+        if not ticker or len(ticker) > 6:
+            return JSONResponse({"error": "invalid ticker"}, status_code=400)
+
+        def _rows():
+            from screen.reversal_screen import _conn
+            conn = _conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT ts, spot, net_gex, gamma_flip, regime
+                        FROM gex_intraday
+                        WHERE ticker = %s
+                          AND ts >= date_trunc('day',
+                                now() AT TIME ZONE 'America/New_York')
+                                AT TIME ZONE 'America/New_York'
+                        ORDER BY ts
+                    """, (ticker,))
+                    return [
+                        {"ts": r[0].isoformat(),
+                         "spot": float(r[1]) if r[1] is not None else None,
+                         "net_gex": float(r[2]) if r[2] is not None else None,
+                         "gamma_flip": float(r[3]) if r[3] is not None else None,
+                         "regime": r[4]}
+                        for r in cur.fetchall()
+                    ]
+            finally:
+                conn.close()
+
+        try:
+            rows = await asyncio.to_thread(_rows)
+        except Exception:
+            rows = []
+        return JSONResponse({"ticker": ticker, "path": rows})
+
     @mcp.custom_route("/api/vantage/lookup", methods=["GET"])
     async def vantage_lookup(request: Request):
         if not _is_authed(request):
