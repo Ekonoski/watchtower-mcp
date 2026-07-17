@@ -303,6 +303,86 @@ def build_gamma_flip_alerts() -> list:
     return rows
 
 
+def run_gex_intraday() -> dict:
+    """Every 15 minutes during market hours: re-price the four index
+    chains at the current (delayed) spot and append the reading to
+    gex_intraday — the day path of net GEX / regime the dashboard draws.
+    Also upserts today's gex_levels row so the pulse chips and drawer
+    show the live reading instead of last night's.
+
+    OI can't move intraday (it settles overnight, for every vendor), so
+    the walls barely change within a session — what this captures is net
+    GEX draining or building as spot travels, regime flips, and IV-driven
+    flip drift. Single names stay nightly + on-demand; re-pricing them
+    every 15 minutes buys nothing."""
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from screen.reversal_screen import _conn
+    t0 = time.time()
+    names = list(INDEXES)
+    spots = {}
+    try:
+        from analysis.news_scanner import _fetch_snapshot_map
+        for t, sn in (_fetch_snapshot_map(names) or {}).items():
+            p = sn.get("price")
+            if p:
+                spots[t] = float(p)
+    except Exception as e:
+        log.warning(f"[gex] intraday snapshot spots failed: {e}")
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(compute_gex, t, spots.get(t)): t for t in names}
+        for f in as_completed(futs):
+            t = futs[f]
+            try:
+                g = f.result()
+                if g:
+                    results[t] = g
+            except Exception as e:
+                log.warning(f"[gex] intraday {t} failed: {e}")
+    if not results:
+        return {"stored": 0}
+    # The job only runs during a live session, so ET today IS the session.
+    session = datetime.now(ZoneInfo("America/New_York")).date()
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.executemany("""
+                INSERT INTO gex_intraday
+                    (ticker, spot, net_gex, gamma_flip, call_wall,
+                     put_wall, regime)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, [(t, g["spot"], g["net_gex_bn"], g["gamma_flip"],
+                   g["call_wall"], g["put_wall"], g["regime"])
+                  for t, g in results.items()])
+            cur.executemany("""
+                INSERT INTO gex_levels
+                    (ticker, as_of, spot, call_wall, put_wall,
+                     gamma_flip, net_gex, regime, top_strikes, contracts)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                ON CONFLICT (ticker, as_of) DO UPDATE SET
+                    spot=EXCLUDED.spot, call_wall=EXCLUDED.call_wall,
+                    put_wall=EXCLUDED.put_wall,
+                    gamma_flip=EXCLUDED.gamma_flip,
+                    net_gex=EXCLUDED.net_gex, regime=EXCLUDED.regime,
+                    top_strikes=EXCLUDED.top_strikes,
+                    contracts=EXCLUDED.contracts, computed_at=now()
+            """, [(t, session, g["spot"], g["call_wall"], g["put_wall"],
+                   g["gamma_flip"], g["net_gex_bn"], g["regime"],
+                   json.dumps(g["top_strikes"]), g["contracts"])
+                  for t, g in results.items()])
+            cur.execute("DELETE FROM gex_intraday "
+                        "WHERE ts < now() - interval '14 days'")
+        conn.commit()
+    finally:
+        conn.close()
+    log.info(f"[gex] intraday: {len(results)}/{len(names)} indexes "
+             f"in {time.time()-t0:.0f}s")
+    return {"stored": len(results), "session": str(session)}
+
+
 def run_gex_scan() -> dict:
     """Nightly: every liquid-chain name in the capped universe into
     gex_levels, stamped on the completed session's date. Four chain

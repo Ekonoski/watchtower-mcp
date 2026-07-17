@@ -681,6 +681,25 @@ def run_gex_job():
         log.error(f"[gex] nightly error: {e}")
 
 
+def run_gex_intraday_job():
+    """Every 15 min during market hours: re-price the four index chains
+    at current spot — live net GEX / regime on the dashboard plus the
+    day-path history in gex_intraday. Walls can't move intraday (OI is
+    overnight-only); this tracks the ball, not the furniture."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    try:
+        from analysis.gex import run_gex_intraday
+        res = run_gex_intraday()
+        log.info(f"[gex] intraday tick: {res}")
+    except Exception as e:
+        log.error(f"[gex] intraday error: {e}")
+
+
 def _seed_gex_if_missing():
     """Deploy backstop mirroring the IV-snapshot seed: if the completed
     session has no gamma levels, compute them now (options chains still
@@ -1030,6 +1049,27 @@ def start_scheduler():
         run_scheduled_scan,
         CronTrigger(day_of_week="mon-fri", hour="16", minute="0", timezone=et),
         id="intraday_scan_close",
+        replace_existing=True,
+    )
+
+    # Index gamma re-price: every 15 min during market hours + one read
+    # just after the close (delayed feed is ~15 min behind the tape).
+    scheduler.add_job(
+        run_gex_intraday_job,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="35,50", timezone=et),
+        id="gex_intraday_open",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_gex_intraday_job,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*/15", timezone=et),
+        id="gex_intraday_market",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_gex_intraday_job,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="5", timezone=et),
+        id="gex_intraday_close",
         replace_existing=True,
     )
 

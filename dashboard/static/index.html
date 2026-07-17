@@ -371,7 +371,7 @@
   <span class="lbl">X PULSE</span>
   <span id="pulse-sent" class="chip">—</span>
   <span id="pulse-mood" class="chip">—</span>
-  <span id="pulse-gamma" title="dealer-gamma regime from last night's option chains — pinning: hedging dampens moves (fade toward walls); slippery: hedging amplifies (respect momentum)"></span>
+  <span id="pulse-gamma" title="dealer-gamma regime — re-priced every 15 min during market hours (delayed feed), nightly otherwise. pinning: hedging dampens moves (fade toward walls); slippery: hedging amplifies (respect momentum)"></span>
   <span id="pulse-themes"></span>
   <span id="pulse-tickers"></span>
 </div>
@@ -1734,6 +1734,9 @@ async function loadGamma() {
   } catch {}
 }
 loadGamma();
+// The index readings re-price every 15 min during market hours — keep the
+// chips current without waiting for a page reload.
+setInterval(loadGamma, 5 * 60 * 1000);
 
 function renderPulse() {
   const p = (state.snapshot || {}).market_pulse || {};
@@ -2702,6 +2705,7 @@ async function openDrawer(ticker) {
   $("d-body").innerHTML = html;
   _projGamma = d.gamma || null;   // walls/flip feed the option projector rows
   _wireGammaCompute(ticker);
+  _wireGammaPath(ticker, tok);    // day-path sparkline (indexes only)
   loadOptionTicket(ticker, tok);
   // Membership chips → jump straight into the ETF holdings / theme modals.
   // Bound via data-attributes (not inline onclick) so names with quotes can't
@@ -2805,14 +2809,15 @@ function _fmtGex(v) {
 function _gammaBoxHtml(gx) {
   if (!gx) {
     return `<div class="social-box"><b>Gamma (dealer positioning)</b>
-      <span style="color:var(--muted)">— not in the nightly sweep (indexes + watchlist + ETFs + biggest caps)</span>
+      <span style="color:var(--muted)">— not in the nightly sweep; reading the chain…</span>
       <button id="gx-compute" style="margin-left:8px;font-size:11px">Compute now</button>
       <span id="gx-msg" style="color:var(--muted);font-size:11px;margin-left:6px"></span></div>`;
   }
   const pin = gx.regime === "pinning";
   return `<div class="social-box">
     <b>Gamma (dealer positioning)</b> — <span class="chip ${pin ? "bullish" : "bearish"}" title="above the flip, hedging dampens moves; below it, hedging amplifies them">${esc(gx.regime || "?")}</span>
-    <span class="chip" title="session the chain was read from — OI updates once daily">${esc(gx.as_of)}</span>
+    <span class="chip" id="gx-asof" title="session the chain was read from — OI updates once daily; indexes re-price every 15 min during market hours">${esc(gx.as_of)}</span>
+    <span id="gx-spark" title="today's net GEX path, 15-min steps (delayed feed)"></span>
     <div class="grid2" style="margin-top:8px">
       <div><div class="k">Put wall</div><b class="num">$${fmtNum(gx.put_wall)}</b></div>
       <div><div class="k">Gamma flip</div><b class="num">$${fmtNum(gx.gamma_flip)}</b></div>
@@ -2846,6 +2851,40 @@ function _wireGammaCompute(ticker) {
       } else if (msg) { msg.textContent = (g && g.error) || "failed"; btn.disabled = false; }
     } catch { if (msg) { msg.textContent = "failed"; } btn.disabled = false; }
   };
+  // Any name you open gets its gamma pulled automatically; the button
+  // stays as the retry path when the chain read fails.
+  btn.click();
+}
+
+async function _wireGammaPath(ticker, tok) {
+  const spark = document.getElementById("gx-spark");
+  if (!spark) return;   // placeholder box (no stored gamma yet)
+  try {
+    const d = await api("/api/gamma/intraday?ticker=" + encodeURIComponent(ticker));
+    if (seqStale("drawer", tok)) return;
+    const pts = ((d && d.path) || []).filter(p => p.net_gex != null);
+    if (pts.length < 2) return;
+    const vals = pts.map(p => p.net_gex);
+    const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+    const span = (hi - lo) || 1;
+    const W = 120, H = 26;
+    const xy = vals.map((v, i) =>
+      `${(i / (vals.length - 1) * W).toFixed(1)},${((1 - (v - lo) / span) * (H - 4) + 2).toFixed(1)}`);
+    const zeroY = ((1 - (0 - lo) / span) * (H - 4) + 2).toFixed(1);
+    const last = vals[vals.length - 1];
+    const col = last >= 0 ? "var(--green)" : "var(--red)";
+    const el = document.getElementById("gx-spark");
+    if (!el) return;
+    el.innerHTML = `<svg width="${W}" height="${H}" style="vertical-align:middle;margin-left:8px">
+      <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
+      <polyline points="${xy.join(" ")}" fill="none" stroke="${col}" stroke-width="1.5"/>
+    </svg><span style="font-size:11px;color:var(--muted);margin-left:4px">net GEX today · ${_fmtGex(last)}</span>`;
+    const asof = document.getElementById("gx-asof");
+    if (asof) {
+      const hm = new Date(pts[pts.length - 1].ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      asof.textContent = "live · " + hm;
+    }
+  } catch {}
 }
 
 async function _fetchChainLite(ticker) {
