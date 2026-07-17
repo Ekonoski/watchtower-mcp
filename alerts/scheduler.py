@@ -681,6 +681,31 @@ def run_gex_job():
         log.error(f"[gex] nightly error: {e}")
 
 
+def run_gex_morning_job():
+    """8:15 AM ET full-universe gamma sweep — the authoritative daily map.
+    OI settles overnight, so this run sees fresher positioning than the
+    5:50 PM preview AND a chain free of yesterday's expired contracts
+    (the OPEX-Friday phantom-wall problem). Stamped on today's session,
+    ready before the open."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("gex_levels_am"):
+        return
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from analysis.gex import run_gex_scan
+        session = datetime.now(ZoneInfo("America/New_York")).date()
+        res = run_gex_scan(as_of=session)
+        log.info(f"[gex] morning levels: {res}")
+    except Exception as e:
+        log.error(f"[gex] morning error: {e}")
+
+
 def run_gex_intraday_job():
     """Every 15 min during market hours: re-price the four index chains
     at current spot — live net GEX / regime on the dashboard plus the
@@ -1049,6 +1074,15 @@ def start_scheduler():
         run_scheduled_scan,
         CronTrigger(day_of_week="mon-fri", hour="16", minute="0", timezone=et),
         id="intraday_scan_close",
+        replace_existing=True,
+    )
+
+    # Morning gamma sweep — 8:15 AM ET, full universe on overnight-settled
+    # OI. The authoritative map for the day, in place before the open.
+    scheduler.add_job(
+        run_gex_morning_job,
+        CronTrigger(day_of_week="mon-fri", hour="8", minute="15", timezone=et),
+        id="gex_morning",
         replace_existing=True,
     )
 
