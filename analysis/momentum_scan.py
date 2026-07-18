@@ -61,6 +61,14 @@ def _fmp_key() -> str:
     return os.environ.get("FMP_API_KEY", "").strip()
 
 
+def _scrub(e) -> str:
+    """Exception text with the API key redacted — requests puts the full
+    URL (apikey included) in HTTPError messages, and those were landing
+    in Railway logs and Sentry verbatim."""
+    import re
+    return re.sub(r"apikey=[^&\s'\"]+", "apikey=***", str(e))
+
+
 def refresh_ticker_stats() -> dict:
     """Nightly float refresh from FMP's bulk endpoint into ticker_stats.
     One call, whole market — works only on plans that include the bulk
@@ -73,11 +81,28 @@ def refresh_ticker_stats() -> dict:
         return {"error": "no FMP key"}
     rows = []
     try:
-        resp = requests.get(
-            "https://financialmodelingprep.com/api/v4/shares_float/all",
-            params={"apikey": key}, timeout=120)
-        resp.raise_for_status()
-        for r in resp.json() or []:
+        # Stable API first — FMP sunset the legacy /api/v4 float
+        # endpoints (403 since 2026-07-17); every other module already
+        # rides /stable. Paginated, so loop until a short page.
+        payload = []
+        try:
+            for page in range(10):
+                resp = requests.get(
+                    "https://financialmodelingprep.com/stable/shares-float-all",
+                    params={"apikey": key, "page": page, "limit": 5000},
+                    timeout=120)
+                resp.raise_for_status()
+                batch = resp.json() or []
+                payload.extend(batch)
+                if len(batch) < 5000:
+                    break
+        except Exception:
+            resp = requests.get(
+                "https://financialmodelingprep.com/api/v4/shares_float/all",
+                params={"apikey": key}, timeout=120)
+            resp.raise_for_status()
+            payload = resp.json() or []
+        for r in payload:
             sym = (r.get("symbol") or "").strip().upper()
             flt = r.get("floatShares")
             if sym and flt:
@@ -87,8 +112,8 @@ def refresh_ticker_stats() -> dict:
                     continue
     except Exception as e:
         log.warning(f"[momentum] bulk float refresh failed "
-                    f"(plan may not include it): {e}")
-        return {"error": str(e)[:120]}
+                    f"(plan may not include it): {_scrub(e)}")
+        return {"error": _scrub(e)[:120]}
     if not rows:
         return {"stored": 0}
     conn = _conn()
@@ -144,16 +169,27 @@ def refresh_floats_for(tickers: list, cap: int = FLOAT_FETCH_CAP) -> int:
             flt = None
             if use_fmp:
                 try:
-                    resp = requests.get(
-                        "https://financialmodelingprep.com/api/v4/shares_float",
-                        params={"symbol": t, "apikey": key}, timeout=10)
-                    resp.raise_for_status()
-                    data = resp.json() or []
+                    data = last_err = None
+                    for url in (
+                            "https://financialmodelingprep.com/stable/shares-float",
+                            "https://financialmodelingprep.com/api/v4/shares_float"):
+                        try:
+                            resp = requests.get(
+                                url, params={"symbol": t, "apikey": key},
+                                timeout=10)
+                            resp.raise_for_status()
+                            data = resp.json() or []
+                            break
+                        except Exception as inner:
+                            last_err = inner
+                    if data is None:
+                        raise last_err
                     flt = (data[0] or {}).get("floatShares") if data else None
                     time.sleep(0.25)   # ~240 calls/min ceiling
                 except Exception as e:
                     log.warning(f"[momentum] FMP per-symbol float failed "
-                                f"({e}) — using Polygon shares outstanding")
+                                f"({_scrub(e)}) — using Polygon shares "
+                                f"outstanding")
                     use_fmp = False
             if flt is None and not use_fmp:
                 if poly is None:
