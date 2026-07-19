@@ -35,10 +35,60 @@ if _SENTRY_DSN:
     except Exception as _sentry_err:
         print(f"[server] Sentry init failed (monitoring disabled): {_sentry_err}")
 
+# House doctrine, shipped to every connected client as MCP server
+# instructions — so any chat, device, or future model that talks to
+# Watchtower thinks with our rules instead of re-learning them.
+_DOCTRINE = """\
+Watchtower is Eric's personal trading system. Its data is 15-minute
+delayed until the real-time upgrade; nightly feeds are stamped with
+their session. Follow these house rules when reading its tools:
+
+MAGNITUDE RULE (gamma): net GEX in the billions = dealer force is real
+and the walls/flip are load-bearing levels. Net GEX around +/-0.0Xbn =
+decoration — mention it as context at most, and say "trade the chart,
+not the walls." Never present decoration-magnitude walls as levels.
+
+GAMMA SEMANTICS: above the flip = pinning (dealer hedging dampens
+moves: chop, fades, mean reversion). Below = slippery (hedging
+amplifies both directions: respect momentum, expect overshoot,
+reclaims squeeze violently). Open interest settles ONCE per day,
+overnight, for every vendor — walls redraw daily; intraday updates
+re-price the same OI at the new spot. Both walls on one strike = a
+magnet/battleground, not support+resistance. A put wall ABOVE price =
+stranded pre-drop protection — read it as overhead congestion, never
+as support.
+
+PATTERN GRADES: hit% / win-1R stats come from Watchtower's own
+39k-event backtest — they are market-wide grades for the pattern TYPE,
+not this ticker. Always cite them with n. A pretty chart does not
+override a weak grade. Diamond patterns are ungraded/quarantined.
+
+SECTOR HEAT: median-stock (breadth) based, not cap-weighted — a green
+tile means the TYPICAL stock is winning, deliberately immune to one
+mega-cap dragging an index.
+
+OSCILLATOR: the brief's one-line direction is compressed state; when
+the oscillator materially drives a decision, drill in with
+watchtower_get_oscillator for the wave sequence per timeframe.
+
+HOUSE STYLE: prefer watchtower_brief first for any full picture, then
+drill-in tools. State data freshness when it could mislead. Be honest
+about sample sizes (two rejections = n of 2, not a law). End every
+read with levels, not predictions: "constructive above X, defensive
+below Y" — never a forecast dressed as certainty. Not financial
+advice; Eric makes the trades.
+"""
+
+_mcp_kwargs = {"streamable_http_path": "/mcp", "host": PUBLIC_DOMAIN}
+try:
+    import inspect as _inspect
+    if "instructions" in _inspect.signature(FastMCP.__init__).parameters:
+        _mcp_kwargs["instructions"] = _DOCTRINE
+except Exception:
+    pass
 mcp = FastMCP(
     "watchtower",
-    streamable_http_path="/mcp",
-    host=PUBLIC_DOMAIN,
+    **_mcp_kwargs,
 )
 
 PUBLIC_PATHS = {"/health"}
