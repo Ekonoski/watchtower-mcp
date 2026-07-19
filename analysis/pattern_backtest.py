@@ -48,7 +48,7 @@ from datetime import date
 
 log = logging.getLogger(__name__)
 
-BT_VERSION = 2
+BT_VERSION = 3   # v3: armed forming triggers — flags/triangles finally graded
 STEP = int(os.environ.get("PATTERN_BT_STEP", "2"))        # as-of stride, bars
 SAMPLE = int(os.environ.get("PATTERN_BT_SAMPLE", "2500"))  # universe sample
 HISTORY_START = "2021-06-01"   # everything daily_prices has
@@ -142,7 +142,21 @@ def _resolve(bars: list, j: int, entry: float, target: float, invalid,
 def _replay_ticker(bars: list, spy_above: dict) -> list:
     """All fresh breakouts the live scanner would have flagged for one
     ticker, entered at the NEXT bar's open, each tracked to resolution.
-    One live episode per pattern at a time (no correlated duplicates)."""
+    One live episode per pattern at a time (no correlated duplicates).
+
+    Two trigger paths, mirroring production:
+      1. status == 'breakout' detections — patterns whose detector still
+         reports them after the cross (bases, H&S, wedges, ...).
+      2. armed forming triggers (BT v3) — flags/triangles DISSOLVE the
+         bar they break out (a flag with a new high is no longer a
+         flag), so their detectors can never emit 'breakout' and v2
+         silently never graded them. Live, the trigger-alert layer
+         watches the stored trigger price directly; the replay now does
+         the same: a forming pattern arms its trigger, each grid step
+         scans only the NEW bars since the last check (no rescanning
+         history with refreshed geometry = no backdating), a close
+         through the invalidation disarms it, and a detector that
+         dissolves without a cross drops it."""
     from analysis.pattern_scan import detect_patterns, TF
     n = len(bars)
     if n < MIN_BARS + 10:
@@ -150,10 +164,88 @@ def _replay_ticker(bars: list, spy_above: dict) -> list:
     break_recent = TF["daily"]["break_recent"]
     dates = [b["date"] for b in bars]
     active: dict = {}   # pattern -> index its last episode resolved at
+    pending: dict = {}  # pattern -> armed forming trigger
     out = []
+
+    def _record(pat, direction, anchor, j, trigger, target, invalid, as_of):
+        entry = bars[as_of + 1]["open"] or bars[as_of + 1]["close"]
+        if not entry or entry <= 0:
+            return
+        outcome, bto, w1, b1, rr, end_i = _resolve(
+            bars, as_of, entry, target, invalid, direction)
+        active[pat] = end_i
+        width = None
+        if anchor is not None:
+            try:
+                width = j - dates.index(anchor)
+            except ValueError:
+                pass
+        out.append((pat, direction, anchor, dates[j], width, trigger,
+                    target, invalid, outcome, bto, w1, b1,
+                    round(entry, 4), rr, spy_above.get(dates[as_of])))
+
     for as_of in range(MIN_BARS, n - 1, STEP):
         window = bars[max(0, as_of + 1 - WINDOW):as_of + 1]
-        for det in detect_patterns(window, "daily"):
+        dets = detect_patterns(window, "daily")
+        det_by_pat = {d["pattern"]: d for d in dets}
+
+        # --- path 2: armed forming triggers (checked FIRST so a fresh
+        # cross can't be double-entered by path 1 in the same step —
+        # active[] then blocks it there).
+        for pat, p in list(pending.items()):
+            if active.get(pat, -1) >= as_of:
+                pending.pop(pat)
+                continue
+            fired = dead = None
+            for j in range(p["last_checked"] + 1, as_of + 1):
+                c = bars[j].get("close")
+                if c is None:
+                    continue
+                if p["direction"] == "bullish":
+                    if p["invalid"] is not None and c <= p["invalid"]:
+                        dead = j
+                        break
+                    if c > p["trigger"]:
+                        fired = j
+                        break
+                else:
+                    if p["invalid"] is not None and c >= p["invalid"]:
+                        dead = j
+                        break
+                    if c < p["trigger"]:
+                        fired = j
+                        break
+            if dead is not None:
+                pending.pop(pat)
+                continue
+            if fired is not None:
+                pending.pop(pat)
+                _record(pat, p["direction"], p["anchor"], fired,
+                        p["trigger"], p["target"], p["invalid"], as_of)
+                continue
+            p["last_checked"] = as_of
+            d = det_by_pat.get(pat)
+            if d is None or d["status"] == "breakout":
+                pending.pop(pat)          # dissolved without a cross
+            else:                          # refresh drifting geometry
+                p.update(trigger=d["trigger_price"], target=d["target"],
+                         invalid=d["invalid_level"],
+                         anchor=d.get("anchor_date"),
+                         direction=d["direction"])
+
+        # --- arm new forming triggers
+        for pat, d in det_by_pat.items():
+            if (d["status"] != "breakout" and pat not in pending
+                    and active.get(pat, -1) < as_of):
+                pending[pat] = {"trigger": d["trigger_price"],
+                                "target": d["target"],
+                                "invalid": d["invalid_level"],
+                                "direction": d["direction"],
+                                "anchor": d.get("anchor_date"),
+                                "last_checked": as_of}
+
+        # --- path 1: detector-reported breakouts (unchanged from v2)
+        for det in dets:
             if det["status"] != "breakout":
                 continue
             j = _breakout_idx(bars, as_of, det["trigger_price"],
