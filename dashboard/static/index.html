@@ -2230,9 +2230,10 @@ function _allHeatTiles() {
   return [...$("heat-map").querySelectorAll(".heat-tile"),
           ...$("etf-heat").querySelectorAll(".heat-tile")];
 }
-function applyTileFind() {
+function applyTileFind(query, doScroll) {
   const inp = $("tile-find");
-  const q = (inp ? inp.value : "").trim().toLowerCase();
+  const q = (typeof query === "string" ? query
+             : (inp ? inp.value : "")).trim().toLowerCase();
   const tiles = _allHeatTiles();
   tiles.forEach(t => t.classList.remove("tile-hit"));
   if (!q) { $("heat-map").classList.remove("dimmed"); $("etf-heat").classList.remove("dimmed"); return; }
@@ -2242,7 +2243,8 @@ function applyTileFind() {
   }
   $("heat-map").classList.toggle("dimmed", !!first);
   $("etf-heat").classList.toggle("dimmed", !!first);
-  if (first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (first && doScroll !== false)
+    first.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 if ($("tile-find")) {
   $("tile-find").oninput = applyTileFind;
@@ -3241,10 +3243,16 @@ function renderFundamentals(f) {
 // Global ticker lookup — open the full drawer (price, signal, S/R levels,
 // sentiment) for ANY symbol, not just ones on the scanner.
 $("lookup").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.target.value = ""; applyTileFind(""); return; }
   if (e.key !== "Enter") return;
   const t = e.target.value.trim().toUpperCase().replace(/[^A-Z.]/g, "");
-  if (t) { openDrawer(t); e.target.value = ""; e.target.blur(); }
+  if (t) { openDrawer(t); e.target.value = ""; applyTileFind(""); e.target.blur(); }
 });
+// The main search also spotlights matching tiles on both heat boards as
+// you type — a ticker that lives on a board shouldn't be findable only
+// by scrolling (VNQ at the tail of the Themes band, famously).
+$("lookup").addEventListener("input", e =>
+  applyTileFind(e.target.value, e.target.value.trim().length >= 2));
 // TrendSpider has no public symbol deep-link (only /shared/<id> for saved
 // charts), so a plain URL can't pre-load a ticker. Next best: copy the
 // symbol and open TrendSpider — user pastes (⌘V) into its symbol search.
