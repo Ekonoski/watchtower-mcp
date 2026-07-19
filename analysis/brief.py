@@ -223,6 +223,50 @@ def _momentum_block(ticker: str) -> dict:
         conn.close()
 
 
+def _fundamentals_block(ticker: str) -> dict:
+    """Latest reported quarter + trend context from fundamentals_quarterly.
+    Headline row = newest quarter that actually has revenue (FMP sometimes
+    files a mostly-null shell for the latest period)."""
+    rows = _rows("""
+        SELECT fiscal_year, fiscal_quarter, period_end_date, report_date,
+               revenue, gross_margin, operating_margin, net_income,
+               free_cash_flow, operating_cash_flow, ebitda, total_debt,
+               cash_and_equivalents, total_equity, roe
+        FROM fundamentals_quarterly WHERE ticker = %s
+        ORDER BY period_end_date DESC NULLS LAST LIMIT 8
+    """, (ticker,))
+    if not rows:
+        return {}
+    cur = next((r for r in rows if r[4] is not None), rows[0])
+    yoy = next((r for r in rows
+                if r[0] == cur[0] - 1 and r[1] == cur[1]
+                and r[4] is not None), None)
+    debt, cash = _f(cur[11]), _f(cur[12])
+    equity = _f(cur[13])
+    net_debt = (debt - cash) if debt is not None and cash is not None else None
+    old_debt = next((_f(r[11]) - _f(r[12]) for r in reversed(rows)
+                     if r[11] is not None and r[12] is not None), None)
+    rev, rev_y = _f(cur[4]), _f(yoy[4]) if yoy else None
+    return {
+        "quarter": f"Q{int(cur[1])} FY{int(cur[0])}",
+        "period_end": str(cur[2]) if cur[2] else None,
+        "filed": str(cur[3]) if cur[3] else None,
+        "revenue": rev,
+        "rev_yoy_pct": round((rev / rev_y - 1) * 100, 1) if rev and rev_y else None,
+        "gross_margin_pct": round(_f(cur[5]) * 100, 1) if cur[5] is not None else None,
+        "op_margin_pct": round(_f(cur[6]) * 100, 1) if cur[6] is not None else None,
+        "net_income": _f(cur[7]),
+        "fcf": _f(cur[8]),
+        "ocf": _f(cur[9]),
+        "ebitda": _f(cur[10]),
+        "net_debt": net_debt,
+        "net_debt_oldest": old_debt,
+        "debt_to_equity": round(debt / equity, 2) if debt is not None and equity else None,
+        "roe_pct": round(_f(cur[14]) * 100, 1) if cur[14] is not None else None,
+        "quarters_on_file": len(rows),
+    }
+
+
 def build_brief(ticker: str) -> dict:
     """Fan the independent reads out on a small pool — same trick as the
     dashboard drawer. Levels and intraday are the only network calls."""
@@ -244,10 +288,13 @@ def build_brief(ticker: str) -> dict:
         return compute_levels(ticker, current_price=price)
 
     def _fundamentals():
-        from analysis.fundamental_value import (compute_fair_value,
-                                                fundamentals_snapshot)
-        return {"fair_value": compute_fair_value(ticker, price_override=price),
-                "snapshot": fundamentals_snapshot(ticker)}
+        out = _fundamentals_block(ticker)
+        try:
+            from analysis.fundamental_value import compute_fair_value
+            out["fair_value"] = compute_fair_value(ticker, price_override=price)
+        except Exception as e:
+            out["fair_value_error"] = str(e)[:80]
+        return out
 
     tasks = {
         "price": lambda: _price_block(ticker),
@@ -438,13 +485,54 @@ def format_brief(d: dict) -> str:
                      + (f" @ ${a['entry']:,.2f}" if a.get("entry") else ""))
         L.append("")
 
-    # -- fundamentals (fair value)
+    # -- fundamentals
     fu = d.get("fundamentals") or {}
-    fv = (fu.get("fair_value") or {}) if isinstance(fu, dict) else {}
-    if isinstance(fv, dict) and fv.get("fair_value"):
-        L.append(f"### Fair Value  \n- Model estimate ${fv['fair_value']:,.2f}"
+    if fu.get("quarter"):
+        L.append(f"### Fundamentals  *({fu['quarter']}"
+                 + (f", filed {fu['filed']}" if fu.get("filed") else "")
+                 + ")*")
+        line = [f"Revenue {_money(fu.get('revenue'))}"]
+        if fu.get("rev_yoy_pct") is not None:
+            line.append(f"{_pctf(fu['rev_yoy_pct'])} YoY")
+        if fu.get("gross_margin_pct") is not None:
+            line.append(f"gross margin {fu['gross_margin_pct']:.0f}%")
+        if fu.get("op_margin_pct") is not None:
+            line.append(f"op margin {fu['op_margin_pct']:.0f}%")
+        L.append("- " + " · ".join(line))
+        line2 = []
+        if fu.get("net_income") is not None:
+            line2.append(f"Net income {_money(fu['net_income'])}")
+        if fu.get("ebitda") is not None:
+            line2.append(f"EBITDA {_money(fu['ebitda'])}")
+        if fu.get("fcf") is not None:
+            line2.append(f"FCF {_money(fu['fcf'])}")
+        if fu.get("ocf") is not None:
+            line2.append(f"op cash flow {_money(fu['ocf'])}")
+        if line2:
+            L.append("- " + " · ".join(line2))
+        line3 = []
+        if fu.get("net_debt") is not None:
+            nd = f"Net debt {_money(fu['net_debt'])}"
+            if fu.get("net_debt_oldest") is not None and fu["net_debt_oldest"]:
+                arrow = "↑" if fu["net_debt"] > fu["net_debt_oldest"] else "↓"
+                nd += f" ({arrow} from {_money(fu['net_debt_oldest'])} " \
+                      f"{fu.get('quarters_on_file', '?')}q ago)"
+            line3.append(nd)
+        if fu.get("debt_to_equity") is not None:
+            line3.append(f"D/E {fu['debt_to_equity']}")
+        if fu.get("roe_pct") is not None:
+            line3.append(f"ROE {fu['roe_pct']:.1f}%")
+        if line3:
+            L.append("- " + " · ".join(line3))
+    fv = fu.get("fair_value") if isinstance(fu.get("fair_value"), dict) else {}
+    if fv and fv.get("fair_value"):
+        L.append(f"- Fair-value model: ${fv['fair_value']:,.2f}"
                  + (f" vs price ${px:,.2f}" if px else "")
                  + (f" — {fv.get('verdict')}" if fv.get("verdict") else ""))
+    elif fu.get("quarter"):
+        L.append("- Fair-value model: n/a (REITs and negative-FCF names are "
+                 "judged on sector metrics, not our DCF)")
+    if fu.get("quarter"):
         L.append("")
 
     # -- the read: levels, not predictions
