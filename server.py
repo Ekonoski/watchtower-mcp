@@ -1002,6 +1002,34 @@ def watchtower_momentum(scanner: str = "gappers", top_n: int = 15) -> str:
 
 
 @mcp.tool()
+def watchtower_brief(ticker: str) -> str:
+    """
+    The one-call big-picture brief for any ticker — every Watchtower feed
+    assembled into a single structured summary: price structure and trend,
+    level ladder (chart levels merged with dealer-gamma walls), chart
+    patterns graded by our own 39k-event backtest, oscillator state,
+    dealer positioning with the magnitude rule applied, sector rotation
+    rank, IV context, insiders, social sentiment, recent alerts, and fair
+    value. Ends with "The Read" — levels, not predictions.
+
+    Use this FIRST when asked for a full picture / deep dive / "what do
+    we have on X". Individual tools (watchtower_gamma, watchtower_get_
+    oscillator, ...) remain for drilling into one dimension.
+
+    Args:
+        ticker: any symbol with price history in the system
+    """
+    tk = ticker.upper().strip()
+    if not tk or len(tk) > 6:
+        return "Invalid ticker."
+    try:
+        from analysis.brief import build_brief, format_brief
+        return format_brief(build_brief(tk))
+    except Exception as e:
+        return f"Brief failed for {tk}: {str(e)[:200]}"
+
+
+@mcp.tool()
 def watchtower_gamma(ticker: str = "SPY") -> str:
     """
     Dealer-gamma (GEX) levels computed in-house from the nightly options
