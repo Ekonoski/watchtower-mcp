@@ -163,7 +163,7 @@ def _rotation_block(ticker: str) -> dict:
 
 def _iv_block(ticker: str) -> dict:
     rows = _rows("""
-        SELECT as_of, atm_iv, call_oi, put_oi FROM iv_history
+        SELECT as_of, atm_iv, call_oi, put_oi, skew FROM iv_history
         WHERE ticker = %s ORDER BY as_of DESC LIMIT 120
     """, (ticker,))
     if not rows or rows[0][1] is None:
@@ -172,9 +172,15 @@ def _iv_block(ticker: str) -> dict:
     cur = _f(rows[0][1])
     pct = round(100 * sum(1 for v in ivs if v <= cur) / len(ivs)) if ivs else None
     c_oi, p_oi = rows[0][2] or 0, rows[0][3] or 0
-    return {"as_of": str(rows[0][0]), "atm_iv": cur, "iv_percentile": pct,
-            "window_days": len(rows),
-            "put_call_oi": round(p_oi / c_oi, 2) if c_oi else None}
+    out = {"as_of": str(rows[0][0]), "atm_iv": cur, "iv_percentile": pct,
+           "window_days": len(rows),
+           "put_call_oi": round(p_oi / c_oi, 2) if c_oi else None}
+    skews = [_f(r[4]) for r in rows if r[4] is not None]
+    if skews:
+        out["skew"] = skews[0]
+        out["skew_pctile"] = round(100 * sum(1 for s in sorted(skews)
+                                             if s <= skews[0]) / len(skews))
+    return out
 
 
 def _insider_block(ticker: str) -> list:
@@ -267,6 +273,14 @@ def _fundamentals_block(ticker: str) -> dict:
     }
 
 
+def _short_block(ticker: str) -> dict:
+    try:
+        from analysis.short_side import get_short_context
+        return get_short_context(ticker)
+    except Exception:
+        return {}
+
+
 def _vol_regime_block() -> dict:
     """Market-wide vol dial — same for every ticker, cheap DB read."""
     try:
@@ -319,6 +333,7 @@ def build_brief(ticker: str) -> dict:
         "iv": lambda: _iv_block(ticker),
         "alerts": lambda: _alerts_block(ticker),
         "vol_regime": _vol_regime_block,
+        "short_side": lambda: _short_block(ticker),
     }
     with ThreadPoolExecutor(max_workers=6) as pool:
         futs = {pool.submit(fn): name for name, fn in tasks.items()}
@@ -472,6 +487,30 @@ def format_brief(d: dict) -> str:
         L.append(f"- ATM IV {iv.get('atm_iv') and round(iv['atm_iv'] * 100)}%"
                  f" — percentile {iv.get('iv_percentile')} of the last "
                  f"{iv.get('window_days')} sessions · put/call OI {iv.get('put_call_oi')}")
+        if iv.get("skew") is not None:
+            L.append(f"- Put-call skew {iv['skew'] * 100:+.1f} vol pts"
+                     f" (pctile {iv.get('skew_pctile')} of its own history)"
+                     " — positive = downside protection priced richer")
+        L.append("")
+
+    # -- short side (squeeze dial — context, not a trigger)
+    sh = d.get("short_side") or {}
+    if sh.get("squeeze_score") is not None:
+        L.append("### Short Side  *(FINRA daily short volume"
+                 + (f"; SI as of {sh['si_as_of']}" if sh.get("si_as_of") else "")
+                 + ")*")
+        bits = []
+        if sh.get("si_pct_float") is not None:
+            bits.append(f"SI {sh['si_pct_float']}% of float")
+        if sh.get("days_to_cover") is not None:
+            bits.append(f"{sh['days_to_cover']}d to cover")
+        if sh.get("svr") is not None:
+            bits.append(f"short-vol ratio {sh['svr']} "
+                        f"(pctile {sh.get('svr_pctile')} of 60d)")
+        L.append("- " + " · ".join(bits) if bits else "- partial data")
+        L.append(f"- Squeeze dial: **{sh['squeeze_score']}/100 "
+                 f"({sh['squeeze_label']})** — context, not a trigger; "
+                 "normal market-making prints ~40-50% short daily.")
         L.append("")
 
     # -- insiders / social / alerts
