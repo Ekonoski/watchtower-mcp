@@ -66,7 +66,7 @@
   }
   .chip.bullish { color: var(--green); border-color: var(--green); background: var(--green-dim); }
   .chip.bearish { color: var(--red); border-color: var(--red); background: var(--red-dim); }
-  .chip.neutral, .chip.mixed { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-dim); }
+  .chip.neutral, .chip.mixed, .chip.warn { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-dim); }
 
   /* ── tabs ───────────────────────────────────────────── */
   nav { display: flex; gap: 4px; padding: 10px 20px 0; }
@@ -372,6 +372,7 @@
   <span id="pulse-sent" class="chip">—</span>
   <span id="pulse-mood" class="chip">—</span>
   <span id="pulse-gamma" title="dealer-gamma regime — re-priced every 15 min during market hours (delayed feed), nightly otherwise. pinning: hedging dampens moves (fade toward walls); slippery: hedging amplifies (respect momentum)"></span>
+  <span id="pulse-vix" title="vol regime dial — zones: <13 quiet, 13-20 normal, 20-28 elevated, 28+ stress. Term structure: contango = resting state; BACKWARDATION = near-term fear above far-term, the honest stress line. A dial, not a trigger."></span>
   <span id="pulse-themes"></span>
   <span id="pulse-tickers"></span>
 </div>
@@ -1733,15 +1734,33 @@ async function loadGamma() {
     if (rows.length) $("pulse").style.display = "flex";
   } catch {}
 }
+async function loadVix() {
+  try {
+    const v = await api("/api/vix");
+    if (!v || v.vix == null) return;
+    const cls = v.term === "backwardation" || v.zone === "stress" ? "bearish"
+              : v.zone === "elevated" ? "warn" : "";
+    const chg = v.chg_1d_pct != null
+      ? ` ${v.chg_1d_pct >= 0 ? "▲" : "▼"}${Math.abs(v.chg_1d_pct).toFixed(1)}%` : "";
+    const term = v.term === "backwardation" ? " · ⚠ backwardation"
+               : v.term === "contango" ? "" : "";
+    $("pulse-vix").innerHTML =
+      `<span class="chip ${cls}" title="VIX3M ${v.vix3m ?? "n/a"} · ${v.term ?? "term n/a"} (${v.as_of})">` +
+      `VIX ${fmtNum(v.vix, 1)}${chg} ${esc(v.zone)}${term}</span>`;
+    $("pulse").style.display = "flex";
+  } catch {}
+}
 loadGamma();
+loadVix();
 // The index readings re-price every 15 min during market hours — keep the
 // chips current without waiting for a page reload.
 setInterval(loadGamma, 5 * 60 * 1000);
+setInterval(loadVix, 5 * 60 * 1000);
 
 function renderPulse() {
   const p = (state.snapshot || {}).market_pulse || {};
   if (!p.overall_sentiment && !(p.top_tickers || []).length
-      && !$("pulse-gamma").innerHTML) { $("pulse").style.display = "none"; return; }
+      && !$("pulse-gamma").innerHTML && !$("pulse-vix").innerHTML) { $("pulse").style.display = "none"; return; }
   $("pulse").style.display = "flex";
   const sent = p.overall_sentiment || "—";
   $("pulse-sent").textContent = sent.toUpperCase();
