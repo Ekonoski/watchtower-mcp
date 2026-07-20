@@ -1169,11 +1169,14 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # Morning gamma sweep — 8:15 AM ET, full universe on overnight-settled
-    # OI. The authoritative map for the day, in place before the open.
+    # Morning gamma sweep — 7:30 AM ET, full universe on overnight-settled
+    # OI. The authoritative map for the day, ready while premarket prep is
+    # underway. 7:30 is the practical floor: OCC/Polygon's overnight OI
+    # refresh is reliably done by then; much earlier risks a stale read
+    # (and the 9:35 intraday layer self-corrects the indexes regardless).
     scheduler.add_job(
         run_gex_morning_job,
-        CronTrigger(day_of_week="mon-fri", hour="8", minute="15", timezone=et),
+        CronTrigger(day_of_week="mon-fri", hour="7", minute="30", timezone=et),
         id="gex_morning",
         replace_existing=True,
     )
