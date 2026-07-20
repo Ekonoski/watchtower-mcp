@@ -706,6 +706,49 @@ def run_gex_morning_job():
         log.error(f"[gex] morning error: {e}")
 
 
+def run_vix_job():
+    """4:40 PM ET: settle the day's VIX/VIX3M closes (backfills to
+    2021-06-01 on first run). The intraday provisional update rides the
+    gamma 15-minute job."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("vix_update"):
+        return
+    try:
+        from analysis.vix import run_vix_update
+        res = run_vix_update()
+        log.info(f"[vix] daily: {res}")
+    except Exception as e:
+        log.error(f"[vix] daily error: {e}")
+
+
+def _seed_vix_if_missing():
+    """Deploy backstop: populate vix_history (incl. the initial
+    backfill) whenever the latest stored session is stale."""
+    try:
+        from analysis.vix import run_vix_update
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT max(as_of) FROM vix_history")
+                last = cur.fetchone()[0]
+        finally:
+            conn.close()
+        from datetime import date, timedelta
+        if last is not None and last >= date.today() - timedelta(days=4):
+            return
+        log.info("[vix] history missing/stale — seeding...")
+        res = run_vix_update()
+        log.info(f"[vix] seed: {res}")
+    except Exception as e:
+        log.warning(f"[vix] seed skipped: {e}")
+
+
 def run_gex_intraday_job():
     """Every 15 min during market hours: re-price the four index chains
     at current spot — live net GEX / regime on the dashboard plus the
@@ -723,6 +766,11 @@ def run_gex_intraday_job():
         log.info(f"[gex] intraday tick: {res}")
     except Exception as e:
         log.error(f"[gex] intraday error: {e}")
+    try:
+        from analysis.vix import run_vix_update
+        run_vix_update(intraday=True)
+    except Exception as e:
+        log.warning(f"[vix] intraday tick failed: {e}")
 
 
 def _seed_gex_if_missing():
@@ -1107,6 +1155,14 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # VIX/VIX3M settle — 4:40 PM ET, Mon-Fri
+    scheduler.add_job(
+        run_vix_job,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="40", timezone=et),
+        id="vix_daily",
+        replace_existing=True,
+    )
+
     # Daily return fill — 4:45 PM ET, Mon-Fri (after market close + social scan)
     scheduler.add_job(
         run_daily_fill_returns,
@@ -1224,6 +1280,7 @@ def start_scheduler():
         _seed_momentum_if_empty()
         _seed_iv_snapshot_if_missing()
         _seed_gex_if_missing()
+        _seed_vix_if_missing()
         _seed_oscillator_backtest_if_empty()
         _seed_pattern_backtest_if_empty()
 

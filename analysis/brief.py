@@ -267,6 +267,15 @@ def _fundamentals_block(ticker: str) -> dict:
     }
 
 
+def _vol_regime_block() -> dict:
+    """Market-wide vol dial — same for every ticker, cheap DB read."""
+    try:
+        from analysis.vix import get_vix_context
+        return get_vix_context()
+    except Exception:
+        return {}
+
+
 def build_brief(ticker: str) -> dict:
     """Fan the independent reads out on a small pool — same trick as the
     dashboard drawer. Levels and intraday are the only network calls."""
@@ -309,6 +318,7 @@ def build_brief(ticker: str) -> dict:
         "insider": lambda: _insider_block(ticker),
         "iv": lambda: _iv_block(ticker),
         "alerts": lambda: _alerts_block(ticker),
+        "vol_regime": _vol_regime_block,
     }
     with ThreadPoolExecutor(max_workers=6) as pool:
         futs = {pool.submit(fn): name for name, fn in tasks.items()}
@@ -533,6 +543,18 @@ def format_brief(d: dict) -> str:
         L.append("- Fair-value model: n/a (REITs and negative-FCF names are "
                  "judged on sector metrics, not our DCF)")
     if fu.get("quarter"):
+        L.append("")
+
+    # -- market context (vol regime dial)
+    vr = d.get("vol_regime") or {}
+    if vr.get("vix") is not None:
+        chg = f" ({vr['chg_1d_pct']:+.1f}% 1d)" if vr.get("chg_1d_pct") is not None else ""
+        term = (" · ⚠ BACKWARDATION — near-term fear above far-term"
+                if vr.get("term") == "backwardation"
+                else " · contango" if vr.get("term") == "contango" else "")
+        L.append(f"### Market Context  *(as of {vr.get('as_of')})*")
+        L.append(f"- VIX {vr['vix']}{chg} — {vr.get('zone')}{term}. "
+                 "A dial, not a trigger.")
         L.append("")
 
     # -- the read: levels, not predictions

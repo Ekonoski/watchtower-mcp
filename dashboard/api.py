@@ -2527,6 +2527,19 @@ def register_routes(mcp) -> None:
             rows = []
         return JSONResponse({"gamma": rows})
 
+    @mcp.custom_route("/api/vix", methods=["GET"])
+    async def vix(request: Request):
+        """Vol regime dial for the pulse bar — level, zone, term
+        structure, 1-day change. A dial, not a trigger."""
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            from analysis.vix import get_vix_context
+            data = await asyncio.to_thread(get_vix_context)
+        except Exception:
+            data = {}
+        return JSONResponse(data or {})
+
     @mcp.custom_route("/api/gamma/intraday", methods=["GET"])
     async def gamma_intraday(request: Request):
         """Today's 15-minute net-GEX path for one index — the drawer's
