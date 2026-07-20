@@ -16,9 +16,11 @@ profits" through all of 2017's melt-up. What actually carries signal:
              sides; agreement confirms the regime, divergence is
              information on its own.
 
-Data: FMP stable endpoints (^VIX / ^VIX3M), EOD job at 4:40 PM ET plus
-an intraday provisional quote riding the gamma 15-minute cadence.
-History back to 2021-06-01 for future backtest regime tagging.
+Data: CBOE's own public files (FMP 402'd index history on our plan —
+CBOE is the canonical source anyway and free): full daily history CSVs
+plus delayed quote JSON. EOD job at 4:40 PM ET, intraday provisional
+quote riding the gamma 15-minute cadence. History kept from 2021-06-01
+for future backtest regime tagging.
 """
 import logging
 import os
@@ -26,13 +28,12 @@ from datetime import date
 
 log = logging.getLogger(__name__)
 
-_FMP_BASE = "https://financialmodelingprep.com/stable"
+_CBOE_HIST = ("https://cdn.cboe.com/api/global/us_indices/daily_prices/"
+              "{name}_History.csv")
+_CBOE_QUOTE = ("https://cdn.cboe.com/api/global/delayed_quotes/quotes/"
+               "_{name}.json")
 HISTORY_START = "2021-06-01"
 BACKFILL_MIN_ROWS = 100    # fewer stored rows than this triggers a backfill
-
-
-def _key() -> str:
-    return os.environ.get("FMP_API_KEY", "").strip()
 
 
 def _scrub(e) -> str:
@@ -40,35 +41,44 @@ def _scrub(e) -> str:
     return re.sub(r"apikey=[^&\s'\"]+", "apikey=***", str(e))
 
 
-def _hist(symbol: str, start: str) -> dict:
-    """{date: close} from FMP's stable EOD endpoint; tolerant of both
-    the bare-list and {'historical': [...]} response shapes."""
+def _hist(name: str, start: str) -> dict:
+    """{iso_date: close} from CBOE's public history CSV (DATE,OPEN,HIGH,
+    LOW,CLOSE). Tolerates both ISO and MM/DD/YYYY date styles."""
+    import csv
+    import io
     import requests
-    resp = requests.get(f"{_FMP_BASE}/historical-price-eod/full",
-                        params={"symbol": symbol, "from": start,
-                                "apikey": _key()}, timeout=60)
+    resp = requests.get(_CBOE_HIST.format(name=name), timeout=60)
     resp.raise_for_status()
-    data = resp.json() or []
-    if isinstance(data, dict):
-        data = data.get("historical") or []
     out = {}
-    for r in data:
-        d, c = r.get("date"), r.get("close")
-        if d and c is not None:
-            out[str(d)[:10]] = float(c)
+    for row in csv.reader(io.StringIO(resp.text)):
+        if len(row) < 5 or not row[0] or row[0].upper().startswith("DATE"):
+            continue
+        raw = row[0].strip()
+        try:
+            if "/" in raw:                      # MM/DD/YYYY
+                m, d_, y = raw.split("/")
+                iso = f"{y}-{int(m):02d}-{int(d_):02d}"
+            else:                               # YYYY-MM-DD
+                iso = raw[:10]
+            close = float(row[4])
+        except (TypeError, ValueError):
+            continue
+        if iso >= start:
+            out[iso] = close
     return out
 
 
-def _quote(symbol: str):
+def _quote(name: str):
+    """Delayed spot from CBOE's public quote JSON; shape varies a bit
+    across their endpoints, so probe the usual keys."""
     import requests
-    resp = requests.get(f"{_FMP_BASE}/quote",
-                        params={"symbol": symbol, "apikey": _key()},
-                        timeout=15)
+    resp = requests.get(_CBOE_QUOTE.format(name=name), timeout=15)
     resp.raise_for_status()
-    data = resp.json() or []
-    row = data[0] if isinstance(data, list) and data else data
-    p = (row or {}).get("price")
-    return float(p) if p is not None else None
+    data = (resp.json() or {}).get("data") or {}
+    for k in ("current_price", "price", "close", "last_price"):
+        if data.get(k) is not None:
+            return float(data[k])
+    return None
 
 
 def run_vix_update(intraday: bool = False) -> dict:
@@ -76,14 +86,12 @@ def run_vix_update(intraday: bool = False) -> dict:
     is sparse) and upsert. Intraday: one quote call to keep today's
     provisional row current — cheap enough to ride the gamma cadence."""
     from screen.reversal_screen import _conn
-    if not _key():
-        return {"error": "no FMP key"}
     conn = _conn()
     try:
         if intraday:
             try:
-                v = _quote("^VIX")
-                v3 = _quote("^VIX3M")
+                v = _quote("VIX")
+                v3 = _quote("VIX3M")
             except Exception as e:
                 log.warning(f"[vix] intraday quote failed: {_scrub(e)}")
                 return {"error": _scrub(e)[:100]}
@@ -108,8 +116,8 @@ def run_vix_update(intraday: bool = False) -> dict:
         start = HISTORY_START if sparse else \
             (date.today() - timedelta(days=15)).isoformat()
         try:
-            vix = _hist("^VIX", start)
-            v3m = _hist("^VIX3M", start)
+            vix = _hist("VIX", start)
+            v3m = _hist("VIX3M", start)
         except Exception as e:
             log.warning(f"[vix] history fetch failed: {_scrub(e)}")
             return {"error": _scrub(e)[:100]}
