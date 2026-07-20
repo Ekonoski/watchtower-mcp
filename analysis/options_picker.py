@@ -378,10 +378,23 @@ def atm_iv_snapshot(ticker: str, close: float):
             ivs.append(atm["iv"])
     if not ivs:
         return None
+    # Put-call skew from the same window: OTM-put IV minus OTM-call IV
+    # (>=3% away from spot on each side). Positive = downside protection
+    # priced richer — normal state; the DEVIATION from a name's own
+    # history is the signal-ish part, same doctrine as IV rank.
+    otm_put = [c["iv"] for c in puts
+               if c["iv"] and c["strike"] <= close * 0.97]
+    otm_call = [c["iv"] for c in calls
+                if c["iv"] and c["strike"] >= close * 1.03]
+    skew = None
+    if otm_put and otm_call:
+        skew = round(sum(otm_put) / len(otm_put)
+                     - sum(otm_call) / len(otm_call), 4)
     return {
         "atm_iv": round(sum(ivs) / len(ivs), 4),
         "call_oi": sum(c["oi"] or 0 for c in calls),
         "put_oi": sum(c["oi"] or 0 for c in puts),
+        "skew": skew,
     }
 
 
@@ -459,12 +472,14 @@ def run_iv_snapshot(top_n: int = 500) -> dict:
         try:
             with conn.cursor() as cur:
                 cur.executemany("""
-                    INSERT INTO iv_history (ticker, as_of, atm_iv, call_oi, put_oi)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO iv_history (ticker, as_of, atm_iv, call_oi,
+                                            put_oi, skew)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (ticker, as_of) DO UPDATE SET
                         atm_iv = EXCLUDED.atm_iv, call_oi = EXCLUDED.call_oi,
-                        put_oi = EXCLUDED.put_oi
-                """, [(t, as_of, s["atm_iv"], s["call_oi"], s["put_oi"])
+                        put_oi = EXCLUDED.put_oi, skew = EXCLUDED.skew
+                """, [(t, as_of, s["atm_iv"], s["call_oi"], s["put_oi"],
+                       s.get("skew"))
                       for t, s in rows])
             conn.commit()
         finally:

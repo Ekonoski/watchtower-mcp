@@ -706,6 +706,50 @@ def run_gex_morning_job():
         log.error(f"[gex] morning error: {e}")
 
 
+def run_short_side_job():
+    """6:20 PM ET: FINRA publishes the day's Reg SHO short-volume files
+    around 6 PM — ingest them, then top up stale short-interest values
+    (bi-monthly data, stale-first, capped)."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    if not _claim_daily_job("short_side"):
+        return
+    try:
+        from analysis.short_side import (run_short_volume_update,
+                                         run_short_interest_update)
+        res = run_short_volume_update()
+        log.info(f"[short] daily volume: {res}")
+        res = run_short_interest_update()
+        log.info(f"[short] SI: {res}")
+    except Exception as e:
+        log.error(f"[short] daily error: {e}")
+
+
+def _seed_short_if_missing():
+    """Deploy backstop: backfill short_volume_daily when sparse."""
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(DISTINCT as_of) FROM short_volume_daily")
+                days = cur.fetchone()[0] or 0
+        finally:
+            conn.close()
+        if days >= 20:
+            return
+        log.info("[short] history sparse — seeding FINRA backfill...")
+        from analysis.short_side import run_short_volume_update
+        res = run_short_volume_update()
+        log.info(f"[short] seed: {res}")
+    except Exception as e:
+        log.warning(f"[short] seed skipped: {e}")
+
+
 def run_vix_job():
     """4:40 PM ET: settle the day's VIX/VIX3M closes (backfills to
     2021-06-01 on first run). The intraday provisional update rides the
@@ -1155,6 +1199,14 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # FINRA short volume + short interest — 6:20 PM ET, Mon-Fri
+    scheduler.add_job(
+        run_short_side_job,
+        CronTrigger(day_of_week="mon-fri", hour="18", minute="20", timezone=et),
+        id="short_side_daily",
+        replace_existing=True,
+    )
+
     # VIX/VIX3M settle — 4:40 PM ET, Mon-Fri
     scheduler.add_job(
         run_vix_job,
@@ -1281,6 +1333,7 @@ def start_scheduler():
         _seed_iv_snapshot_if_missing()
         _seed_gex_if_missing()
         _seed_vix_if_missing()
+        _seed_short_if_missing()
         _seed_oscillator_backtest_if_empty()
         _seed_pattern_backtest_if_empty()
 
