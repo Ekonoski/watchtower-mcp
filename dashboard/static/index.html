@@ -89,6 +89,10 @@
 
   /* ── table ──────────────────────────────────────────── */
   .tblwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  /* long position notes were shoving the remove column off-screen */
+  #tab-watchlist td:nth-child(6) { max-width: 420px; white-space: normal; overflow-wrap: anywhere; }
+  .wl-rm { padding: 2px 8px; font-size: 11.5px; color: var(--red); background: transparent; border: 1px solid var(--border); }
+  .wl-rm:hover { border-color: var(--red); background: var(--red-dim); }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { padding: 8px 12px; text-align: right; white-space: nowrap; }
   th:first-child, td:first-child, th.left, td.left { text-align: left; }
@@ -2722,7 +2726,8 @@ async function openDrawer(ticker) {
     </div>`;
   }
   html += `<div id="d-opt"></div>`;
-  html += `<div style="margin-top:16px"><button onclick="addToWatchlist('${esc(ticker)}')">+ Add to watchlist</button></div>`;
+  html += `<div style="margin-top:16px"><button id="d-wl-btn" onclick="toggleWatchlist('${esc(ticker)}')">${
+    state.wlSet && state.wlSet.has(ticker) ? "✓ Watching — remove from watchlist" : "+ Add to watchlist"}</button></div>`;
   $("d-body").innerHTML = html;
   _projGamma = d.gamma || null;   // walls/flip feed the option projector rows
   _wireGammaCompute(ticker);
@@ -3352,6 +3357,7 @@ async function loadWatchlist() {
   let r;
   try { r = await api("/api/watchlist?scope=" + encodeURIComponent(state.wlScope)); } catch { return; }
   const rows = r.watchlist || [];
+  state.wlSet = new Set(rows.filter(w => w.own !== false).map(w => w.ticker));
   $("wl-empty").style.display = rows.length ? "none" : "block";
   const showOwner = state.wlScope === "all";
   $("wl-body").innerHTML = rows.map(w => `<tr>
@@ -3365,15 +3371,26 @@ async function loadWatchlist() {
       : new Date(w.er_date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</td>
     <td class="left">${esc(w.notes)}</td>
     <td class="left num">${w.added_at ? new Date(w.added_at).toLocaleDateString() : ""}</td>
-    <td>${w.own === false ? "" : `<button onclick="removeFromWatchlist('${esc(w.ticker)}')">Remove</button>`}</td></tr>`).join("");
+    <td>${w.own === false ? "" : `<button class="wl-rm" title="remove from watchlist — notes are kept; re-adding restores them" onclick="removeFromWatchlist('${esc(w.ticker)}')">✕ remove</button>`}</td></tr>`).join("");
 }
 document.querySelectorAll("#wl-scope button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#wl-scope button").forEach(x => x.classList.remove("on"));
   b.classList.add("on"); state.wlScope = b.dataset.scope; loadWatchlist();
 });
 async function removeFromWatchlist(ticker) {
-  try { await api("/api/watchlist/" + encodeURIComponent(ticker), { method: "DELETE" }); loadWatchlist(); }
-  catch {}
+  try {
+    await api("/api/watchlist/" + encodeURIComponent(ticker), { method: "DELETE" });
+    toast(`${ticker} removed — notes kept, re-adding restores them`);
+    await loadWatchlist();
+  } catch {}
+}
+// Drawer button: one control that reflects and flips membership.
+async function toggleWatchlist(ticker) {
+  const was = !!(state.wlSet && state.wlSet.has(ticker));
+  if (was) await removeFromWatchlist(ticker);
+  else await addToWatchlist(ticker, "");
+  const b = $("d-wl-btn");
+  if (b) b.textContent = was ? "+ Add to watchlist" : "✓ Watching — remove from watchlist";
 }
 
 /* ── auto-refresh loop ── */
