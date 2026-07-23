@@ -3029,7 +3029,11 @@ function _renderProj() {
   if (!iv && prem) iv = _bsImplied(+prem, +spot, +strike, dte / 365, 0.04, type);
   if (!prem && iv) prem = _bsPrice(+spot, +strike, dte / 365, 0.04, +iv, type);
   if (!iv || !prem) { box.innerHTML = ""; return; }
-  const hz = [0, Math.max(1, Math.round(dte / 3)), Math.max(2, Math.round(dte * 2 / 3))];
+  // Short-dated contracts get TODAY / midpoint / EXPIRY — a +19d column on a
+  // 2-DTE option is fiction. 5+ DTE keeps the thirds layout.
+  const hz = dte >= 5
+    ? [0, Math.max(1, Math.round(dte / 3)), Math.max(2, Math.round(dte * 2 / 3))]
+    : [...new Set([0, Math.floor(dte / 2), dte])];
   // Leg toggle: the ticket's picks plus "Custom…" — the recommendation is
   // a starting point, never a cage.
   let toggle = `<span class="seg" style="margin-left:8px">`
@@ -3078,7 +3082,7 @@ function _renderProj() {
     ${controls}
     <div class="tblwrap" style="margin-top:6px"><table style="border-collapse:collapse;font-size:12.5px;min-width:340px">
       <thead><tr><th style="text-align:left;padding:4px 10px;color:var(--muted);font-size:10.5px">LEVEL</th>
-      ${hz.map(hd => `<th style="text-align:right;padding:4px 10px;color:var(--muted);font-size:10.5px">${hd === 0 ? "TODAY" : "+" + hd + "d"}</th>`).join("")}</tr></thead>
+      ${hz.map(hd => `<th style="text-align:right;padding:4px 10px;color:var(--muted);font-size:10.5px">${hd === 0 ? "TODAY" : hd === dte ? "EXPIRY" : "+" + hd + "d"}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div style="margin-top:5px;display:flex;gap:6px;align-items:center">
       <input type="number" id="proj-add" placeholder="Add level…" style="width:100px;font-size:12px">

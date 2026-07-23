@@ -124,7 +124,7 @@ def _earnings_inside(conn, ticker: str, until: date):
 
 def chain_lite(ticker: str) -> dict:
     """Chain summary for the drawer's manual Option Projector — works for
-    ANY optionable name, no pattern required. One windowed fetch (5-400
+    ANY optionable name, no pattern required. One windowed fetch (1-400
     DTE, strikes 0.6-1.5x spot), returned compact so the browser can
     switch expiry/strike instantly without refetching."""
     from itertools import islice
@@ -151,7 +151,7 @@ def chain_lite(ticker: str) -> dict:
         snaps = islice(client.list_snapshot_options_chain(
             ticker,
             params={
-                "expiration_date.gte": (today + timedelta(days=5)).isoformat(),
+                "expiration_date.gte": (today + timedelta(days=1)).isoformat(),
                 "expiration_date.lte": (today + timedelta(days=400)).isoformat(),
                 "strike_price.gte": spot * 0.6,
                 "strike_price.lte": spot * 1.5,
