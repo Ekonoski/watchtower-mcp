@@ -1452,12 +1452,13 @@ def scan_db_timeframes() -> dict:
 # ── 4h scan (Polygon, bounded candidate set) ─────────────────────────────────
 
 def _four_h_candidates(conn, hits: dict) -> list:
-    cands = set(hits.get("daily") or []) | set(hits.get("weekly") or [])
+    """Priority-ordered: the cap must trim the liquidity tail, never the
+    watchlist — sorted()[:cap] was alphabetical and silently dropped every
+    T–Z name (XLV included) once the pool outgrew FOUR_H_MAX_CANDIDATES."""
     with conn.cursor() as cur:
-        cur.execute("SELECT ticker FROM watchlist WHERE active = true")
-        cands.update(r[0] for r in cur.fetchall() if r[0])
-        cur.execute("SELECT DISTINCT ticker FROM pattern_scan WHERE timeframe = '4h'")
-        cands.update(r[0] for r in cur.fetchall() if r[0])
+        cur.execute("SELECT ticker FROM watchlist WHERE active = true "
+                    "ORDER BY ticker")
+        wl = [r[0] for r in cur.fetchall() if r[0]]
         cur.execute("""
             SELECT ticker FROM daily_prices
             WHERE trade_date >= CURRENT_DATE - 30
@@ -1465,8 +1466,18 @@ def _four_h_candidates(conn, hits: dict) -> list:
             ORDER BY avg(close * volume) DESC NULLS LAST
             LIMIT %s
         """, (FOUR_H_LIQUID_TOP,))
-        cands.update(r[0] for r in cur.fetchall() if r[0])
-    return sorted(cands)[:FOUR_H_MAX_CANDIDATES]
+        liquid = [r[0] for r in cur.fetchall() if r[0]]
+        cur.execute("SELECT DISTINCT ticker FROM pattern_scan "
+                    "WHERE timeframe = '4h' ORDER BY ticker")
+        prior = [r[0] for r in cur.fetchall() if r[0]]
+    fresh = sorted(set(hits.get("daily") or []) | set(hits.get("weekly") or []))
+    out, seen = [], set()
+    for bucket in (wl, fresh, liquid, prior):
+        for t in bucket:
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out[:FOUR_H_MAX_CANDIDATES]
 
 
 def scan_4h(hits: dict = None) -> int:
