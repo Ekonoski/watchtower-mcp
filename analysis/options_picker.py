@@ -129,7 +129,7 @@ def _earnings_inside(conn, ticker: str, until: date):
 # the term structure its own budget; strike bands tighten near-dated where
 # ladders are dense and traders live near spot.
 _CHAIN_WINDOWS = [   # (from_days, to_days, strike_lo_x, strike_hi_x, cap)
-    (1,   8,   0.90, 1.10, 1500),
+    (0,   8,   0.90, 1.10, 1500),   # day 0 = today's expiry — the 0DTE row
     (8,   35,  0.80, 1.25, 1200),
     (35,  130, 0.70, 1.40, 1200),
     (130, 250, 0.65, 1.45, 1000),
@@ -184,8 +184,9 @@ def _chain_rows(client, ticker: str, spot: float, today: date) -> list:
 def chain_lite(ticker: str) -> dict:
     """Chain summary for the drawer's manual Option Projector — works for
     ANY optionable name, no pattern required. Tiered windowed fetches
-    (1-400 DTE across four term buckets), returned compact so the browser
-    can switch expiry/strike instantly without refetching."""
+    (0-400 DTE across five term buckets, day 0 included for 0DTEs),
+    returned compact so the browser can switch expiry/strike instantly
+    without refetching."""
     from analysis.polygon_data import get_client
     from screen.reversal_screen import _conn
     ticker = ticker.upper().strip()

@@ -3072,9 +3072,12 @@ function _renderProj() {
     exp = L.exp; strike = +L.leg.strike; iv = L.leg.iv; prem = L.leg.last;
     legLabel = L.name;
   }
-  const dte = Math.max(1, Math.round((new Date(exp + "T16:00:00") - Date.now()) / 86400000));
-  if (!iv && prem) iv = _bsImplied(+prem, +spot, +strike, dte / 365, 0.04, type);
-  if (!prem && iv) prem = _bsPrice(+spot, +strike, dte / 365, 0.04, +iv, type);
+  // dteX = exact time to the 4pm expiry, in days — a 0DTE at 1pm has ~0.12
+  // day left, not a phantom full day. dte stays whole-day for column layout.
+  const dteX = Math.max((new Date(exp + "T16:00:00") - Date.now()) / 86400000, 0.02);
+  const dte = Math.max(1, Math.round(dteX));
+  if (!iv && prem) iv = _bsImplied(+prem, +spot, +strike, dteX / 365, 0.04, type);
+  if (!prem && iv) prem = _bsPrice(+spot, +strike, dteX / 365, 0.04, +iv, type);
   if (!iv || !prem) { box.innerHTML = ""; return; }
   // Short-dated contracts get TODAY / midpoint / EXPIRY — a +19d column on a
   // 2-DTE option is fiction. 5+ DTE keeps the thirds layout.
@@ -3108,7 +3111,7 @@ function _renderProj() {
     const { p, label } = lv;
     let cells = "";
     for (const hd of hz) {
-      const px = _bsPrice(p, +strike, Math.max(dte - hd, 0) / 365, 0.04, +iv, type);
+      const px = _bsPrice(p, +strike, Math.max(dteX - hd, 0) / 365, 0.04, +iv, type);
       const pct = (px / prem - 1) * 100;
       const a = Math.min(Math.abs(pct) / 120, 1) * 0.35 + 0.06;
       const bg = pct >= 0 ? `rgba(63,182,139,${a.toFixed(2)})` : `rgba(229,103,78,${a.toFixed(2)})`;
