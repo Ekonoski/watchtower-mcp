@@ -2924,17 +2924,31 @@ async function _fetchChainLite(ticker) {
 }
 
 function _defaultSel(chain, wantType, wantExp, wantStrike) {
+  // chain_lite drops zero-OI contracts, so an expiry can exist with only
+  // one side listed. Never return a null strike — it blanks the projector.
+  // Preference: wanted expiry → nearest ≥30d expiry WITH the wanted type →
+  // any expiry with the wanted type → flip type as a last resort.
+  const near = wantStrike || chain.spot;
+  const pick = (exp, type) => {
+    const side = chain.contracts.filter(x => x[0] === exp && x[1] === type);
+    if (!side.length) return null;
+    const s = side.reduce((b, x) => Math.abs(x[2] - near) < Math.abs(b[2] - near) ? x : b, side[0])[2];
+    return { type, exp, strike: s };
+  };
   const expiries = [...new Set(chain.contracts.map(x => x[0]))].sort();
   const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-  const exp = (wantExp && expiries.includes(wantExp)) ? wantExp
-    : (expiries.find(e => e >= in30) || expiries[expiries.length - 1]);
-  const side = chain.contracts.filter(x => x[0] === exp && x[1] === wantType);
-  let strike = null;
-  if (side.length) {
-    const near = wantStrike || chain.spot;
-    strike = side.reduce((b, x) => Math.abs(x[2] - near) < Math.abs(b[2] - near) ? x : b, side[0])[2];
+  const order = [];
+  if (wantExp && expiries.includes(wantExp)) order.push(wantExp);
+  order.push(...expiries.filter(e => e >= in30), ...expiries.slice().reverse());
+  for (const e of order) {
+    const s = pick(e, wantType);
+    if (s) return s;
   }
-  return { type: wantType, exp, strike };
+  for (const e of order) {
+    const s = pick(e, wantType === "c" ? "p" : "c");
+    if (s) return s;
+  }
+  return { type: wantType, exp: expiries[expiries.length - 1], strike: null };
 }
 
 async function loadManualProjector(ticker, tok, ticketErr) {
@@ -3014,9 +3028,24 @@ function _renderProj() {
   const cu = _proj.custom && _proj.custom.active ? _proj.custom : null;
   let type, exp, strike, iv, prem, legLabel;
   if (cu) {
-    const row = cu.chain.contracts.find(x =>
+    let row = cu.chain.contracts.find(x =>
       x[0] === cu.sel.exp && x[1] === cu.sel.type && x[2] === cu.sel.strike);
-    if (!row) { box.innerHTML = ""; return; }
+    if (!row) {
+      // Self-heal instead of blanking: re-derive a valid selection.
+      cu.sel = _defaultSel(cu.chain, cu.sel.type, cu.sel.exp, cu.sel.strike);
+      row = cu.chain.contracts.find(x =>
+        x[0] === cu.sel.exp && x[1] === cu.sel.type && x[2] === cu.sel.strike);
+    }
+    if (!row) {
+      box.innerHTML = `<div style="border-top:1px solid var(--border);padding-top:8px;color:var(--muted);font-size:12.5px">
+        No listed contracts with open interest for this selection — pick another expiry, or
+        <button data-pl="0" style="font-size:11px">back to the ticket legs</button></div>`;
+      box.querySelectorAll("[data-pl]").forEach(b => b.onclick = () => {
+        if (_proj.custom) _proj.custom.active = false;
+        _renderProj();
+      });
+      return;
+    }
     type = cu.sel.type === "c" ? "call" : "put";
     exp = cu.sel.exp; strike = row[2]; iv = row[3]; prem = row[4];
     legLabel = "Custom";
