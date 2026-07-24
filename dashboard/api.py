@@ -2722,3 +2722,31 @@ def register_routes(mcp) -> None:
         except Exception as e:
             return JSONResponse({"error": str(e)[:120]}, status_code=500)
         return JSONResponse({"ok": True, "ticker": ticker})
+
+    @mcp.custom_route("/api/fvg/{ticker}", methods=["GET"])
+    async def fvg_zones(request: Request):
+        """Displacement-quality fair value gaps (open + recently inverted)
+        for the drawer's Imbalances section. tf: 5m | 4h | d."""
+        if not _is_authed(request):
+            return _unauthorized()
+        ticker = (request.path_params.get("ticker") or "").upper().strip()
+        tf = (request.query_params.get("tf") or "5m").lower()
+
+        def _run():
+            from analysis.polygon_data import fetch_recent_bars
+            from analysis.fvg import detect_fvgs
+            if tf == "5m":
+                bars = fetch_recent_bars(ticker, days=3, multiplier=5,
+                                         timespan="minute")
+            elif tf == "4h":
+                bars = fetch_recent_bars(ticker, days=60, multiplier=4,
+                                         timespan="hour")
+            else:
+                bars = fetch_recent_bars(ticker, days=200)
+            return detect_fvgs(bars or [])
+
+        try:
+            gaps = await asyncio.to_thread(_run)
+        except Exception as e:
+            return JSONResponse({"error": str(e)[:120]}, status_code=500)
+        return JSONResponse({"ticker": ticker, "tf": tf, "gaps": gaps})

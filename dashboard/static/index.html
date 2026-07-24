@@ -2725,6 +2725,7 @@ async function openDrawer(ticker) {
         : `<div style="margin-top:8px;color:var(--muted)">No company description available.</div>`}
     </div>`;
   }
+  html += `<div id="d-fvg"></div>`;
   html += `<div id="d-opt"></div>`;
   html += `<div style="margin-top:16px"><button id="d-wl-btn" onclick="toggleWatchlist('${esc(ticker)}')">${
     state.wlSet && state.wlSet.has(ticker) ? "✓ Watching — remove from watchlist" : "+ Add to watchlist"}</button></div>`;
@@ -2733,6 +2734,7 @@ async function openDrawer(ticker) {
   _wireGammaCompute(ticker);
   _wireGammaPath(ticker, tok);    // day-path sparkline (indexes only)
   loadOptionTicket(ticker, tok);
+  _loadFvg(ticker, tok);
   // Membership chips → jump straight into the ETF holdings / theme modals.
   // Bound via data-attributes (not inline onclick) so names with quotes can't
   // break the handlers.
@@ -3387,6 +3389,42 @@ async function removeFromWatchlist(ticker) {
     toast(`${ticker} removed — notes kept, re-adding restores them`);
     await loadWatchlist();
   } catch {}
+}
+// Drawer Imbalances: displacement-quality FVG zones on 5m + 4h — a gap is
+// a level with edges; inverted = the IFVG retest candidate. Edges push
+// into the projector ladder so the zone prices option outcomes directly.
+async function _loadFvg(ticker, tok) {
+  const box = $("d-fvg");
+  if (!box) return;
+  try {
+    const [m5, h4] = await Promise.all([
+      api(`/api/fvg/${encodeURIComponent(ticker)}?tf=5m`),
+      api(`/api/fvg/${encodeURIComponent(ticker)}?tf=4h`),
+    ]);
+    if (seqStale("drawer", tok)) return;   // a newer drawer superseded this fetch
+    const rows = [...(m5.gaps || []).map(g => ({ ...g, tf: "5m" })),
+                  ...(h4.gaps || []).map(g => ({ ...g, tf: "4h" }))];
+    if (!rows.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px">
+      <b>Imbalances</b> <span style="color:var(--muted);font-size:11px">FVG zones · displacement-quality · first retest is the best retest</span>
+      <div class="tblwrap"><table style="border-collapse:collapse;font-size:12px;margin-top:4px">${
+      rows.map((g, i) => `<tr>
+        <td style="padding:2px 8px 2px 0"><span class="chip" style="font-size:10px">${g.tf}</span></td>
+        <td style="padding:2px 8px;color:${g.side === "bullish" ? "var(--green)" : "var(--red)"}">${g.side}</td>
+        <td class="num" style="padding:2px 8px">$${g.bottom} – $${g.top}</td>
+        <td style="padding:2px 8px;font-size:11px;color:${g.status === "inverted" ? "var(--yellow)" : "var(--muted)"}">${
+          g.status === "inverted" ? "INVERTED — retest = IFVG entry" : "open"}</td>
+        <td><button data-fvg="${i}" title="add both edges to the projector ladder" style="font-size:10px">→ proj</button></td>
+      </tr>`).join("")}</table></div></div>`;
+    box.querySelectorAll("[data-fvg]").forEach(b => b.onclick = () => {
+      const g = rows[+b.dataset.fvg];
+      if (!_proj) { toast("open the projector first (pick a leg)"); return; }
+      _proj.lvls.push({ p: +g.top, label: `FVG ${g.tf} top`, custom: true },
+                      { p: +g.bottom, label: `FVG ${g.tf} bot`, custom: true });
+      _renderProj();
+      toast(`FVG ${g.tf} edges added to projector`);
+    });
+  } catch { box.innerHTML = ""; }
 }
 // Drawer button: one control that reflects and flips membership.
 async function toggleWatchlist(ticker) {
