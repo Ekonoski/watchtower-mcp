@@ -2984,12 +2984,28 @@ async function loadManualProjector(ticker, tok, ticketErr) {
 }
 
 async function _activateCustomLeg() {
-  if (!_proj) return;
+  // The first chain fetch on a heavy name (QQQ/SPY) takes seconds — without
+  // feedback the Custom button reads as dead, and a toast alone is missable.
+  if (!_proj || _proj.chainBusy) return;
   const tk = _proj.t.ticker;
+  document.getElementById("pc-wait")?.remove();
+  document.getElementById("pc-err")?.remove();
+  const cached = _mchain && _mchain.ticker === tk && (_mchain.contracts || []).length;
+  const box0 = document.getElementById("d-proj");
+  if (box0 && !cached) box0.insertAdjacentHTML("beforeend",
+    `<div id="pc-wait" style="color:var(--muted);font-size:11.5px;margin-top:4px">Loading option chain… big chains take a few seconds</div>`);
+  _proj.chainBusy = true;
   let c;
   try { c = await _fetchChainLite(tk); } catch { c = {}; }
+  finally { if (_proj) _proj.chainBusy = false; }
+  document.getElementById("pc-wait")?.remove();
   if (!_proj || _proj.t.ticker !== tk) return;
-  if (!c || c.error || !(c.contracts || []).length) { toast("Chain: " + ((c && c.error) || "unavailable")); return; }
+  if (!c || c.error || !(c.contracts || []).length) {
+    const box1 = document.getElementById("d-proj");
+    if (box1) box1.insertAdjacentHTML("beforeend",
+      `<div id="pc-err" style="color:var(--red);font-size:11.5px;margin-top:4px">Chain unavailable: ${esc((c && c.error) || "no data")} — the ticket legs above still work.</div>`);
+    return;
+  }
   const wantType = _proj.t.direction === "bearish" ? "p" : "c";
   const L = _proj.usable[_proj.li];
   _proj.custom = { active: true, chain: c,
