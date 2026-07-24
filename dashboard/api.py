@@ -1813,7 +1813,10 @@ def register_routes(mcp) -> None:
         path = os.path.join(_STATIC_DIR, "index.html")
         try:
             with open(path, encoding="utf-8") as f:
-                return HTMLResponse(f.read())
+                # no-cache: heuristic browser caching kept serving stale JS
+                # after deploys — fixes looked broken until a hard refresh.
+                return HTMLResponse(f.read(),
+                                    headers={"Cache-Control": "no-cache"})
         except OSError as e:
             return HTMLResponse(f"<h1>Dashboard asset missing</h1><p>{e}</p>", status_code=500)
 

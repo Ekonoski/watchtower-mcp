@@ -122,12 +122,70 @@ def _earnings_inside(conn, ticker: str, until: date):
         return None
 
 
+# Snapshot pages arrive in expiry order, so a single windowed fetch spends
+# its whole contract budget inside the front week on names with daily
+# expirations (QQQ/SPY list ~1,200 contracts PER DAY) — the custom dropdown
+# never saw a weekly, monthly, or LEAP. Tiered windows give every part of
+# the term structure its own budget; strike bands tighten near-dated where
+# ladders are dense and traders live near spot.
+_CHAIN_WINDOWS = [   # (from_days, to_days, strike_lo_x, strike_hi_x, cap)
+    (1,   8,   0.90, 1.10, 1500),
+    (8,   35,  0.80, 1.25, 1200),
+    (35,  130, 0.70, 1.40, 1200),
+    (130, 250, 0.65, 1.45, 1000),
+    (250, 400, 0.60, 1.50, 1000),
+]
+
+
+def _chain_rows(client, ticker: str, spot: float, today: date) -> list:
+    """Fetch + flatten the tiered windows. Boundary days overlap (gte/lte
+    are inclusive), so rows dedup on (expiry, type, strike)."""
+    from itertools import islice
+    rows, seen = [], set()
+    for lo, hi, klo, khi, cap in _CHAIN_WINDOWS:
+        snaps = islice(client.list_snapshot_options_chain(
+            ticker,
+            params={
+                "expiration_date.gte": (today + timedelta(days=lo)).isoformat(),
+                "expiration_date.lte": (today + timedelta(days=hi)).isoformat(),
+                "strike_price.gte": spot * klo,
+                "strike_price.lte": spot * khi,
+                "limit": 250,
+            },
+        ), cap)
+        for s in snaps:
+            det = getattr(s, "details", None)
+            if det is None:
+                continue
+            oi = getattr(s, "open_interest", None)
+            if not oi:
+                continue    # dead strikes just clutter the dropdowns
+            exp = str(getattr(det, "expiration_date", ""))
+            ctype = str(getattr(det, "contract_type", ""))[:1]   # 'c' | 'p'
+            strike = float(getattr(det, "strike_price", 0) or 0)
+            key = (exp, ctype, strike)
+            if key in seen:
+                continue
+            seen.add(key)
+            day = getattr(s, "day", None)
+            lt = getattr(s, "last_trade", None)
+            price = (getattr(day, "close", None) if day else None) \
+                or (getattr(lt, "price", None) if lt else None)
+            iv = getattr(s, "implied_volatility", None)
+            rows.append([
+                exp, ctype, strike,
+                round(float(iv), 4) if iv else None,
+                round(float(price), 2) if price else None,
+                int(oi),
+            ])
+    return rows
+
+
 def chain_lite(ticker: str) -> dict:
     """Chain summary for the drawer's manual Option Projector — works for
-    ANY optionable name, no pattern required. One windowed fetch (1-400
-    DTE, strikes 0.6-1.5x spot), returned compact so the browser can
-    switch expiry/strike instantly without refetching."""
-    from itertools import islice
+    ANY optionable name, no pattern required. Tiered windowed fetches
+    (1-400 DTE across four term buckets), returned compact so the browser
+    can switch expiry/strike instantly without refetching."""
     from analysis.polygon_data import get_client
     from screen.reversal_screen import _conn
     ticker = ticker.upper().strip()
@@ -146,39 +204,8 @@ def chain_lite(ticker: str) -> dict:
     if not client:
         return {"error": "no polygon client"}
     today = date.today()
-    contracts = []
     try:
-        snaps = islice(client.list_snapshot_options_chain(
-            ticker,
-            params={
-                "expiration_date.gte": (today + timedelta(days=1)).isoformat(),
-                "expiration_date.lte": (today + timedelta(days=400)).isoformat(),
-                "strike_price.gte": spot * 0.6,
-                "strike_price.lte": spot * 1.5,
-                "limit": 250,
-            },
-        ), 4000)
-        for s in snaps:
-            det = getattr(s, "details", None)
-            if det is None:
-                continue
-            oi = getattr(s, "open_interest", None)
-            if not oi:
-                continue    # dead strikes just clutter the dropdowns
-            greeks = getattr(s, "greeks", None)
-            day = getattr(s, "day", None)
-            lt = getattr(s, "last_trade", None)
-            price = (getattr(day, "close", None) if day else None) \
-                or (getattr(lt, "price", None) if lt else None)
-            iv = getattr(s, "implied_volatility", None)
-            contracts.append([
-                str(getattr(det, "expiration_date", "")),
-                str(getattr(det, "contract_type", ""))[:1],   # 'c' | 'p'
-                float(getattr(det, "strike_price", 0) or 0),
-                round(float(iv), 4) if iv else None,
-                round(float(price), 2) if price else None,
-                int(oi),
-            ])
+        contracts = _chain_rows(client, ticker, spot, today)
     except Exception as e:
         log.warning(f"[options] chain_lite {ticker} failed: {e}")
         return {"error": str(e)[:120]}
