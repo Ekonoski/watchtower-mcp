@@ -67,9 +67,18 @@ SECTOR HEAT: median-stock (breadth) based, not cap-weighted — a green
 tile means the TYPICAL stock is winning, deliberately immune to one
 mega-cap dragging an index.
 
-OSCILLATOR: the brief's one-line direction is compressed state; when
-the oscillator materially drives a decision, drill in with
-watchtower_get_oscillator for the wave sequence per timeframe.
+OSCILLATOR: never state a timeframe's direction from the brief line
+alone. That label is a scan summary and can read "bullish" while MACD
+confirms down and money flow curls down — it marks a mean-reversion
+CONDITION at an extreme, not momentum turning. Confluence is a 0-100
+score, not a count of agreeing indicators: "33/100" is weak. The brief
+prints the bar stamp, the MACD state, signal DIRECTIONS (mf_curl down
+is bearish; the bare name is not), and a "⚠ internals disagree" line.
+If that warning is present, if the bar stamp lags the tape, or if the
+read does real work in your answer, call watchtower_get_oscillator for
+that timeframe and quote its line before drawing any conclusion. An
+oscillator extreme is a location, not a signal — it is not confluence
+and never a setup on its own.
 
 HOUSE STYLE: prefer watchtower_brief first for any full picture, then
 drill-in tools. State data freshness when it could mislead. Be honest
