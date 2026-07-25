@@ -106,12 +106,17 @@ def _patterns_block(ticker: str) -> dict:
 
 
 def _oscillator_block(ticker: str) -> list:
+    # Keep the whole signals dict, not just its keys: the values carry the
+    # DIRECTION ("mf_curl down" vs "mf_curl up") and the vol-backed flag.
+    # Flattening to .keys() turned a bearish flag into a neutral-looking
+    # name and let the brief read bullish while flow curled down.
     return [{"timeframe": r[0], "direction": r[1], "confluence": _f(r[2]),
-             "rsi": _f(r[3]), "signals": list((r[4] or {}).keys()),
-             "bar_ts": str(r[5])}
+             "rsi": _f(r[3]), "signals": r[4] or {},
+             "bar_ts": str(r[5]), "macd_hist": _f(r[6]),
+             "wt1": _f(r[7]), "wt2": _f(r[8])}
             for r in _rows("""
                 SELECT timeframe, direction, confluence_score, rsi, signals,
-                       bar_ts
+                       bar_ts, macd_hist, wt1, wt2
                 FROM oscillator_scan WHERE ticker = %s ORDER BY timeframe
             """, (ticker,))]
 
@@ -363,6 +368,56 @@ def _pctf(v, signed=True):
     return f"{v:+.1f}%" if signed else f"{v:.1f}%"
 
 
+# The scan mixes vocabularies for signal direction: waves/flow say up|down,
+# divergence says bullish|bearish. Normalise before comparing anything.
+_OSC_UP = {"up", "bullish"}
+_OSC_DOWN = {"down", "bearish"}
+
+
+def _osc_dir(s):
+    s = (s or "").strip().lower()
+    return "up" if s in _OSC_UP else ("down" if s in _OSC_DOWN else None)
+
+
+def _osc_signal_tags(signals: dict) -> list:
+    """Signal names WITH direction and vol-backed flag, the way
+    oscillator.describe_read() renders them. A bare name is ambiguous:
+    'mf_curl' reads neutral when the value says it curled down."""
+    tags = []
+    for k, v in (signals or {}).items():
+        if not isinstance(v, dict):
+            tags.append(str(k))
+            continue
+        tag = k + (f" {v['dir']}" if v.get("dir") else "")
+        if v.get("zone") == "extreme":
+            tag += " (extreme)"
+        if v.get("volume_backed"):
+            tag += " (vol-backed)"
+        if v.get("count") and v.get("indicators"):
+            tag += f" ({v['count']}/4: {'+'.join(v['indicators'])})"
+        tags.append(tag)
+    return tags
+
+
+def _osc_conflicts(o: dict) -> list:
+    """Objective disagreements between the scan's headline direction and its
+    own internals — same idea as the decoration warning on the gamma block:
+    when the headline isn't load-bearing, say so on the same screen."""
+    want = _osc_dir(o.get("direction"))
+    if want is None:
+        return []
+    out = []
+    mh = o.get("macd_hist")
+    if mh is not None and _osc_dir("up" if mh > 0 else "down") != want:
+        out.append(f"MACD confirming {'up' if mh > 0 else 'down'} ({mh:+.2f})")
+    for k, v in (o.get("signals") or {}).items():
+        if isinstance(v, dict):
+            sd = _osc_dir(v.get("dir"))
+            if sd and sd != want:
+                out.append(f"{k} {v.get('dir')}")
+    return out
+
+
 def format_brief(d: dict) -> str:
     t = d.get("ticker", "?")
     rot = d.get("rotation") or {}
@@ -377,8 +432,22 @@ def format_brief(d: dict) -> str:
         L.append(f"### Structure & Trend  *(bars through {p.get('as_of')}"
                  + (", live quote delayed ~15m" if live else "") + ")*")
         px = live or p.get("close")
-        L.append(f"- Price ${px:,.2f}" +
-                 (f" ({_pctf(intr.get('change_pct'))} today)" if intr.get("change_pct") is not None else "") +
+        # Derive the day move from the SAME close series as 1w/1m/3m/6m and
+        # name the reference, instead of printing a vendor todaysChangePerc
+        # keyed to some other prev close. NOK Jul 24 printed "-7.6% today"
+        # next to $9.10 when $9.10 vs the $9.73 Jul 23 close is -6.5%.
+        ref = p.get("close")
+        if live and ref:
+            # Live quote against the last settled close — name the reference.
+            day = f" ({_pctf(round((live / ref - 1) * 100, 2))} vs "
+            day += f"{p.get('as_of')} close ${ref:,.2f})"
+        elif p.get("ret_1d") is not None:
+            # No live quote: px IS the close, so report that session's own
+            # move rather than comparing the price to itself.
+            day = f" ({_pctf(p.get('ret_1d'))} on {p.get('as_of')})"
+        else:
+            day = ""
+        L.append(f"- Price ${px:,.2f}{day}"
                  f" · 1w {_pctf(p.get('ret_1w'))} · 1m {_pctf(p.get('ret_1m'))}"
                  f" · 3m {_pctf(p.get('ret_3m'))} · 6m {_pctf(p.get('ret_6m'))}")
         smas = []
@@ -436,11 +505,30 @@ def format_brief(d: dict) -> str:
         L.append("")
     osc = d.get("oscillator") or []
     if osc:
-        parts = [f"{o['timeframe']}: {o['direction'] or 'neutral'}"
-                 f" ({o['confluence']:.0f} confluence" +
-                 (f", {', '.join(o['signals'][:3])})" if o["signals"] else ")")
-                 for o in osc]
-        L.append("### Oscillator  \n- " + " · ".join(parts))
+        L.append("### Oscillator  *(confirmed bars only — cannot repaint; "
+                 "confluence is a 0-100 score, not a count of agreeing "
+                 "indicators)*")
+        for o in osc:
+            head = (f"- **{o['timeframe']}**: {o.get('direction') or 'neutral'}"
+                    f" {o.get('confluence') or 0:.0f}/100")
+            bits = []
+            bar = (o.get("bar_ts") or "")[:10]
+            if bar:
+                bits.append(f"bar {bar}")
+            mh = o.get("macd_hist")
+            if mh is not None:
+                bits.append(f"MACD confirming {'up' if mh > 0 else 'down'}"
+                            f" ({mh:+.2f})")
+            tags = _osc_signal_tags(o.get("signals"))
+            if tags:
+                bits.append("fired: " + ", ".join(tags))
+            L.append(head + (" · " + " · ".join(bits) if bits else ""))
+            conf = _osc_conflicts(o)
+            if conf:
+                L.append(f"  - ⚠ label says {o['direction']} but its own "
+                         f"internals disagree: {'; '.join(conf)} — treat the "
+                         "direction as unconfirmed; drill in with "
+                         "watchtower_get_oscillator before acting on it")
         L.append("")
 
     # -- dealer positioning

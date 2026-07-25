@@ -377,6 +377,15 @@ def format_buzz_for_display(ticker: str, buzz_data: dict) -> str:
     summary = buzz_data.get("summary", "")
     notable = buzz_data.get("notable")
 
+    # A failed call is NOT a neutral reading. The error path returns
+    # sentiment=neutral/score=0.0/buzz=low as placeholders; rendering those
+    # as a headline puts "⚪ NEUTRAL (score: +0.00) | Buzz: 💤 low" on screen
+    # for what is actually no data at all. Say unavailable instead.
+    if buzz_data.get("source") in ("error", "unavailable"):
+        return (f"⚠ Unavailable — no sentiment read for ${ticker}. "
+                f"{summary or 'Grok returned no data.'} "
+                "(This is a failed lookup, not a neutral reading.)")
+
     emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "⚪"}.get(sentiment, "⚪")
     buzz_emoji = {"high": "🔥", "medium": "📢", "low": "💤"}.get(buzz_level, "💤")
 
