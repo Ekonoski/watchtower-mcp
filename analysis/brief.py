@@ -211,11 +211,17 @@ def _alerts_block(ticker: str) -> list:
 
 
 def _social_block(ticker: str) -> dict:
+    # social_buzz keeps one row per (ticker, snapshot_date, source) and some
+    # tickers have months of history. LIMIT 1 without ORDER BY returned an
+    # ARBITRARY row — a May sentiment could render as today's. Take the
+    # newest snapshot explicitly.
     conn = _conn()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT to_jsonb(b) FROM social_buzz b "
-                        "WHERE ticker = %s LIMIT 1", (ticker,))
+                        "WHERE ticker = %s "
+                        "ORDER BY snapshot_date DESC, created_at DESC LIMIT 1",
+                        (ticker,))
             r = cur.fetchone()
             return dict(r[0]) if r else {}
     finally:
@@ -227,7 +233,8 @@ def _momentum_block(ticker: str) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT to_jsonb(m) FROM momentum_scan m "
-                        "WHERE ticker = %s LIMIT 1", (ticker,))
+                        "WHERE ticker = %s ORDER BY scanned_at DESC LIMIT 1",
+                        (ticker,))
             r = cur.fetchone()
             return dict(r[0]) if r else {}
     finally:
@@ -467,17 +474,24 @@ def format_brief(d: dict) -> str:
     px = live or p.get("close")
     if px and (lv.get("support") or lv.get("resistance") or gx):
         ladder = []
-        for s in (lv.get("support") or [])[:4]:
+        sup_all = lv.get("support") or []
+        res_all = lv.get("resistance") or []
+        for s in sup_all[:4]:
             ladder.append((s["price"], f"support {'★' * int(s.get('stars', 0))}"))
-        for r in (lv.get("resistance") or [])[:4]:
+        for r in res_all[:4]:
             ladder.append((r["price"], f"resistance {'★' * int(r.get('stars', 0))}"))
-        for key, lbl in (("put_wall", "put wall"), ("gamma_flip", "gamma flip"),
-                         ("call_wall", "call wall")):
-            if gx.get(key):
-                ladder.append((gx[key], f"{lbl} (options)"))
+        # Magnitude rule: decoration-magnitude gamma levels are NOT levels.
+        # The gamma section already warns; putting them in the ladder anyway
+        # would present them as tradeable structure on the same screen.
+        gx_in_ladder = gx and gx.get("magnitude") in ("load-bearing", "moderate")
+        if gx_in_ladder:
+            for key, lbl in (("put_wall", "put wall"), ("gamma_flip", "gamma flip"),
+                             ("call_wall", "call wall")):
+                if gx.get(key):
+                    ladder.append((gx[key], f"{lbl} (options)"))
         ladder.sort(key=lambda x: -x[0])
         L.append("### Level Ladder  *(chart levels ★=multi-timeframe touches; options levels from "
-                 + (f"{gx.get('as_of')} chain)*" if gx else "chain)*"))
+                 + (f"{gx.get('as_of')} chain)*" if gx_in_ladder else "chain)*"))
         placed = False
         for price_, lbl in ladder:
             if not placed and price_ <= px:
@@ -487,6 +501,13 @@ def format_brief(d: dict) -> str:
             L.append(f"- {'▲' if price_ > px else '▼'} ${price_:,.2f} — {lbl}{near}")
         if not placed:
             L.append(f"- ● ${px:,.2f} — **current price**")
+        if gx and not gx_in_ladder:
+            L.append("- (options levels omitted from the ladder: net GEX is "
+                     "decoration-magnitude — no real dealer force at these strikes)")
+        dropped = max(0, len(sup_all) - 4) + max(0, len(res_all) - 4)
+        if dropped:
+            L.append(f"- (… {dropped} more mapped chart level(s) beyond the "
+                     "nearest 4 each way — levels engine has the full list)")
         L.append("")
 
     # -- our signals
@@ -499,9 +520,18 @@ def format_brief(d: dict) -> str:
             grade = (f" — historically {st['hit_pct']:.0f}% hit / "
                      f"{st['win1r_pct']:.0f}% win-1R (n={st['n']:,})"
                      if st.get("n") else " — no graded history yet")
+            # Detected date and distance-to-trigger are decision inputs, not
+            # trivia: a "forming" pattern detected three weeks ago at 8% from
+            # trigger is a different object than yesterday's at 0.3%.
+            when = f" · detected {r['detected']}" if r.get("detected") else ""
+            dist = (f" · {r['dist_to_trigger_pct']:+.1f}% to trigger"
+                    if r.get("dist_to_trigger_pct") is not None else "")
             L.append(f"- **{r['pattern']}** ({r['timeframe']}, {r['direction']}, {r['status']}) "
                      f"trigger ${r['trigger']:,.2f} → target ${r['target']:,.2f}, "
-                     f"invalid ${r['invalid']:,.2f}{grade}")
+                     f"invalid ${r['invalid']:,.2f}{when}{dist}{grade}")
+        if len(pat["rows"]) > 5:
+            L.append(f"- (… {len(pat['rows']) - 5} lower-scored pattern(s) not "
+                     "shown — watchtower_get_patterns has the full set)")
         L.append("")
     osc = d.get("oscillator") or []
     if osc:
@@ -536,12 +566,28 @@ def format_brief(d: dict) -> str:
         L.append(f"### Dealer Gamma  *(chain from {gx.get('as_of')})*")
         net = gx.get("net_gex_bn")
         mag = gx.get("magnitude")
+        pw, cw, fl = gx.get("put_wall"), gx.get("call_wall"), gx.get("gamma_flip")
+
+        def _lvl(v, dec=2):
+            # A missing level is "—", never "$0.00" — zero is a real price.
+            return f"${v:,.{dec}f}" if v is not None else "—"
+
         L.append(f"- Regime **{gx.get('regime')}** · net GEX "
-                 f"{net:+.3f}bn ({mag}) · flip ${gx.get('gamma_flip') or 0:,.2f}"
-                 f" · walls ${gx.get('put_wall') or 0:,.0f} / ${gx.get('call_wall') or 0:,.0f}")
+                 + (f"{net:+.3f}bn ({mag})" if net is not None else "unavailable")
+                 + f" · flip {_lvl(fl)}"
+                 f" · put wall {_lvl(pw, 0)} / call wall {_lvl(cw, 0)}")
         if mag == "decoration":
             L.append("- ⚠ Net GEX is tiny — these levels carry no real dealer "
                      "force; trade the chart, not the walls.")
+        # Wall-position doctrine — the semantics change with position, and a
+        # bare "walls $X / $Y" line hides that:
+        if pw is not None and cw is not None and pw == cw:
+            L.append("- ⚠ Put and call wall share one strike — a "
+                     "magnet/battleground, not support + resistance.")
+        elif pw is not None and px and pw > px:
+            L.append("- ⚠ Put wall is ABOVE price — stranded pre-drop "
+                     "protection. Read it as overhead congestion, never as "
+                     "support.")
         L.append("")
 
     # -- rotation
@@ -549,8 +595,10 @@ def format_brief(d: dict) -> str:
         sr = rot.get("sector_rank") or {}
         wk, mo = sr.get("weekly") or {}, sr.get("monthly") or {}
         L.append("### Rotation & Quality")
+        rs = rot.get("rs_pct")
         L.append(f"- {rot.get('sector') or '?'} / {rot.get('industry') or '?'}"
-                 f" · cap {_money(rot.get('market_cap'))} · RS {rot.get('rs_pct') and int(rot['rs_pct'])}/100")
+                 f" · cap {_money(rot.get('market_cap'))}"
+                 + (f" · RS {int(rs)}/100" if rs is not None else ""))
         if wk or mo:
             L.append(f"- Sector rank (median stock): weekly #{wk.get('rank', '—')}"
                      f" ({_pctf(wk.get('median_ret_pct'))}), monthly #{mo.get('rank', '—')}"
@@ -610,9 +658,32 @@ def format_brief(d: dict) -> str:
                  f"buys vs {sells} sells (buys are the conviction signal)")
         L.append("")
     soc = d.get("social") or {}
-    if soc.get("sentiment_label") or soc.get("summary"):
-        L.append(f"### X / Social  \n- {soc.get('sentiment_label', '?')}"
-                 + (f" — {str(soc.get('summary'))[:220]}" if soc.get("summary") else ""))
+    # social_buzz's real columns are sentiment / sentiment_score / rank /
+    # mentions / grok_summary / snapshot_date. The old code read
+    # `sentiment_label` and `summary` — keys that don't exist in that table —
+    # so this section silently never rendered from the DB at all.
+    if soc.get("sentiment") or soc.get("rank") is not None or soc.get("grok_summary"):
+        L.append(f"### X / Social  *(snapshot {soc.get('snapshot_date') or '?'}"
+                 + (f", {soc['source']}" if soc.get("source") else "") + ")*")
+        bits = []
+        if soc.get("sentiment"):
+            sc = soc.get("sentiment_score")
+            bits.append(f"sentiment {soc['sentiment']}"
+                        + (f" ({sc:+.2f})" if isinstance(sc, (int, float)) else ""))
+        if soc.get("rank") is not None:
+            r24 = soc.get("rank_24h_ago")
+            bits.append(f"rank #{soc['rank']}"
+                        + (f" (was #{r24} a day earlier)" if r24 else ""))
+        if soc.get("mentions") is not None:
+            bits.append(f"{soc['mentions']} mention(s) — small-n, situational "
+                        "awareness only")
+        if bits:
+            L.append("- " + " · ".join(bits))
+        if soc.get("grok_summary"):
+            L.append(f"- {soc['grok_summary']}")
+        else:
+            L.append("- (no Grok summary on this snapshot — the line above is "
+                     "rank/mention data only, not an AI read)")
         L.append("")
     al = d.get("alerts") or []
     if al:
@@ -620,6 +691,8 @@ def format_brief(d: dict) -> str:
         for a in al[:5]:
             L.append(f"- {a['date']} {a['signal'] or a['type']}"
                      + (f" @ ${a['entry']:,.2f}" if a.get("entry") else ""))
+        if len(al) > 5:
+            L.append(f"- (… {len(al) - 5} more in alert_log)")
         L.append("")
 
     # -- fundamentals
