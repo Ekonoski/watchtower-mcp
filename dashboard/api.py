@@ -2736,14 +2736,16 @@ def register_routes(mcp) -> None:
         tf = (request.query_params.get("tf") or "5m").lower()
 
         def _run():
-            from analysis.polygon_data import fetch_recent_bars
+            from analysis.polygon_data import fetch_recent_bars, fetch_session_4h_bars
             from analysis.fvg import detect_fvgs
             if tf == "5m":
                 bars = fetch_recent_bars(ticker, days=3, multiplier=5,
                                          timespan="minute")
             elif tf == "4h":
-                bars = fetch_recent_bars(ticker, days=60, multiplier=4,
-                                         timespan="hour")
+                # Session-anchored (9:30/13:30 ET, RTH only) — matches what
+                # charting platforms draw. Polygon's clock-anchored 4h bars
+                # produced FVG zones no chart agreed with.
+                bars = fetch_session_4h_bars(ticker, days=60)
             else:
                 bars = fetch_recent_bars(ticker, days=200)
             return detect_fvgs(bars or [])
