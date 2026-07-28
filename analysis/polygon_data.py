@@ -68,6 +68,51 @@ def fetch_recent_bars(ticker: str, days: int = 300, multiplier: int = 1, timespa
         print(f"[polygon] Error fetching bars for {ticker}: {e}")
         return []
 
+def fetch_session_4h_bars(ticker: str, days: int = 60) -> List[Dict[str, Any]]:
+    """4h bars anchored to the 9:30 ET session open (9:30-13:30, 13:30-16:00),
+    regular hours only — the convention every charting platform draws.
+
+    Polygon's native multiplier=4/hour aggregates are midnight-anchored clock
+    buckets that include pre/post-market trades: different candles entirely,
+    which made the drawer's 4h FVG zones disagree with any chart the user
+    actually looks at. Built from 30-minute bars so the 9:30 anchor is exact.
+    """
+    client = get_client()
+    if not client:
+        return []
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        end = date.today()
+        start = end - timedelta(days=days + 10)
+        aggs = list(client.get_aggs(
+            ticker, multiplier=30, timespan="minute",
+            from_=start.isoformat(), to=end.isoformat(), limit=50000,
+        ))
+        buckets: Dict[tuple, Dict[str, Any]] = {}
+        for a in aggs:
+            t = datetime.fromtimestamp(a.timestamp / 1000, tz=et)
+            hm = t.hour * 60 + t.minute
+            if hm < 570 or hm >= 960:      # RTH only: 9:30-16:00 ET
+                continue
+            key = (t.date(), 0 if hm < 810 else 1)   # 13:30 splits the session
+            b = buckets.get(key)
+            if b is None:
+                buckets[key] = {"date": t.date().isoformat(), "open": a.open,
+                                "high": a.high, "low": a.low, "close": a.close,
+                                "volume": a.volume, "vwap": getattr(a, "vwap", None)}
+            else:
+                b["high"] = max(b["high"], a.high)
+                b["low"] = min(b["low"], a.low)
+                b["close"] = a.close
+                b["volume"] += a.volume
+        return [buckets[k] for k in sorted(buckets)]
+    except Exception as e:
+        print(f"[polygon] Error fetching session 4h bars for {ticker}: {e}")
+        return []
+
+
 def compute_basic_technicals(bars: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compute simple technicals from bars list (latest first or sorted asc)."""
     if not bars or len(bars) < 50:

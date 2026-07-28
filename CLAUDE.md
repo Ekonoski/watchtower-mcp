@@ -39,6 +39,19 @@ So, when writing anything that renders a scan row:
 - **A failed lookup is not a neutral reading.** Error paths return
   placeholder values (`sentiment=neutral, score=0.0`). Render those as
   *unavailable*, never as data — see `format_buzz_for_display`.
+- **An unordered `LIMIT 1` is a random row.** `_social_block` selected from
+  a table holding months of history per ticker with no `ORDER BY` — a May
+  snapshot could render as today's sentiment. Any `LIMIT` on a history table
+  needs an explicit `ORDER BY <freshness> DESC`, and the render should stamp
+  the row's own date so staleness is visible even if the query regresses.
+- **Render the columns the table actually has.** The social section read
+  `sentiment_label`/`summary` — keys that don't exist in `social_buzz` — so
+  it silently never rendered. A section that can never fire is invisible in
+  every test that doesn't assert its presence; when adding a section, write
+  the test from a real row, not from the keys you assume.
+- **Keep error text long enough to explain itself.** `str(e)[:60]` cut xAI's
+  403 body at exactly the character where it names the cause (credits vs
+  key). Log the whole exception; keep ≥300 chars in any surfaced summary.
 
 ## Numbers on one line must reconcile with each other
 

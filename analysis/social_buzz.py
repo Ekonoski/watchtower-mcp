@@ -14,11 +14,14 @@ Real-time X/web access comes from xAI Agent Tools (server-side web_search +
 x_search), not the model's training data — see _grok_live() below.
 """
 
+import logging
 import os
 import sys
 import time
 from datetime import date
 from typing import Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 _SENTIMENT_SYSTEM = """You are a social sentiment analyst for a professional trading system.
 You have access to real-time X (Twitter) data. Analyze what traders and investors
@@ -225,8 +228,14 @@ def query_ticker_sentiment(ticker: str) -> dict:
         _buzz_cache[ticker] = (_time.time(), out)
         return out
     except Exception as e:
+        # Log the WHOLE error and keep enough of it in the summary to be
+        # self-diagnosing. The old [:60] cut xAI's 403 body at exactly the
+        # point where it explains itself ("...has either used all available
+        # credits or reached its monthly spending limit") — the outage then
+        # took a day of log archaeology to attribute instead of one glance.
+        _log.error(f"[social_buzz] Grok sentiment lookup failed for {ticker}: {e}")
         return {"sentiment": "neutral", "sentiment_score": 0.0,
-                "buzz_level": "low", "summary": f"Error: {str(e)[:60]}",
+                "buzz_level": "low", "summary": f"Error: {str(e)[:300]}",
                 "notable": None, "source": "error"}
 
 
