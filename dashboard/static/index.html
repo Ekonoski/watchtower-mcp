@@ -3460,8 +3460,12 @@ async function _loadFvg(ticker, tok) {
         <td style="padding:2px 8px 2px 0"><span class="chip" style="font-size:10px">${g.tf}</span></td>
         <td style="padding:2px 8px;color:${g.side === "bullish" ? "var(--green)" : "var(--red)"}">${g.side}</td>
         <td class="num" style="padding:2px 8px">$${g.bottom} – $${g.top}</td>
+        <td style="padding:2px 8px;font-size:10px;color:var(--muted)" title="candles that formed the gap">${
+          g.formed ? `formed ${g.formed.slice(5)}${g.formed_session ? " " + g.formed_session : ""}` : ""}</td>
         <td style="padding:2px 8px;font-size:11px;color:${g.status === "inverted" ? "var(--yellow)" : "var(--muted)"}">${
-          g.status === "inverted" ? "INVERTED — retest = IFVG entry" : "open"}</td>
+          g.status === "inverted"
+            ? `INVERTED${g.inverted_on ? " " + g.inverted_on.slice(5) : ""} — retest = IFVG entry`
+            : "open"}</td>
         <td><button data-fvg="${i}" title="add both edges to the projector ladder" style="font-size:10px">→ proj</button></td>
       </tr>`).join("")}</table></div></div>`;
     box.querySelectorAll("[data-fvg]").forEach(b => b.onclick = () => {

@@ -69,12 +69,19 @@ def detect_fvgs(bars: list, max_gaps: int = 8,
             continue
         if status == "inverted" and (n - 1 - inverted_at) > 30:
             continue
+        born_bar = bars[g["born"]]
+        inv_bar = bars[inverted_at] if inverted_at is not None else None
         out.append({
             "side": g["side"], "status": status,
             "top": round(float(g["top"]), 2),
             "bottom": round(float(g["bottom"]), 2),
             "mid": round((float(g["top"]) + float(g["bottom"])) / 2, 2),
             "age_bars": n - 1 - g["born"],
+            # Stamp per row (house rule): a zone without its formation date
+            # sends the reader hunting the whole chart for the candles.
+            "formed": born_bar.get("date"),
+            "formed_session": born_bar.get("session"),
+            "inverted_on": inv_bar.get("date") if inv_bar else None,
         })
     out.sort(key=lambda g: g["age_bars"])
     return out[:max_gaps]
