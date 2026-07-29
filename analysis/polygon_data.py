@@ -99,7 +99,9 @@ def fetch_session_4h_bars(ticker: str, days: int = 60) -> List[Dict[str, Any]]:
             key = (t.date(), 0 if hm < 810 else 1)   # 13:30 splits the session
             b = buckets.get(key)
             if b is None:
-                buckets[key] = {"date": t.date().isoformat(), "open": a.open,
+                buckets[key] = {"date": t.date().isoformat(),
+                                "session": "09:30" if hm < 810 else "13:30",
+                                "open": a.open,
                                 "high": a.high, "low": a.low, "close": a.close,
                                 "volume": a.volume, "vwap": getattr(a, "vwap", None)}
             else:
