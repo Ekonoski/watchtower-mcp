@@ -1,4 +1,7 @@
-mcp[cli]
+# mcp 2.0.0 (released ~2026-07-29) removed mcp.server.fastmcp — every fresh
+# build after the release failed at import while the old image kept serving.
+# Pin below 2 until the FastMCP import is migrated deliberately.
+mcp[cli]>=1.29,<2
 uvicorn[standard]
 python-dotenv[cli]
 
