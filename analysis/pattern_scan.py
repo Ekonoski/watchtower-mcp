@@ -1480,23 +1480,48 @@ def _four_h_candidates(conn, hits: dict) -> list:
     return out[:FOUR_H_MAX_CANDIDATES]
 
 
+def _bars_fresh(bars: list, latest_session: str | None) -> bool:
+    """A 4h feed whose last bar predates the latest completed daily session is
+    serving the past — patterns computed on it are fiction (BKNG printed
+    last_close 177.26 on a day it traded 201.30; MSFT 415.89 against a 393
+    tape for three days). Stale => skip the ticker: the run's prune then drops
+    its old rows, and absence beats garbage. No latest_session to compare
+    against => treat as fresh rather than blanking the whole timeframe."""
+    if not bars:
+        return False
+    if not latest_session:
+        return True
+    return str(bars[-1].get("date") or "") >= str(latest_session)
+
+
 def scan_4h(hits: dict = None) -> int:
     """4-hour scan over watchlist + weekly/daily hits + the most liquid names.
-    One Polygon call per candidate (same bars the levels engine uses)."""
+    Session-anchored 4h bars (9:30/13:30 ET, RTH) — the same helper the FVG
+    drawer uses since #148; the scanner had kept Polygon's clock-anchored
+    multiplier=4 buckets, candles no chart draws. Each candidate's bars are
+    freshness-gated before detection."""
     from screen.reversal_screen import _conn
-    from analysis.polygon_data import fetch_recent_bars
-    from datetime import datetime, timezone
+    from analysis.polygon_data import fetch_session_4h_bars
 
     conn = _conn()
     try:
         with conn.cursor() as _c:
             _c.execute("SELECT clock_timestamp()")   # DB clock — see scan_db_timeframes
             run_started = _c.fetchone()[0]
+            _c.execute("SELECT max(trade_date)::text FROM daily_prices")
+            latest_session = (_c.fetchone() or [None])[0]
         cands = _four_h_candidates(conn, hits or {})
-        log.info(f"[patterns] 4h scan over {len(cands)} candidates")
+        log.info(f"[patterns] 4h scan over {len(cands)} candidates "
+                 f"(freshness floor: {latest_session})")
 
         def _one(t):
-            bars = fetch_recent_bars(t, days=120, multiplier=4, timespan="hour")
+            bars = fetch_session_4h_bars(t, days=120)
+            if not _bars_fresh(bars, latest_session):
+                last = bars[-1].get("date") if bars else "no bars"
+                log.warning(f"[patterns] 4h {t}: stale feed (last bar {last} vs "
+                            f"session {latest_session}) — skipped; no rows written "
+                            f"and this run's prune drops its old rows")
+                return []
             found = detect_patterns(bars or [], "4h")
             for r in found:
                 r["ticker"] = t
