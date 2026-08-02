@@ -91,7 +91,7 @@ def _patterns_block(ticker: str) -> dict:
                                   WHEN outcome='invalid' THEN 0.0 END) * 100, 1),
                    round(avg((win_1r)::int) * 100, 1),
                    round(avg(realized_r) FILTER (WHERE outcome='invalid')::numeric, 2)
-            FROM pattern_backtest GROUP BY pattern
+            FROM pattern_backtest WHERE timeframe = 'daily' GROUP BY pattern
         """, ()):
             stats[p] = {"n": n, "hit_pct": _f(hit), "win1r_pct": _f(w1),
                         "avg_stop_r": _f(stop_r)}

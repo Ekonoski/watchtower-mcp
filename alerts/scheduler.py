@@ -1006,9 +1006,9 @@ def _seed_pattern_backtest_if_empty():
         finally:
             conn.close()
         if need:
-            from analysis.pattern_backtest import run_pattern_backtest
+            from analysis.pattern_backtest import run_pattern_backtests
             log.info("[patterns] backtest predates BT_VERSION — replaying...")
-            res = run_pattern_backtest()
+            res = run_pattern_backtests()
             log.info(f"[patterns] timing backtest done: {res}")
     except Exception as e:
         log.warning(f"[patterns] backtest seed skipped: {e}")
