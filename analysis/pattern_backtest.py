@@ -48,7 +48,12 @@ from datetime import date
 
 log = logging.getLogger(__name__)
 
-BT_VERSION = 3   # v3: armed forming triggers — flags/triangles finally graded
+BT_VERSION = 4   # v4: timeframe dimension (daily+weekly) + native retest measurement
+# Timeframes the seeder replays. Weekly bars are aggregated from daily_prices;
+# 4h needs intraday history and its own bounded universe — deliberately absent
+# until built as its own job.
+BACKTEST_TIMEFRAMES = [t.strip() for t in
+                       os.environ.get("PATTERN_BT_TIMEFRAMES", "daily,weekly").split(",") if t.strip()]
 STEP = int(os.environ.get("PATTERN_BT_STEP", "2"))        # as-of stride, bars
 SAMPLE = int(os.environ.get("PATTERN_BT_SAMPLE", "2500"))  # universe sample
 HISTORY_START = "2021-06-01"   # everything daily_prices has
@@ -79,6 +84,25 @@ def _bars_for(conn, tickers: list) -> dict:
     return out
 
 
+def _weekly_bars(daily: list) -> list:
+    """ISO-week bars from daily bars; each bar dated by its last session so
+    spy-regime and calendar lookups land on real trading dates."""
+    out, cur_key = [], None
+    for b in daily:
+        k = b["date"].isocalendar()[:2]
+        if k != cur_key:
+            out.append(dict(b))
+            cur_key = k
+        else:
+            w = out[-1]
+            w["date"] = b["date"]
+            w["high"] = max(w["high"], b["high"])
+            w["low"] = min(w["low"], b["low"])
+            w["close"] = b["close"]
+            w["volume"] += b["volume"]
+    return out
+
+
 def _breakout_idx(bars: list, as_of: int, trigger: float, direction: str,
                   break_recent: int):
     """Full-series index of the close that crossed the trigger — the actual
@@ -95,7 +119,7 @@ def _breakout_idx(bars: list, as_of: int, trigger: float, direction: str,
 
 
 def _resolve(bars: list, j: int, entry: float, target: float, invalid,
-             direction: str):
+             direction: str, trigger: float = None):
     """Walk forward from the ENTRY bar (j+1, filled at its open): measured-
     move touch vs a CLOSE through the invalidation level (closes define
     structure; wicks don't). Same-bar ties go to 'invalid' — the
@@ -103,17 +127,25 @@ def _resolve(bars: list, j: int, entry: float, target: float, invalid,
     the first executable fill — not the trigger; that half-R of "free"
     fill was v1's largest inflation. realized_r on stops records the true
     loss (stop-close vs entry, in R), which routinely exceeds -1R.
+    retest_bar = bars after the breakout until price first re-touches the
+    TRIGGER (wick counts) — the second-chance entry the retest study measures;
+    None when it never comes back inside the horizon.
     Returns (outcome, bars_to_outcome, win_1r, bars_to_1r, realized_r,
-    end_index)."""
+    retest_bar, end_index)."""
     r1 = risk = None
     if invalid is not None and abs(entry - invalid) > 1e-9:
         risk = abs(entry - invalid)
         r1 = entry + risk if direction == "bullish" else entry - risk
     win_1r = False if r1 is not None else None
     bars_1r = None
+    retest = None
     end = min(len(bars), j + 1 + HORIZON)
     for i in range(j + 1, end):
         b = bars[i]
+        if retest is None and trigger is not None:
+            if (b["low"] <= trigger if direction == "bullish"
+                    else b["high"] >= trigger):
+                retest = i - j
         stopped = (invalid is not None and
                    (b["close"] < invalid if direction == "bullish"
                     else b["close"] > invalid))
@@ -128,18 +160,18 @@ def _resolve(bars: list, j: int, entry: float, target: float, invalid,
                 rr = round((b["close"] - entry) / risk
                            if direction == "bullish"
                            else (entry - b["close"]) / risk, 3)
-            return "invalid", i - j, win_1r, bars_1r, rr, i
+            return "invalid", i - j, win_1r, bars_1r, rr, retest, i
         if hit:
             if win_1r is False:
                 win_1r, bars_1r = True, i - j
             rr = None
             if risk:
                 rr = round(abs(target - entry) / risk, 3)
-            return "target", i - j, win_1r, bars_1r, rr, i
-    return "open", None, win_1r, bars_1r, None, end - 1
+            return "target", i - j, win_1r, bars_1r, rr, retest, i
+    return "open", None, win_1r, bars_1r, None, retest, end - 1
 
 
-def _replay_ticker(bars: list, spy_above: dict) -> list:
+def _replay_ticker(bars: list, spy_above: dict, timeframe: str = "daily") -> list:
     """All fresh breakouts the live scanner would have flagged for one
     ticker, entered at the NEXT bar's open, each tracked to resolution.
     One live episode per pattern at a time (no correlated duplicates).
@@ -161,7 +193,7 @@ def _replay_ticker(bars: list, spy_above: dict) -> list:
     n = len(bars)
     if n < MIN_BARS + 10:
         return []
-    break_recent = TF["daily"]["break_recent"]
+    break_recent = TF[timeframe]["break_recent"]
     dates = [b["date"] for b in bars]
     active: dict = {}   # pattern -> index its last episode resolved at
     pending: dict = {}  # pattern -> armed forming trigger
@@ -171,8 +203,8 @@ def _replay_ticker(bars: list, spy_above: dict) -> list:
         entry = bars[as_of + 1]["open"] or bars[as_of + 1]["close"]
         if not entry or entry <= 0:
             return
-        outcome, bto, w1, b1, rr, end_i = _resolve(
-            bars, as_of, entry, target, invalid, direction)
+        outcome, bto, w1, b1, rr, retest, end_i = _resolve(
+            bars, as_of, entry, target, invalid, direction, trigger)
         active[pat] = end_i
         width = None
         if anchor is not None:
@@ -182,11 +214,12 @@ def _replay_ticker(bars: list, spy_above: dict) -> list:
                 pass
         out.append((pat, direction, anchor, dates[j], width, trigger,
                     target, invalid, outcome, bto, w1, b1,
-                    round(entry, 4), rr, spy_above.get(dates[as_of])))
+                    round(entry, 4), rr, retest,
+                    spy_above.get(dates[as_of])))
 
     for as_of in range(MIN_BARS, n - 1, STEP):
         window = bars[max(0, as_of + 1 - WINDOW):as_of + 1]
-        dets = detect_patterns(window, "daily")
+        dets = detect_patterns(window, timeframe)
         det_by_pat = {d["pattern"]: d for d in dets}
 
         # --- path 2: armed forming triggers (checked FIRST so a fresh
@@ -299,7 +332,7 @@ def _spy_regime_map(conn) -> dict:
     return out
 
 
-def run_pattern_backtest() -> dict:
+def run_pattern_backtest(timeframe: str = "daily") -> dict:
     """Replay a deterministic sample of every name daily_prices knows —
     delisted included — and store results incrementally. Truncates the
     table first when it holds rows from an older BT_VERSION, so retired
@@ -350,8 +383,9 @@ def run_pattern_backtest() -> dict:
             # interrupted run already stored (eventless names re-scan — a
             # little waste beats a silently unscanned tail).
             cur.execute("SELECT DISTINCT ticker FROM pattern_backtest "
-                        "WHERE bt_version = %s AND engine_version = %s",
-                        (BT_VERSION, ENGINE_VERSION))
+                        "WHERE bt_version = %s AND engine_version = %s "
+                        "AND timeframe = %s",
+                        (BT_VERSION, ENGINE_VERSION, timeframe))
             done = {r[0] for r in cur.fetchall()}
         if done:
             before = len(universe)
@@ -359,17 +393,20 @@ def run_pattern_backtest() -> dict:
             log.info(f"[patterns] backtest resuming: {before - len(universe)} "
                      f"names already stored, {len(universe)} to go")
         spy_above = _spy_regime_map(conn)
-        log.info(f"[patterns] backtest v{BT_VERSION} replay over "
+        log.info(f"[patterns] backtest v{BT_VERSION} {timeframe} replay over "
                  f"{len(universe)} names (step {STEP} bars, "
                  f"engine v{ENGINE_VERSION})")
         total = 0
         for i in range(0, len(universe), 120):
             frames = _bars_for(conn, universe[i:i + 120])
+            if timeframe == "weekly":
+                frames = {t: _weekly_bars(bs) for t, bs in frames.items()}
             rows = []
             for t, bars in frames.items():
                 try:
-                    for ev in _replay_ticker(bars, spy_above):
-                        rows.append((t,) + ev + (ENGINE_VERSION, BT_VERSION))
+                    for ev in _replay_ticker(bars, spy_above, timeframe):
+                        rows.append((t,) + ev
+                                    + (timeframe, ENGINE_VERSION, BT_VERSION))
                 except Exception as e:
                     log.debug(f"[patterns] backtest {t} failed: {e}")
             if rows:
@@ -380,15 +417,18 @@ def run_pattern_backtest() -> dict:
                              breakout_date, base_width_bars, trigger_price,
                              target, invalid_level, outcome, bars_to_outcome,
                              win_1r, bars_to_1r, entry_price, realized_r,
-                             spy_above, engine_version, bt_version)
+                             retest_bar, spy_above, timeframe,
+                             engine_version, bt_version)
                         VALUES %s
-                        ON CONFLICT (ticker, pattern, breakout_date) DO UPDATE SET
+                        ON CONFLICT (ticker, timeframe, pattern, breakout_date)
+                        DO UPDATE SET
                             outcome = EXCLUDED.outcome,
                             bars_to_outcome = EXCLUDED.bars_to_outcome,
                             win_1r = EXCLUDED.win_1r,
                             bars_to_1r = EXCLUDED.bars_to_1r,
                             entry_price = EXCLUDED.entry_price,
                             realized_r = EXCLUDED.realized_r,
+                            retest_bar = EXCLUDED.retest_bar,
                             spy_above = EXCLUDED.spy_above,
                             engine_version = EXCLUDED.engine_version,
                             bt_version = EXCLUDED.bt_version
@@ -414,6 +454,16 @@ def run_pattern_backtest() -> dict:
                 "seconds": round(time.time() - t0)}
     finally:
         conn.close()
+
+
+def run_pattern_backtests() -> dict:
+    """Replay every configured timeframe (PATTERN_BT_TIMEFRAMES, default
+    daily,weekly). The scheduler seed and the rerun tool both call this so a
+    version bump rebuilds all timeframes, not just daily."""
+    out = {}
+    for tf in BACKTEST_TIMEFRAMES:
+        out[tf] = run_pattern_backtest(tf)
+    return out
 
 
 def timing_stats(conn=None) -> dict:
@@ -443,6 +493,7 @@ def timing_stats(conn=None) -> dict:
                        percentile_cont(0.75) WITHIN GROUP (ORDER BY bars_to_1r)
                            FILTER (WHERE win_1r)
                 FROM pattern_backtest
+                WHERE timeframe = 'daily'
                 GROUP BY pattern
             """)
             out = {}

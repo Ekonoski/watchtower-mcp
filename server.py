@@ -1261,11 +1261,11 @@ def watchtower_pattern_timing(rerun: bool = False) -> str:
         rerun: re-run the replay in the background (~10 min) before reading.
     """
     try:
-        from analysis.pattern_backtest import timing_stats, run_pattern_backtest
+        from analysis.pattern_backtest import timing_stats, run_pattern_backtests
         from analysis.pattern_scan import PATTERN_NAMES
         if rerun:
             import threading
-            threading.Thread(target=run_pattern_backtest,
+            threading.Thread(target=run_pattern_backtests,
                              name="pattern-backtest", daemon=True).start()
             return ("Pattern timing replay started in the background (~10 "
                     "minutes). Call again with rerun=False to read results.")
