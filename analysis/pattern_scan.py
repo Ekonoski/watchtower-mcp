@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
-ENGINE_VERSION = 13   # v13: diamond top/bottom (two-regime pivot detector)
+ENGINE_VERSION = 14   # v14: structure shift (higher low / lower high)
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
 # pattern needs real depth to mean anything, a 4h pattern is tighter.
@@ -83,6 +83,7 @@ PATTERN_NAMES = {
     "cup_handle": "Cup & Handle",
     "range_breakout": "Range Breakout", "range_breakdown": "Range Breakdown",
     "ema_bounce": "EMA 8/13 Bounce", "ema_reject": "EMA 8/13 Reject",
+    "higher_low": "Higher Low", "lower_high": "Lower High",
 }
 
 FOUR_H_LIQUID_TOP = 350     # most-liquid names always scanned on 4h
@@ -545,6 +546,131 @@ def _det_double_top(ctx):
                   "depth_pct": round(depth * 100, 2), "_anchor_price": top}
         return _mk(ctx, "double_top", "bearish", status, trigger,
                    trigger - (top - trigger), top, h2_idx, h1_idx, points, quality)
+    return None
+
+
+# ── Reversals: structure shift (higher low / lower high) ─────────────────────
+# The playbook's earliest legitimate reversal evidence: after a real decline,
+# a swing low, a bounce, and a pullback that HOLDS ABOVE the prior low.
+# Trigger = the interim swing extreme (breaking it is the market-structure
+# break); invalid = the higher low / lower high itself. Deliberately the
+# complement of the double bottom/top: twins within tol are a double, a
+# second low sitting ≥ rise_min ABOVE the first is a higher low — the same
+# pair can never fire both detectors.
+
+def _det_higher_low(ctx):
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    rise_min, min_depth = 0.020 * s, 0.05 * s
+    plows = _plows_live(ctx)
+    if len(plows) < 2:
+        return None
+    l2_idx, l2 = plows[-1]
+    if (n - 1) - l2_idx > cfg["recent"]:
+        return None
+    # Nothing after L2 may undercut it — invalid IS L2, so an undercut means
+    # the pattern is already dead, not forming.
+    post = [x for x in ctx["lows"][l2_idx:] if x is not None]
+    if post and min(post) < l2 * 0.999:
+        return None
+    # L1: the most recent earlier pivot low that L2 sits meaningfully above.
+    # L1 must be THE low — an undercut since means the downtrend resumed,
+    # not shifted.
+    for l1_idx, l1 in reversed(plows[:-1]):
+        if l2_idx - l1_idx > cfg["max_width"] // 2:
+            break
+        if l2_idx - l1_idx < cfg["min_sep"] * 2:
+            continue
+        if l2 < l1 * (1 + rise_min):
+            continue
+        lows_span = [x for x in ctx["lows"][l1_idx:] if x is not None]
+        if lows_span and min(lows_span) < l1 * 0.999:
+            continue
+        trigger = _robust_extreme(ctx["highs"][l1_idx:l2_idx + 1], "high")
+        if not trigger or trigger <= l2:
+            continue
+        depth = (trigger - l1) / l1
+        if depth < min_depth:
+            continue
+        # The pullback must be a real retracement of the upswing — 30-90%.
+        # Shallower is a flag's business; a full giveback is the double
+        # bottom's (its twin tolerance is excluded by rise_min above).
+        retrace = (trigger - l2) / (trigger - l1)
+        if not (0.30 <= retrace <= 0.90):
+            continue
+        # Needs a genuine decline INTO L1 — same gate as the double bottom.
+        pre = [x for x in ctx["highs"][max(0, l1_idx - cfg["max_width"] // 2):l1_idx]
+               if x is not None]
+        if not pre or max(pre) < trigger * (1 + 0.04 * s):
+            continue
+        # L2 must have bounced (≥25% of its own downswing) before it can be
+        # called a higher LOW rather than a pause in a slide.
+        if ctx["last"] < l2 + 0.25 * (trigger - l2):
+            continue
+        status = _status(ctx, l2_idx, trigger, "bullish",
+                         target=trigger + (trigger - l1))
+        if status is None:
+            continue
+        quality = min(10.0, 5.0 * depth / min_depth) \
+            + max(0.0, 8.0 * (1 - abs(retrace - 0.55) / 0.45)) \
+            + (7.0 if (l2 - l1) / l1 >= 2 * rise_min else 3.0)
+        points = {"low1": _pt(ctx, l1_idx, l1), "low2": _pt(ctx, l2_idx, l2),
+                  "retrace_pct": round(retrace * 100, 1), "_anchor_price": l1}
+        return _mk(ctx, "higher_low", "bullish", status, trigger,
+                   trigger + (trigger - l1), l2, l2_idx, l1_idx, points, quality)
+    return None
+
+
+def _det_lower_high(ctx):
+    cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
+    rise_min, min_depth = 0.020 * s, 0.05 * s
+    phighs = ctx["phighs"]
+    if len(phighs) < 2:
+        return None
+    h2_idx, h2 = phighs[-1]
+    if (n - 1) - h2_idx > cfg["recent"]:
+        return None
+    post = [x for x in ctx["highs"][h2_idx:] if x is not None]
+    if post and max(post) > h2 * 1.001:
+        return None
+    for h1_idx, h1 in reversed(phighs[:-1]):
+        if h2_idx - h1_idx > cfg["max_width"] // 2:
+            break
+        if h2_idx - h1_idx < cfg["min_sep"] * 2:
+            continue
+        if h2 > h1 * (1 - rise_min):
+            continue
+        highs_span = [x for x in ctx["highs"][h1_idx:] if x is not None]
+        if highs_span and max(highs_span) > h1 * 1.001:
+            continue
+        trigger = _robust_extreme(ctx["lows"][h1_idx:h2_idx + 1], "low")
+        if not trigger or trigger <= 0 or trigger >= h2:
+            continue
+        depth = (h1 - trigger) / h1
+        if depth < min_depth:
+            continue
+        retrace = (h2 - trigger) / (h1 - trigger)
+        if not (0.30 <= retrace <= 0.90):
+            continue
+        # Needs a genuine rally INTO H1 — mirror of the higher low's gate.
+        pre = [x for x in ctx["lows"][max(0, h1_idx - cfg["max_width"] // 2):h1_idx]
+               if x is not None]
+        if not pre or min(pre) > trigger * (1 - 0.04 * s):
+            continue
+        # H2 must have been rejected (≥25% of its own upswing) before it can
+        # be called a lower HIGH rather than a pause in a climb.
+        if ctx["last"] > h2 - 0.25 * (h2 - trigger):
+            continue
+        status = _status(ctx, h2_idx, trigger, "bearish",
+                         target=trigger - (h1 - trigger))
+        if status is None:
+            continue
+        quality = min(10.0, 5.0 * depth / min_depth) \
+            + max(0.0, 8.0 * (1 - abs(retrace - 0.55) / 0.45)) \
+            + (7.0 if (h1 - h2) / h1 >= 2 * rise_min else 3.0)
+        points = {"high1": _pt(ctx, h1_idx, h1), "high2": _pt(ctx, h2_idx, h2),
+                  "retrace_pct": round(retrace * 100, 1), "_anchor_price": h1}
+        return _mk(ctx, "lower_high", "bearish", status, trigger,
+                   trigger - (h1 - trigger), h2, h2_idx, h1_idx, points, quality)
     return None
 
 
@@ -1263,6 +1389,7 @@ def _det_range_break(ctx):
 
 
 DETECTORS = [_det_inverse_hs, _det_hs_top, _det_double_bottom, _det_double_top,
+             _det_higher_low, _det_lower_high,
              _det_bull_flag, _det_bear_flag, _det_asc_triangle,
              _det_desc_triangle, _det_falling_wedge, _det_rising_wedge,
              _det_diamond_top, _det_diamond_bottom,
