@@ -1169,6 +1169,33 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Paper trader (measurement engine): specs at 7:40 after the gamma sweep,
+    # trigger loop on the market-hours cadence. Both no-ops on weekends and
+    # write only to paper_specs / paper_trades — no orders, no alerts.
+    def _paper_specs():
+        from analysis.paper_trader import write_morning_specs
+        write_morning_specs()
+
+    def _paper_loop():
+        from analysis.paper_trader import run_trigger_loop
+        run_trigger_loop()
+
+    scheduler.add_job(
+        _paper_specs,
+        CronTrigger(day_of_week="mon-fri", hour="7", minute="40", timezone=et),
+        id="paper_specs_morning", replace_existing=True,
+    )
+    scheduler.add_job(
+        _paper_loop,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="35,40,45,50,55", timezone=et),
+        id="paper_loop_open", replace_existing=True,
+    )
+    scheduler.add_job(
+        _paper_loop,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*/5", timezone=et),
+        id="paper_loop_market", replace_existing=True,
+    )
+
     # Morning gamma sweep — 7:30 AM ET, full universe on overnight-settled
     # OI. The authoritative map for the day, ready while premarket prep is
     # underway. 7:30 is the practical floor: OCC/Polygon's overnight OI
