@@ -48,6 +48,62 @@ def _touch(level, px):
     return abs(px - level) / level <= 0.001
 
 
+def build_gamma_specs(trade_date, levels, status="armed"):
+    """Playbook rules → paper_specs rows. The single source of truth: the live
+    morning spec-writer and the replay harness (analysis/gamma_replay.py) both
+    call this, so a rule change backtests and trades identically.
+
+    levels: iterable of (ticker, spot, call_wall, put_wall, gamma_flip,
+            net_gex, regime) — the freshest board per ticker.
+    Returns (specs, skips): specs are paper_specs value tuples,
+    skips are (ticker, reason) so "no spec" is always explainable.
+    """
+    specs, skips = [], []
+    for tk, spot, cw, pw, flip, gex, regime in levels:
+        spot, cw, pw = float(spot), float(cw or 0), float(pw or 0)
+        flip = float(flip) if flip is not None else None
+        gex = float(gex or 0)
+        why_skip = None
+        if abs(gex) < 1.0:
+            why_skip = f"net GEX {gex:+.2f}bn below load-bearing"
+        elif cw and pw and cw == pw:
+            why_skip = f"collapsed magnet at {cw} — matrix row three"
+        if why_skip:
+            skips.append((tk, why_skip))
+            continue
+        # Wall fade (pinning, spot below CW): short the stall at the wall.
+        if regime == "pinning" and cw and spot < cw:
+            tgt = max(flip or 0, (cw + pw) / 2 if pw else 0)
+            stop = round(cw * 1.0015, 2)
+            if tgt and (cw - tgt) >= 1.5 * (stop - cw):
+                specs.append((trade_date, "gamma", tk, "short", f"wall_fade_{cw:g}",
+                              cw, stop, round(tgt, 2), status,
+                              f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
+                              f"entry=15m close back under wall after touch; "
+                              f"stop=15m close beyond {stop}; target {tgt:g}"))
+        # Flip-hold long (pinning, flip below spot, room to CW).
+        if regime == "pinning" and flip and cw and flip < spot < cw:
+            stop = round(flip * 0.9985, 2)
+            if (cw - flip) >= 1.5 * (flip - stop):
+                specs.append((trade_date, "gamma", tk, "long", f"flip_hold_{flip:g}",
+                              flip, stop, cw, status,
+                              f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
+                              f"entry=touch then 15m close back above flip; "
+                              f"stop=15m close under {stop}; target CW {cw:g}"))
+        # Slippery stack fade: CW and flip within 0.5% = the stack.
+        if regime == "slippery" and flip and cw and spot < min(flip, cw) \
+                and abs(cw - flip) / flip <= 0.005:
+            stack = max(cw, flip)
+            stop = round(stack * 1.0015, 2)
+            tgt = round(spot - (stack - spot), 2)  # symmetric room, capped by geometry
+            if (stack - tgt) >= 1.5 * (stop - stack):
+                specs.append((trade_date, "gamma", tk, "short", f"stack_fade_{stack:g}",
+                              stack, stop, tgt, status,
+                              f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
+                              f"counter-trend entry, with-trend hold"))
+    return specs, skips
+
+
 # ── Morning spec-writer (7:40 ET, after the 7:30 gamma sweep) ────────────────
 
 def write_morning_specs():
@@ -65,54 +121,14 @@ def write_morning_specs():
         binary_day = any(b.lower() in e.lower() for e in highs for b in BINARY_EVENTS)
         status = "skipped_binary" if binary_day else "armed"
 
-        specs = []
         with conn.cursor() as c:
             c.execute("""SELECT DISTINCT ON (ticker) ticker, spot, call_wall, put_wall,
                                 gamma_flip, net_gex, regime
                          FROM gex_levels WHERE ticker = ANY(%s)
                          ORDER BY ticker, computed_at DESC""", (VENUE,))
-            for tk, spot, cw, pw, flip, gex, regime in c.fetchall():
-                spot, cw, pw = float(spot), float(cw or 0), float(pw or 0)
-                flip = float(flip) if flip is not None else None
-                gex = float(gex or 0)
-                why_skip = None
-                if abs(gex) < 1.0:
-                    why_skip = f"net GEX {gex:+.2f}bn below load-bearing"
-                elif cw and pw and cw == pw:
-                    why_skip = f"collapsed magnet at {cw} — matrix row three"
-                if why_skip:
-                    log.info("[paper] %s: no gamma spec — %s", tk, why_skip)
-                    continue
-                # Wall fade (pinning, spot below CW): short the stall at the wall.
-                if regime == "pinning" and cw and spot < cw:
-                    tgt = max(flip or 0, (cw + pw) / 2 if pw else 0)
-                    stop = round(cw * 1.0015, 2)
-                    if tgt and (cw - tgt) >= 1.5 * (stop - cw):
-                        specs.append((today, "gamma", tk, "short", f"wall_fade_{cw:g}",
-                                      cw, stop, round(tgt, 2), status,
-                                      f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
-                                      f"entry=15m close back under wall after touch; "
-                                      f"stop=15m close beyond {stop}; target {tgt:g}"))
-                # Flip-hold long (pinning, flip below spot, room to CW).
-                if regime == "pinning" and flip and cw and flip < spot < cw:
-                    stop = round(flip * 0.9985, 2)
-                    if (cw - flip) >= 1.5 * (flip - stop):
-                        specs.append((today, "gamma", tk, "long", f"flip_hold_{flip:g}",
-                                      flip, stop, cw, status,
-                                      f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
-                                      f"entry=touch then 15m close back above flip; "
-                                      f"stop=15m close under {stop}; target CW {cw:g}"))
-                # Slippery stack fade: CW and flip within 0.5% = the stack.
-                if regime == "slippery" and flip and cw and spot < min(flip, cw) \
-                        and abs(cw - flip) / flip <= 0.005:
-                    stack = max(cw, flip)
-                    stop = round(stack * 1.0015, 2)
-                    tgt = round(spot - (stack - spot), 2)  # symmetric room, capped by geometry
-                    if (stack - tgt) >= 1.5 * (stop - stack):
-                        specs.append((today, "gamma", tk, "short", f"stack_fade_{stack:g}",
-                                      stack, stop, tgt, status,
-                                      f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
-                                      f"counter-trend entry, with-trend hold"))
+            specs, skips = build_gamma_specs(today, c.fetchall(), status)
+            for tk, why_skip in skips:
+                log.info("[paper] %s: no gamma spec — %s", tk, why_skip)
 
             # Swing book: breakout-retest limits (blind by design — control group).
             c.execute("""SELECT ticker, timeframe, pattern, direction, trigger_price,
@@ -169,7 +185,7 @@ def run_trigger_loop():
         with conn.cursor() as c:
             c.execute("""SELECT s.id, s.book, s.ticker, s.direction, s.setup,
                                 s.entry_trigger, s.stop, s.target, s.status,
-                                t.id, t.entry_px, t.exited_at
+                                t.id, t.entry_px, t.entered_at, t.exited_at
                          FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
                          WHERE s.trade_date=%s AND s.status IN ('armed','triggered')""",
                       (today,))
@@ -187,7 +203,7 @@ def run_trigger_loop():
         no_new = eod or now.time() >= dt.time(14, 30)
 
         for (sid, book, tk, direction, setup, trig, stop, tgt, status,
-             tid, entry_px, exited) in rows:
+             tid, entry_px, entered_at, exited) in rows:
             trig, stop, tgt = float(trig), float(stop), float(tgt)
             if exited:
                 continue
@@ -217,10 +233,15 @@ def run_trigger_loop():
             else:                                    # open — manage exit
                 entry_px = float(entry_px)
                 r_dist = abs(trig - stop) or 0.01
+                # Entry fills at the entry bar's close, so that bar's range is
+                # pre-entry price action — grading its high/low as a fill would
+                # be lookahead. Stop/target only count on bars ending after entry.
+                post_entry = entered_at is None or ts + dt.timedelta(minutes=15) > entered_at
                 exit_px, reason = None, None
-                if sign * (close - stop) < 0:        # 15m close beyond stop = acceptance
+                if post_entry and sign * (close - stop) < 0:  # 15m close beyond stop = acceptance
                     exit_px, reason = close, "stop"
-                elif (direction == "long" and hi >= tgt) or (direction == "short" and lo <= tgt):
+                elif post_entry and ((direction == "long" and hi >= tgt)
+                                     or (direction == "short" and lo <= tgt)):
                     exit_px, reason = tgt, "target"
                 elif eod:
                     exit_px, reason = close, "eod_flat"
