@@ -68,6 +68,17 @@ def test_one_shot_per_level_per_day():
     assert to_insert == [] and to_cancel == []
 
 
+def test_curate_swing_dedupes_and_caps():
+    from analysis.paper_trader import curate_swing
+    rows = [("AAA", "daily", "higher_low", "long", 10, 15, 9, 80),
+            ("AAA", "weekly", "higher_low", "long", 10, 16, 9, 72),   # weekly beats daily
+            ("BBB", "daily", "double_bottom", "long", 20, 30, 18, 95),
+            ("CCC", "daily", "higher_low", "long", 5, 8, 4.5, 71)]
+    kept, dropped = curate_swing(rows, cap=2)
+    assert [(r[0], r[1]) for r in kept] == [("BBB", "daily"), ("AAA", "weekly")]
+    assert dropped == 2
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

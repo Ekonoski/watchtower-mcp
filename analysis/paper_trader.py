@@ -26,9 +26,11 @@ House rules encoded here, not approximated:
   - Binary gate: NFP / CPI / FOMC / PCE days mark every gamma spec
     skipped_binary at spec time. Other 10:00 ET High-impact releases block
     NEW entries 9:55-10:15 (loop-level).
-  - Clock rules: no new entries after 14:30 ET; everything force-flat at
-    15:55 (exit_reason eod_flat); two stops in one book in one day halts
-    that book (specs -> cancelled).
+  - Clock rules (day-trade books): no new entries after 14:30 ET; force-flat
+    at 15:55 (exit_reason eod_flat); two stops in one book in one day halts
+    that book. The swing book holds overnight — no force-flat, entries
+    workable until the close, and its stops accept on the DAILY close per
+    the wick rule (a daily pattern is judged on daily bars, not 15m pokes).
   - R is computed against the SPEC's stop distance; fills are the trigger
     bar's close. Slippage lives in the gap between spec R and realized R.
 """
@@ -48,6 +50,27 @@ VENUE = ["SPY", "QQQ", "IWM"]
 BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
                  "Core PCE")
 SWING_PATTERNS = ("double_bottom", "inverse_hs", "higher_low")
+# The swing book is a CURATED control, not the whole scanner. Weekly/daily
+# only (the backtested retest claims: weekly higher_low 63%, daily 50% — the
+# 4h was never the retest thesis), one spec per ticker, top-N by score. On
+# 2026-08-07 the uncurated query armed 151 blind limits on an NFP morning.
+SWING_TIMEFRAMES = ("weekly", "daily")
+SWING_MAX = 15
+
+
+def curate_swing(rows, cap=SWING_MAX):
+    """Pure. rows: (ticker, timeframe, pattern, direction, trigger, target,
+    invalid, score) already geometry-filtered. One spec per ticker (weekly
+    beats daily, then higher score), top `cap` by score.
+    Returns (kept, dropped_count)."""
+    best = {}
+    for r in rows:
+        tk, tf, score = r[0], r[1], r[7]
+        rank = (tf == "weekly", score)
+        if tk not in best or rank > (best[tk][1] == "weekly", best[tk][7]):
+            best[tk] = r
+    kept = sorted(best.values(), key=lambda r: -r[7])[:cap]
+    return kept, len(rows) - len(kept)
 
 
 def _touch(level, px):
@@ -145,12 +168,17 @@ def write_morning_specs():
                                 target, invalid_level, score
                          FROM pattern_scan
                          WHERE pattern = ANY(%s) AND status='breakout' AND score >= 70
-                           AND direction='bullish'
-                           AND dist_to_trigger_pct BETWEEN 0 AND 4""", (list(SWING_PATTERNS),))
-            for tk, tf, pat, _dir, trig, tgt, inv, score in c.fetchall():
-                trig, tgt, inv = float(trig), float(tgt), float(inv)
-                if (tgt - trig) < 1.5 * (trig - inv):
-                    continue
+                           AND direction='bullish' AND timeframe = ANY(%s)
+                           AND dist_to_trigger_pct BETWEEN 0 AND 4""",
+                      (list(SWING_PATTERNS), list(SWING_TIMEFRAMES)))
+            candidates = [(tk, tf, pat, d, float(trig), float(tgt), float(inv), score)
+                          for tk, tf, pat, d, trig, tgt, inv, score in c.fetchall()
+                          if (float(tgt) - float(trig)) >= 1.5 * (float(trig) - float(inv))]
+            kept, dropped = curate_swing(candidates)
+            if dropped:
+                log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
+                         len(candidates), len(kept), dropped)
+            for tk, tf, pat, _dir, trig, tgt, inv, score in kept:
                 specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
                               trig, inv, tgt, "armed",
                               f"{pat} {tf} breakout (score {score}); blind limit at the "
@@ -273,16 +301,19 @@ def run_trigger_loop():
                                 s.entry_trigger, s.stop, s.target, s.status,
                                 s.created_at, t.id, t.entry_px, t.entered_at, t.exited_at
                          FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
-                         WHERE s.trade_date=%s AND s.status IN ('armed','triggered')""",
+                         WHERE (s.trade_date=%s AND s.status IN ('armed','triggered'))
+                            OR (s.status='triggered' AND t.id IS NOT NULL
+                                AND t.exited_at IS NULL)""",
                       (today,))
             rows = c.fetchall()
         if not rows:
             return
-        # two-stop halt, per book
+        # two-stop halt, per book (stops that HAPPENED today, whatever day
+        # the spec was written — overnight swing stops count too)
         with conn.cursor() as c:
             c.execute("""SELECT s.book, count(*) FROM paper_trades t
                          JOIN paper_specs s ON s.id=t.spec_id
-                         WHERE s.trade_date=%s AND t.exit_reason='stop'
+                         WHERE t.exit_reason='stop' AND t.exited_at::date=%s
                          GROUP BY s.book""", (today,))
             halted = {b for b, n in c.fetchall() if n >= 2}
         eod = now.time() >= dt.time(15, 55)
@@ -299,7 +330,9 @@ def run_trigger_loop():
             ts, close, hi, lo = bars[-1]
             sign = 1 if direction == "long" else -1
             if tid is None:                          # not entered yet
-                if book in halted or no_new:
+                # 14:30 no-new is a day-trade clock; a swing resting limit
+                # stays workable until the close (its spec cancels at eod).
+                if book in halted or (eod if book == "swing" else no_new):
                     if eod:
                         _cancel(conn, sid, "day over")
                     continue
@@ -327,7 +360,16 @@ def run_trigger_loop():
                 # be lookahead. Stop/target only count on bars ending after entry.
                 post_entry = entered_at is None or ts + dt.timedelta(minutes=15) > entered_at
                 exit_px, reason = None, None
-                if post_entry and sign * (close - stop) < 0:  # 15m close beyond stop = acceptance
+                if book == "swing":
+                    # Multi-day hold: no force-flat, and per the wick rule a
+                    # daily-pattern stop accepts on the DAILY close (approx.
+                    # the final 15m bar), never an intraday poke.
+                    if eod and post_entry and sign * (close - stop) < 0:
+                        exit_px, reason = close, "stop"
+                    elif post_entry and ((direction == "long" and hi >= tgt)
+                                         or (direction == "short" and lo <= tgt)):
+                        exit_px, reason = tgt, "target"
+                elif post_entry and sign * (close - stop) < 0:  # 15m close beyond stop
                     exit_px, reason = close, "stop"
                 elif post_entry and ((direction == "long" and hi >= tgt)
                                      or (direction == "short" and lo <= tgt)):
