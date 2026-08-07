@@ -26,9 +26,11 @@ House rules encoded here, not approximated:
   - Binary gate: NFP / CPI / FOMC / PCE days mark every gamma spec
     skipped_binary at spec time. Other 10:00 ET High-impact releases block
     NEW entries 9:55-10:15 (loop-level).
-  - Clock rules: no new entries after 14:30 ET; everything force-flat at
-    15:55 (exit_reason eod_flat); two stops in one book in one day halts
-    that book (specs -> cancelled).
+  - Clock rules (day-trade books): no new entries after 14:30 ET; force-flat
+    at 15:55 (exit_reason eod_flat); two stops in one book in one day halts
+    that book. The swing book holds overnight — no force-flat, entries
+    workable until the close, and its stops accept on the DAILY close per
+    the wick rule (a daily pattern is judged on daily bars, not 15m pokes).
   - R is computed against the SPEC's stop distance; fills are the trigger
     bar's close. Slippage lives in the gap between spec R and realized R.
 """
@@ -299,16 +301,19 @@ def run_trigger_loop():
                                 s.entry_trigger, s.stop, s.target, s.status,
                                 s.created_at, t.id, t.entry_px, t.entered_at, t.exited_at
                          FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
-                         WHERE s.trade_date=%s AND s.status IN ('armed','triggered')""",
+                         WHERE (s.trade_date=%s AND s.status IN ('armed','triggered'))
+                            OR (s.status='triggered' AND t.id IS NOT NULL
+                                AND t.exited_at IS NULL)""",
                       (today,))
             rows = c.fetchall()
         if not rows:
             return
-        # two-stop halt, per book
+        # two-stop halt, per book (stops that HAPPENED today, whatever day
+        # the spec was written — overnight swing stops count too)
         with conn.cursor() as c:
             c.execute("""SELECT s.book, count(*) FROM paper_trades t
                          JOIN paper_specs s ON s.id=t.spec_id
-                         WHERE s.trade_date=%s AND t.exit_reason='stop'
+                         WHERE t.exit_reason='stop' AND t.exited_at::date=%s
                          GROUP BY s.book""", (today,))
             halted = {b for b, n in c.fetchall() if n >= 2}
         eod = now.time() >= dt.time(15, 55)
@@ -325,7 +330,9 @@ def run_trigger_loop():
             ts, close, hi, lo = bars[-1]
             sign = 1 if direction == "long" else -1
             if tid is None:                          # not entered yet
-                if book in halted or no_new:
+                # 14:30 no-new is a day-trade clock; a swing resting limit
+                # stays workable until the close (its spec cancels at eod).
+                if book in halted or (eod if book == "swing" else no_new):
                     if eod:
                         _cancel(conn, sid, "day over")
                     continue
@@ -353,7 +360,16 @@ def run_trigger_loop():
                 # be lookahead. Stop/target only count on bars ending after entry.
                 post_entry = entered_at is None or ts + dt.timedelta(minutes=15) > entered_at
                 exit_px, reason = None, None
-                if post_entry and sign * (close - stop) < 0:  # 15m close beyond stop = acceptance
+                if book == "swing":
+                    # Multi-day hold: no force-flat, and per the wick rule a
+                    # daily-pattern stop accepts on the DAILY close (approx.
+                    # the final 15m bar), never an intraday poke.
+                    if eod and post_entry and sign * (close - stop) < 0:
+                        exit_px, reason = close, "stop"
+                    elif post_entry and ((direction == "long" and hi >= tgt)
+                                         or (direction == "short" and lo <= tgt)):
+                        exit_px, reason = tgt, "target"
+                elif post_entry and sign * (close - stop) < 0:  # 15m close beyond stop
                     exit_px, reason = close, "stop"
                 elif post_entry and ((direction == "long" and hi >= tgt)
                                      or (direction == "short" and lo <= tgt)):
