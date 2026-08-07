@@ -1,12 +1,18 @@
 """
 Watchtower — paper-trading platform v1 (the measurement engine).
 
-Two books, never blended (see paper_specs.book):
-  gamma  — the playbook's qualified day-trade plays, generated each morning
-           from gex_levels. The unproven edge this platform exists to measure.
-  swing  — neckline-family breakout-retest limits from pattern_scan. Already
-           backtested; runs as the control group (and as the blind-limit vs
-           stall-entry experiment).
+Three books, never blended (see paper_specs.book):
+  gamma      — the playbook's qualified day-trade plays, generated each
+               morning from gex_levels. The unproven edge this platform
+               exists to measure; the clean control for gamma_iday.
+  gamma_iday — the SAME rules applied to the live intraday board
+               (gex_intraday) every loop cycle: as walls/flip move, new
+               levels arm and abandoned levels cancel. Measures how much
+               edge the morning-only book leaves on the table. When both
+               boards agree the two books deliberately hold the same trade.
+  swing      — neckline-family breakout-retest limits from pattern_scan.
+               Already backtested; runs as the control group (and as the
+               blind-limit vs stall-entry experiment).
 
 House rules encoded here, not approximated:
   - Wick rule: every trigger and stop is a COMPLETED 15-minute-bar close,
@@ -48,10 +54,11 @@ def _touch(level, px):
     return abs(px - level) / level <= 0.001
 
 
-def build_gamma_specs(trade_date, levels, status="armed"):
+def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
     """Playbook rules → paper_specs rows. The single source of truth: the live
-    morning spec-writer and the replay harness (analysis/gamma_replay.py) both
-    call this, so a rule change backtests and trades identically.
+    morning spec-writer, the intraday re-armer, and the replay harness
+    (analysis/gamma_replay.py) all call this, so a rule change backtests and
+    trades identically across every book.
 
     levels: iterable of (ticker, spot, call_wall, put_wall, gamma_flip,
             net_gex, regime) — the freshest board per ticker.
@@ -76,7 +83,7 @@ def build_gamma_specs(trade_date, levels, status="armed"):
             tgt = max(flip or 0, (cw + pw) / 2 if pw else 0)
             stop = round(cw * 1.0015, 2)
             if tgt and (cw - tgt) >= 1.5 * (stop - cw):
-                specs.append((trade_date, "gamma", tk, "short", f"wall_fade_{cw:g}",
+                specs.append((trade_date, book, tk, "short", f"wall_fade_{cw:g}",
                               cw, stop, round(tgt, 2), status,
                               f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
                               f"entry=15m close back under wall after touch; "
@@ -85,7 +92,7 @@ def build_gamma_specs(trade_date, levels, status="armed"):
         if regime == "pinning" and flip and cw and flip < spot < cw:
             stop = round(flip * 0.9985, 2)
             if (cw - flip) >= 1.5 * (flip - stop):
-                specs.append((trade_date, "gamma", tk, "long", f"flip_hold_{flip:g}",
+                specs.append((trade_date, book, tk, "long", f"flip_hold_{flip:g}",
                               flip, stop, cw, status,
                               f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
                               f"entry=touch then 15m close back above flip; "
@@ -97,7 +104,7 @@ def build_gamma_specs(trade_date, levels, status="armed"):
             stop = round(stack * 1.0015, 2)
             tgt = round(spot - (stack - spot), 2)  # symmetric room, capped by geometry
             if (stack - tgt) >= 1.5 * (stop - stack):
-                specs.append((trade_date, "gamma", tk, "short", f"stack_fade_{stack:g}",
+                specs.append((trade_date, book, tk, "short", f"stack_fade_{stack:g}",
                               stack, stop, tgt, status,
                               f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
                               f"counter-trend entry, with-trend hold"))
@@ -111,7 +118,10 @@ def write_morning_specs():
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
-            c.execute("SELECT 1 FROM paper_specs WHERE trade_date=%s LIMIT 1", (today,))
+            # book-scoped so a restart after the open doesn't mistake the
+            # intraday book's rows for an already-written morning batch
+            c.execute("""SELECT 1 FROM paper_specs
+                         WHERE trade_date=%s AND book != 'gamma_iday' LIMIT 1""", (today,))
             if c.fetchone():
                 log.info("[paper] specs already written for %s", today)
                 return
@@ -158,6 +168,77 @@ def write_morning_specs():
         conn.close()
 
 
+# ── Intraday re-armer: same rules, live board (gex_intraday) ─────────────────
+
+IDAY_FRESH_MIN = 25   # intraday sweep cadence is ~15 min; older = unavailable
+IDAY_LAST_NEW = dt.time(14, 30)   # matches the loop's no-new-entries clock
+
+
+def diff_intraday_specs(existing, fresh):
+    """Pure. existing: [(id, ticker, setup, status)] — today's gamma_iday rows.
+    fresh: spec tuples from build_gamma_specs off the live board.
+
+    Returns (to_insert, to_cancel):
+      to_insert — fresh specs whose (ticker, setup) has NOT existed today in
+        any status. One shot per level per day: a level that armed, cancelled,
+        and came back does not re-arm (prevents flip-flop churn at a contested
+        level, and keeps one row per level so the ledger reads cleanly).
+      to_cancel — armed spec ids whose level is absent from the live board
+        (the board moved; the level is no longer the playbook's trade).
+        Triggered specs are never cancelled — open trades manage to exit.
+    """
+    seen = {(tk, setup) for _id, tk, setup, _st in existing}
+    live = {(sp[2], sp[4]) for sp in fresh}
+    to_insert = [sp for sp in fresh if (sp[2], sp[4]) not in seen]
+    to_cancel = [_id for _id, tk, setup, st in existing
+                 if st == "armed" and (tk, setup) not in live]
+    return to_insert, to_cancel
+
+
+def write_intraday_specs(conn):
+    """Arm gamma_iday specs from the freshest gex_intraday board. Runs at the
+    top of every trigger-loop cycle; every gate build_gamma_specs applies to
+    the morning book (magnitude, collapsed magnet, geometry) applies here
+    identically, plus the same binary-day gate."""
+    now = dt.datetime.now(ET)
+    if not (dt.time(9, 35) <= now.time() < IDAY_LAST_NEW):
+        return
+    today = now.date()
+    with conn.cursor() as c:
+        c.execute("""SELECT event FROM economic_calendar
+                     WHERE country='US' AND event_date=%s AND impact='High'""", (today,))
+        if any(b.lower() in e.lower() for (e,) in c.fetchall() for b in BINARY_EVENTS):
+            return                              # binary day — book sits out
+        c.execute("""SELECT DISTINCT ON (ticker) ticker, spot, call_wall, put_wall,
+                            gamma_flip, net_gex, regime
+                     FROM gex_intraday
+                     WHERE ticker = ANY(%s) AND ts > now() - %s * interval '1 minute'
+                     ORDER BY ticker, ts DESC""", (VENUE, IDAY_FRESH_MIN))
+        board = c.fetchall()
+    if not board:
+        log.warning("[paper] gamma_iday: no fresh intraday board (>%dmin stale) "
+                    "— arming nothing, existing specs untouched", IDAY_FRESH_MIN)
+        return
+    fresh, _skips = build_gamma_specs(today, board, "armed", book="gamma_iday")
+    with conn.cursor() as c:
+        c.execute("""SELECT id, ticker, setup, status FROM paper_specs
+                     WHERE trade_date=%s AND book='gamma_iday'""", (today,))
+        to_insert, to_cancel = diff_intraday_specs(c.fetchall(), fresh)
+        if to_insert:
+            c.executemany("""INSERT INTO paper_specs
+                (trade_date, book, ticker, direction, setup, entry_trigger, stop,
+                 target, status, rationale)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", to_insert)
+        for sid in to_cancel:
+            c.execute("""UPDATE paper_specs SET status='cancelled',
+                         rationale = rationale || ' | cancelled: board moved off level'
+                         WHERE id=%s""", (sid,))
+    conn.commit()
+    if to_insert or to_cancel:
+        log.info("[paper] gamma_iday: +%d armed, %d cancelled (board move)",
+                 len(to_insert), len(to_cancel))
+
+
 # ── Intraday trigger loop (every 5 min, 9:35–15:55 ET) ───────────────────────
 
 def _last_closed_15m(tk):
@@ -182,10 +263,15 @@ def run_trigger_loop():
     today = now.date()
     conn = get_db_connection()
     try:
+        try:
+            write_intraday_specs(conn)   # arm from the live board, then evaluate
+        except Exception:
+            conn.rollback()
+            log.exception("[paper] gamma_iday arming failed — managing existing specs")
         with conn.cursor() as c:
             c.execute("""SELECT s.id, s.book, s.ticker, s.direction, s.setup,
                                 s.entry_trigger, s.stop, s.target, s.status,
-                                t.id, t.entry_px, t.entered_at, t.exited_at
+                                s.created_at, t.id, t.entry_px, t.entered_at, t.exited_at
                          FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
                          WHERE s.trade_date=%s AND s.status IN ('armed','triggered')""",
                       (today,))
@@ -203,7 +289,7 @@ def run_trigger_loop():
         no_new = eod or now.time() >= dt.time(14, 30)
 
         for (sid, book, tk, direction, setup, trig, stop, tgt, status,
-             tid, entry_px, entered_at, exited) in rows:
+             created_at, tid, entry_px, entered_at, exited) in rows:
             trig, stop, tgt = float(trig), float(stop), float(tgt)
             if exited:
                 continue
@@ -217,8 +303,11 @@ def run_trigger_loop():
                     if eod:
                         _cancel(conn, sid, "day over")
                     continue
-                touched = any((lo <= trig <= hi) or _touch(trig, c2)
-                              for _, c2, hi, lo in bars)
+                # A touch only counts on bars ending after the spec existed —
+                # an intraday-armed level doesn't inherit the morning's tape.
+                touched = any(((lo <= trig <= hi) or _touch(trig, c2))
+                              and bts + dt.timedelta(minutes=15) > created_at
+                              for bts, c2, hi, lo in bars)
                 if book == "swing":
                     entered = touched                # blind limit — by design
                 else:
