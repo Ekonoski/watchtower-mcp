@@ -48,6 +48,27 @@ VENUE = ["SPY", "QQQ", "IWM"]
 BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
                  "Core PCE")
 SWING_PATTERNS = ("double_bottom", "inverse_hs", "higher_low")
+# The swing book is a CURATED control, not the whole scanner. Weekly/daily
+# only (the backtested retest claims: weekly higher_low 63%, daily 50% — the
+# 4h was never the retest thesis), one spec per ticker, top-N by score. On
+# 2026-08-07 the uncurated query armed 151 blind limits on an NFP morning.
+SWING_TIMEFRAMES = ("weekly", "daily")
+SWING_MAX = 15
+
+
+def curate_swing(rows, cap=SWING_MAX):
+    """Pure. rows: (ticker, timeframe, pattern, direction, trigger, target,
+    invalid, score) already geometry-filtered. One spec per ticker (weekly
+    beats daily, then higher score), top `cap` by score.
+    Returns (kept, dropped_count)."""
+    best = {}
+    for r in rows:
+        tk, tf, score = r[0], r[1], r[7]
+        rank = (tf == "weekly", score)
+        if tk not in best or rank > (best[tk][1] == "weekly", best[tk][7]):
+            best[tk] = r
+    kept = sorted(best.values(), key=lambda r: -r[7])[:cap]
+    return kept, len(rows) - len(kept)
 
 
 def _touch(level, px):
@@ -145,12 +166,17 @@ def write_morning_specs():
                                 target, invalid_level, score
                          FROM pattern_scan
                          WHERE pattern = ANY(%s) AND status='breakout' AND score >= 70
-                           AND direction='bullish'
-                           AND dist_to_trigger_pct BETWEEN 0 AND 4""", (list(SWING_PATTERNS),))
-            for tk, tf, pat, _dir, trig, tgt, inv, score in c.fetchall():
-                trig, tgt, inv = float(trig), float(tgt), float(inv)
-                if (tgt - trig) < 1.5 * (trig - inv):
-                    continue
+                           AND direction='bullish' AND timeframe = ANY(%s)
+                           AND dist_to_trigger_pct BETWEEN 0 AND 4""",
+                      (list(SWING_PATTERNS), list(SWING_TIMEFRAMES)))
+            candidates = [(tk, tf, pat, d, float(trig), float(tgt), float(inv), score)
+                          for tk, tf, pat, d, trig, tgt, inv, score in c.fetchall()
+                          if (float(tgt) - float(trig)) >= 1.5 * (float(trig) - float(inv))]
+            kept, dropped = curate_swing(candidates)
+            if dropped:
+                log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
+                         len(candidates), len(kept), dropped)
+            for tk, tf, pat, _dir, trig, tgt, inv, score in kept:
                 specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
                               trig, inv, tgt, "armed",
                               f"{pat} {tf} breakout (score {score}); blind limit at the "
