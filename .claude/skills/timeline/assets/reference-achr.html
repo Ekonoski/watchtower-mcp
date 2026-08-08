@@ -1,0 +1,293 @@
+<title>ACHR Timeline — into the Aug 10 print</title>
+<style>
+  :root{
+    --bg:#101318; --card:#1a1e26; --card-edge:#262c37;
+    --ink:#e8ebf0; --ink-2:#9aa3b2; --ink-3:#6b7484;
+    --slip:#ff8a66; --slip-dim:rgba(255,138,102,.16);
+    --pin:#45d0bd; --pin-dim:rgba(69,208,189,.14);
+    --flip:#d8b45c; --flip-dim:rgba(216,180,92,.15);
+    --rail:#323a48; --chip-bg:#232936;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f2f3f6; --card:#ffffff; --card-edge:#dde1e8;
+      --ink:#1c2230; --ink-2:#5a6373; --ink-3:#8b93a3;
+      --slip:#d84f27; --slip-dim:rgba(216,79,39,.12);
+      --pin:#0d8f7d; --pin-dim:rgba(13,143,125,.12);
+      --flip:#a07d1f; --flip-dim:rgba(160,125,31,.13);
+      --rail:#c3c9d4; --chip-bg:#e8ebf1; }
+  }
+  :root[data-theme="dark"]{ --bg:#101318; --card:#1a1e26; --card-edge:#262c37;
+    --ink:#e8ebf0; --ink-2:#9aa3b2; --ink-3:#6b7484;
+    --slip:#ff8a66; --slip-dim:rgba(255,138,102,.16);
+    --pin:#45d0bd; --pin-dim:rgba(69,208,189,.14);
+    --flip:#d8b45c; --flip-dim:rgba(216,180,92,.15);
+    --rail:#323a48; --chip-bg:#232936; }
+  :root[data-theme="light"]{ --bg:#f2f3f6; --card:#ffffff; --card-edge:#dde1e8;
+    --ink:#1c2230; --ink-2:#5a6373; --ink-3:#8b93a3;
+    --slip:#d84f27; --slip-dim:rgba(216,79,39,.12);
+    --pin:#0d8f7d; --pin-dim:rgba(13,143,125,.12);
+    --flip:#a07d1f; --flip-dim:rgba(160,125,31,.13);
+    --rail:#c3c9d4; --chip-bg:#e8ebf1; }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);margin:0;padding:22px 18px 34px;
+       font:15px/1.5 "Segoe UI","Avenir Next",system-ui,sans-serif}
+  .num{font-family:ui-monospace,"SF Mono",Consolas,Menlo,monospace;font-variant-numeric:tabular-nums}
+  .wrap{max-width:1120px;margin:0 auto}
+  .kicker{font-size:11px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
+  h1{font-size:22px;margin:2px 0 8px;font-weight:650;letter-spacing:-.01em;text-wrap:balance}
+  .posture{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px}
+  .chip{background:var(--chip-bg);border:1px solid var(--card-edge);border-radius:4px;
+        padding:3px 9px;font-size:12.5px;color:var(--ink-2)}
+  .chip b{color:var(--ink);font-weight:600}
+  .panel{background:var(--card);border:1px solid var(--card-edge);border-radius:6px;padding:14px 16px}
+  .chart-panel{padding:10px 8px 6px}
+  .chart-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;padding:2px 8px 6px}
+  .chart-head .t{font-size:13px;color:var(--ink-2)}
+  .chart-head .t b{color:var(--ink)}
+  .cglyphs{font-size:11.5px;color:var(--ink-3);display:flex;gap:14px;align-items:center}
+  .cglyphs svg{vertical-align:-2px}
+  #chart{width:100%;height:auto;display:block}
+  #tip{position:fixed;pointer-events:none;display:none;background:var(--card);border:1px solid var(--card-edge);
+       border-radius:5px;padding:7px 10px;font-size:12px;color:var(--ink-2);z-index:10;line-height:1.45;
+       box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  #tip b{color:var(--ink)}
+  h2{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:650;margin:24px 0 10px}
+  .cols{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:14px;align-items:start}
+  @media (max-width:900px){.cols{grid-template-columns:1fr}}
+  .tape{display:flex;flex-direction:column;gap:0}
+  .ev{display:flex;gap:12px;padding:10px 2px;border-top:1px solid var(--card-edge)}
+  .ev:first-child{border-top:none}
+  .ev .n{flex:0 0 24px;height:24px;border-radius:50%;background:var(--flip-dim);color:var(--flip);
+         font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .ev .n.up{background:var(--pin-dim);color:var(--pin)}
+  .ev .n.dn{background:var(--slip-dim);color:var(--slip)}
+  .ev .body{font-size:13px;color:var(--ink-2);line-height:1.55}
+  .ev .body b{color:var(--ink)}
+  .ev .d{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{padding:7px 10px;text-align:left;border-top:1px solid var(--card-edge);vertical-align:top}
+  thead th{border-top:none;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+  td{color:var(--ink-2)} td b{color:var(--ink)}
+  td:first-child{white-space:nowrap;font-weight:650;color:var(--ink)}
+  .side{display:flex;flex-direction:column;gap:14px}
+  .fstrip{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:13px;color:var(--ink-2)}
+  .fstrip div b{color:var(--ink)}
+  .fstrip .lab{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);display:block}
+  .verdict{border-left:3px solid var(--flip);background:var(--flip-dim);border-radius:0 6px 6px 0;
+           padding:12px 14px;font-size:13px;color:var(--ink-2);line-height:1.6}
+  .verdict b{color:var(--ink)}
+  .skep{border-left:3px solid var(--slip)}
+  .footer-note{font-size:12px;color:var(--ink-3);margin-top:20px;line-height:1.6;max-width:100ch}
+</style>
+
+<div class="wrap">
+  <div class="kicker">Watchtower · ticker timeline · ACHR — Archer Aviation · daily bars Feb 2 → Fri Aug 7 2026 close · prototype v1</div>
+  <h1>Four patterns collide at 5.60 — Friday's high was 5.60 to the cent, and the print lands Monday night</h1>
+  <div class="posture">
+    <span class="chip">Fri close <b class="num">5.59</b> (+6.9%) · week <b class="num">+20.5%</b> — into a binary</span>
+    <span class="chip"><b>Q2 print Mon Aug 10 AMC</b> · est EPS <b class="num">−0.34</b> · guided adj-EBITDA loss <b class="num">$170–200M</b></span>
+    <span class="chip">Short interest <b class="num">14.4%</b> of float · realized vol <b class="num">96%</b> · beta ≈ 0</span>
+    <span class="chip">Desk: <b>no entry held through the print</b> — skipped-binary doctrine</span>
+  </div>
+
+  <div class="panel chart-panel">
+    <div class="chart-head">
+      <span class="t"><b>ACHR daily</b> · candles + volume · levels from this morning's scans · numbered pins = the tape below</span>
+      <span class="cglyphs">
+        <span><svg width="10" height="12"><rect x="3" y="1" width="4" height="10" rx="1" fill="none" stroke="#45d0bd" stroke-width="1.6"/></svg> up close</span>
+        <span><svg width="10" height="12"><rect x="3" y="1" width="4" height="10" rx="1" fill="#ff8a66"/></svg> down close</span>
+        <span style="color:var(--flip)">— 5.60 the line</span>
+      </span>
+    </div>
+    <svg id="chart" viewBox="0 0 1120 555" role="img" aria-label="ACHR daily candlestick chart, February through August 7 2026, with numbered event pins and key levels"></svg>
+  </div>
+  <div id="tip"></div>
+
+  <div class="cols">
+    <div>
+      <h2>The tape, graded — what happened, and what the system said at the time</h2>
+      <div class="panel tape">
+        <div class="ev"><span class="n dn">1</span><div class="body"><span class="d">Mar 2 — Q4 print, missed</span><br>
+          EPS <b>−0.26 vs −0.17 expected</b> (surprise −55%). The stock was 7.52 that day; the miss started an eleven-week slide that didn't floor until 4.30. First lesson on this chart: ACHR prints are real events, not formalities.</div></div>
+        <div class="ev"><span class="n up">2</span><div class="body"><span class="d">May 11 — Q1 print, beat — and dipped anyway</span><br>
+          EPS <b>−0.28 vs −0.31</b> (+10% surprise), "record FAA certification progress, first US operations expected 2026." It closed 6.54 that day, rallied to 6.84 by Jun 1 — then gave all of it back. A beat that fades is information: the seller pressure was bigger than the news.</div></div>
+        <div class="ev"><span class="n dn">3</span><div class="body"><span class="d">Jun 5 — the −13% day</span><br>
+          6.38 → 5.54 on heavy volume. <b>No single catalyst in our feeds</b> — we log that honestly rather than backfill a story. The slide it started ran five more weeks.</div></div>
+        <div class="ev"><span class="n dn">4</span><div class="body"><span class="d">Jun 10 — scanner said AVOID (receipt)</span><br>
+          News-alert <b>AVOID at 5.24, score 80</b> — the strongest negative flag our system issued on this name. Five weeks later the stock printed 4.30, <b>−18% below the flag</b>. This is the ledger working: the call was right, and it's pinned to the bar where it was made.</div></div>
+        <div class="ev"><span class="n dn">5</span><div class="body"><span class="d">Jul 17 — the low</span><br>
+          <b>4.30</b>, the bottom of the whole decline — and now the invalidation line under the inverse head-and-shoulders. Everything since is measured against this bar.</div></div>
+        <div class="ev"><span class="n up">6</span><div class="body"><span class="d">Jul 20–21 — the reversal, with volume and a receipt</span><br>
+          <b>+19.6% on 99M shares</b> — 3–4× normal volume, the biggest day on the chart. Our intraday scanner fired <b>GAP_AND_GO at 4.81</b> that morning; the next day the oscillator flagged <b>bullish divergence + loaded spring at 5.31</b>, and WSB rank hit 38. Honest grading of that oscillator call: it took −16% of heat to 4.47 before paying — early is a cost, even when right.</div></div>
+        <div class="ev"><span class="n up">7</span><div class="body"><span class="d">Jul 29 — the higher low</span><br>
+          Sold back to <b>4.47 and held above the 4.30 low</b> — the bar that makes the current daily higher-low and iHS structures exist. If price ever trades below 4.47 again, both bullish patterns are dead.</div></div>
+        <div class="ev"><span class="n up">8</span><div class="body"><span class="d">Aug 4–5 — the pre-print run starts</span><br>
+          +9.7% Monday, then the <b>ZEE AI aviation-safety announcement</b> Aug 5. Three green days into the print — this week's +20.5% is anticipation, not results.</div></div>
+        <div class="ev"><span class="n up">9</span><div class="body"><span class="d">Aug 7 (Fri) — high 5.60, to the cent</span><br>
+          The day's high was <b>exactly 5.60</b> — the price where both weekly bear patterns invalidate and the daily higher-low triggers — and it closed <b>5.59</b>, one cent under. The daily iHS trigger (5.46) did clear on a closing basis. The market walked up to the decision line and stopped on it, with the answer due Monday night.</div></div>
+        <div class="ev"><span class="n">E</span><div class="body"><span class="d">Mon Aug 10, after the close — Q2 print (the binary)</span><br>
+          Est. EPS <b>−0.34</b>; company-guided adjusted-EBITDA loss <b>$170–200M for the quarter</b>. Last four quarters averaged a <b>miss</b> (−0.07 avg surprise). The stock moves on the operating update — Phase 4 certification progress, first-US-operations timing, burn — more than the EPS line.</div></div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <h2 style="margin-top:0">Fundamentals — what the $4.1B is buying</h2>
+        <div class="fstrip">
+          <div><span class="lab">Revenue TTM</span><b class="num">$1.9M</b> — pre-revenue</div>
+          <div><span class="lab">FCF TTM</span><b class="num">−$589M</b>/yr and widening</div>
+          <div><span class="lab">Cash vs debt</span><b class="num">$951M</b> vs $122M</div>
+          <div><span class="lab">Runway at guide</span><b>~4–5 quarters</b> → raise likely</div>
+          <div><span class="lab">Street revenue path</span><b class="num">FY26 $10M → FY28 $481M</b></div>
+          <div><span class="lab">EPS positive</span><b>not before 2029</b> (est.)</div>
+        </div>
+        <p style="font-size:12.5px;color:var(--ink-3);margin:10px 0 0;line-height:1.55">
+        The story is the FAA timeline, not the ratios: first eVTOL to close Phase 3 of type certification,
+        near-daily piloted Midnight flights, US air-taxi ops targeted this year, LA28 positioning, UAE on track.
+        Phase 4 is the long pole; dilution is a recurring cost of the wait.</p>
+      </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">Levels &amp; why</h2>
+        <table>
+          <tbody>
+            <tr><td class="num">6.90 / 6.62</td><td>Measured targets — daily higher-low and iHS. Only live <b>above 5.60</b>.</td></tr>
+            <tr><td class="num">5.60</td><td><b>The line.</b> Weekly ema-reject + bear-flag both invalidate above it; daily higher-low triggers through it. Friday's exact high.</td></tr>
+            <tr><td class="num">5.46</td><td>Daily iHS trigger (score 69, best pattern on the name) — <b>cleared Friday on a closing basis</b>.</td></tr>
+            <tr><td class="num">4.47</td><td>The Jul 29 higher low. Below it, every bullish structure fails.</td></tr>
+            <tr><td class="num">4.30</td><td>The Jul 17 bottom; iHS invalidation.</td></tr>
+            <tr><td class="num">2.81 / 2.64</td><td>Weekly bear-flag / ema-reject targets — the measured downside <b>if 5.60 never clears</b>. Off-chart below.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="verdict">
+        <b>Desk verdict — skipped-binary doctrine applies.</b> No new entry held through Monday afternoon. The
+        one-cent margin at 5.60 on a Friday close is noise against an after-hours print on a name that moves
+        3.3% on a quiet day. Post-print, the trigger is unchanged and better: a <b>daily close above 5.60 after
+        the report</b> confirms the break with the binary removed — targets 6.62 then 6.90, with 14.4% short
+        interest as an accelerant. If the update disappoints, 4.47 is the line that decides whether the bottom
+        thesis survives.
+      </div>
+
+      <div class="verdict skep">
+        <b>The skeptical note (house rule).</b> This week's +20.5% happened <em>into</em> the print — buyers
+        front-running an announcement nobody has seen, on a name that averages a miss. Oscillator conviction is
+        low both ways (weekly 22/100 bearish, daily 30/100 bullish with a bearish money-flow divergence). The
+        Jun 10 AVOID receipt cuts both directions: it proves the flags work, and it proves this tape punishes
+        early conviction. Nothing on this card is causal just because it's adjacent — pin 3 is a −13% day with
+        no story at all.
+      </div>
+    </div>
+  </div>
+
+  <p class="footer-note">Freshness, per source: daily bars through <b>Fri Aug 7 close</b> (Friday's bar verified against the live quote: close 5.59) ·
+  pattern/oscillator scans <b>6:47 AM ET Fri</b> — run on Thursday's close, i.e. before Friday's candle; the 5.46 iHS trigger status is our read of
+  Friday's completed bar, the scanner re-grades tonight · fundamentals &amp; volatility computed <b>Aug 7</b> · short interest <b>Aug 1</b> ·
+  social buzz <b>Jul 22</b> (thin coverage — 6 mentions, rank 63; the crowd is not here) · analyst-grade feed is sparse on ACHR (two maintains
+  since Feb) — treat the absence as coverage gap, not consensus · earnings date <b>Aug 10 AMC confirmed via company release</b>; our calendar
+  row was unconfirmed and was verified independently per this week's rule. Pins 1–9 are events our own feeds logged on the dates shown;
+  pin E is scheduled. This card grades itself after Monday's print.</p>
+</div>
+
+<script>
+const BARS=[["02-02",7.2,7.27,6.97,7.05,36.5],["02-03",7.18,7.24,6.9,7.2,33.8],["02-04",7.16,7.2,6.73,6.95,33.2],["02-05",6.76,6.79,6.36,6.49,52.3],["02-06",6.8,7.37,6.7,7.3,50.5],["02-09",7.23,7.47,7.13,7.37,29.4],["02-10",7.36,7.57,7.16,7.17,30.3],["02-11",7.17,7.2,6.79,6.97,33.1],["02-12",6.97,6.97,6.61,6.76,29.0],["02-13",6.83,6.99,6.68,6.77,25.2],["02-17",6.71,6.9,6.57,6.82,30.8],["02-18",6.8,7.13,6.75,6.97,24.4],["02-19",6.85,7.27,6.78,7.23,37.5],["02-20",7.09,7.28,6.87,6.93,28.4],["02-23",6.71,6.98,6.66,6.96,32.9],["02-24",6.86,7.2,6.7,7.19,39.3],["02-25",7.28,7.32,7.09,7.1,30.4],["02-26",7.1,7.4,6.96,7.38,37.1],["02-27",7.16,7.16,6.91,7.12,29.6],["03-02",6.85,7.55,6.8,7.52,38.1],["03-03",7.34,7.36,6.51,6.72,45.0],["03-04",6.83,7.0,6.6,6.76,26.2],["03-05",6.65,6.79,6.31,6.46,38.8],["03-06",6.31,6.46,6.22,6.26,31.0],["03-09",6.17,6.54,6.07,6.52,30.3],["03-10",6.64,6.68,6.29,6.32,24.0],["03-11",6.31,6.48,6.23,6.43,23.7],["03-12",6.35,6.46,6.15,6.15,24.7],["03-13",6.27,6.33,5.97,6.03,23.3],["03-16",6.08,6.21,5.97,6.12,34.3],["03-17",6.16,6.3,6.06,6.29,29.6],["03-18",6.19,6.25,6.01,6.01,27.7],["03-19",5.88,6.17,5.79,6.01,21.3],["03-20",6.0,6.06,5.67,5.76,34.1],["03-23",5.87,5.96,5.75,5.89,26.1],["03-24",5.76,5.83,5.47,5.51,28.5],["03-25",5.74,5.87,5.46,5.56,28.6],["03-26",5.36,5.58,5.3,5.37,18.6],["03-27",5.3,5.34,5.07,5.09,28.5],["03-30",5.09,5.15,4.8,4.94,33.9],["03-31",5.04,5.23,4.93,5.17,33.8],["04-01",5.32,5.35,5.16,5.21,24.3],["04-02",5.0,5.43,5.0,5.42,21.1],["04-06",5.38,5.71,5.38,5.54,24.8],["04-07",5.47,5.49,5.22,5.34,32.6],["04-08",5.76,5.83,5.47,5.58,28.2],["04-09",5.48,5.59,5.32,5.32,23.1],["04-10",5.38,5.52,5.34,5.4,14.9],["04-13",5.27,5.55,5.23,5.45,17.9],["04-14",5.66,5.75,5.56,5.67,22.2],["04-15",5.73,6.09,5.73,6.06,26.3],["04-16",6.3,6.36,5.92,6.08,25.1],["04-17",6.25,6.49,6.1,6.11,28.3],["04-20",6.01,6.14,5.93,6.11,21.8],["04-21",6.16,6.26,5.9,5.94,27.9],["04-22",6.14,6.32,5.95,6.06,26.7],["04-23",6.01,6.06,5.61,5.77,28.6],["04-24",5.86,5.88,5.59,5.7,21.0],["04-27",5.65,5.94,5.63,5.9,23.0],["04-28",5.86,5.91,5.75,5.84,18.4],["04-29",5.75,5.75,5.47,5.6,23.4],["04-30",5.65,5.84,5.58,5.74,27.1],["05-01",5.76,5.92,5.61,5.87,31.3],["05-04",5.86,5.89,5.7,5.77,29.7],["05-05",5.77,5.86,5.57,5.84,52.5],["05-06",5.98,6.46,5.93,6.41,54.8],["05-07",6.33,6.5,6.15,6.28,59.7],["05-08",6.3,6.54,6.08,6.48,45.7],["05-11",6.37,6.75,6.24,6.54,67.8],["05-12",6.39,6.68,6.05,6.39,54.3],["05-13",6.29,6.75,6.23,6.52,44.8],["05-14",6.51,6.56,6.11,6.41,47.6],["05-15",6.16,6.22,6.0,6.05,46.0],["05-18",6.05,6.2,5.82,5.92,58.0],["05-19",5.83,6.08,5.69,5.91,49.6],["05-20",5.86,6.04,5.74,5.78,47.1],["05-21",5.71,6.14,5.59,6.12,64.1],["05-22",6.19,6.43,6.15,6.36,79.3],["05-26",6.55,6.77,6.39,6.51,75.2],["05-27",6.51,6.62,6.31,6.55,58.2],["05-28",6.45,7.09,6.41,6.81,58.5],["05-29",6.71,6.83,6.39,6.81,56.9],["06-01",6.65,6.93,6.52,6.84,63.0],["06-02",6.8,6.9,6.62,6.74,48.6],["06-03",6.6,6.64,6.27,6.53,51.7],["06-04",6.55,6.62,6.35,6.38,57.3],["06-05",6.25,6.31,5.38,5.54,54.3],["06-08",5.67,5.9,5.58,5.73,39.3],["06-09",5.77,5.88,5.2,5.32,57.0],["06-10",5.27,5.36,5.04,5.05,36.8],["06-11",5.03,5.32,4.93,5.3,42.6],["06-12",5.3,5.36,5.0,5.08,30.0],["06-15",5.33,5.62,5.32,5.55,57.3],["06-16",5.5,5.58,5.23,5.44,59.5],["06-17",5.38,5.72,5.32,5.36,47.5],["06-18",5.45,5.59,5.24,5.57,41.0],["06-22",5.49,5.64,5.39,5.43,34.2],["06-23",5.23,5.51,5.23,5.25,38.5],["06-24",5.21,5.22,5.0,5.05,40.9],["06-25",5.1,5.13,4.75,4.79,39.7],["06-26",4.71,5.08,4.71,4.87,53.6],["06-29",4.9,5.03,4.61,4.68,34.9],["06-30",4.68,4.86,4.65,4.73,33.3],["07-01",4.79,5.08,4.76,4.92,41.8],["07-02",5.02,5.19,4.84,4.98,29.0],["07-06",5.0,5.46,4.97,5.37,36.9],["07-07",5.3,5.35,4.83,4.93,29.5],["07-08",4.85,4.97,4.81,4.84,19.3],["07-09",4.84,4.94,4.77,4.85,17.9],["07-10",4.89,4.93,4.69,4.73,23.8],["07-13",4.67,4.74,4.51,4.55,25.9],["07-14",4.61,4.88,4.55,4.85,28.4],["07-15",4.9,5.06,4.71,4.78,23.1],["07-16",4.74,4.75,4.45,4.49,25.5],["07-17",4.34,4.59,4.3,4.44,25.4],["07-20",4.63,5.43,4.6,5.31,99.3],["07-21",5.32,5.6,5.22,5.28,52.3],["07-22",5.31,5.42,5.08,5.18,37.0],["07-23",5.1,5.33,5.04,5.11,30.5],["07-24",5.16,5.17,4.74,4.77,35.2],["07-27",4.8,4.99,4.77,4.95,30.1],["07-28",4.81,4.91,4.66,4.82,23.2],["07-29",4.8,4.83,4.47,4.48,26.0],["07-30",4.58,4.77,4.52,4.74,31.6],["07-31",4.78,4.85,4.57,4.64,29.9],["08-03",4.67,4.92,4.6,4.84,30.7],["08-04",4.94,5.36,4.91,5.31,29.4],["08-05",5.3,5.35,5.13,5.2,23.7],["08-06",5.17,5.36,5.08,5.23,26.1],["08-07",5.36,5.6,5.3,5.59,34.0]];
+const PINS=[
+ {d:"03-02",n:"1",side:"up",cls:"dn",label:"Q4 miss"},
+ {d:"05-11",n:"2",side:"up",cls:"up",label:"Q1 beat"},
+ {d:"06-05",n:"3",side:"up",cls:"dn",label:"−13%"},
+ {d:"06-10",n:"4",side:"dn",cls:"dn",label:"AVOID 80"},
+ {d:"07-17",n:"5",side:"dn",cls:"dn",label:"low 4.30"},
+ {d:"07-20",n:"6",side:"up",cls:"up",label:"+19.6% · 99M"},
+ {d:"07-29",n:"7",side:"dn",cls:"up",label:"HL 4.47"},
+ {d:"08-05",n:"8",side:"up",cls:"up",label:"ZEE AI"},
+ {d:"08-07",n:"9",side:"up",cls:"up",label:"high 5.60"}];
+const LEVELS=[
+ {p:6.90,c:"pin",t:"6.90 target (higher-low)"},
+ {p:6.62,c:"pin",t:"6.62 target (iHS)"},
+ {p:5.60,c:"flip",t:"5.60 THE LINE",big:true},
+ {p:5.46,c:"flip",t:"5.46 iHS trigger"},
+ {p:4.47,c:"slip",t:"4.47 higher low"},
+ {p:4.30,c:"slip",t:"4.30 bottom / invalid"}];
+
+const svg=document.getElementById("chart"), NS="http://www.w3.org/2000/svg";
+const W=1120,H=555,ML=8,MR=168,MT=26,MB=18,VH=64,GAP=14;
+const CH=H-MT-MB-VH-GAP;           // candle area height
+const FUT=6;                        // phantom slots for the earnings zone
+const N=BARS.length+FUT;
+const lo=4.0,hi=7.75;
+const x=i=>ML+(W-ML-MR)*(i+0.5)/N;
+const y=p=>MT+CH*(1-(p-lo)/(hi-lo));
+const bw=Math.max(2.6,(W-ML-MR)/N*0.62);
+const vmax=Math.max(...BARS.map(b=>b[5]));
+const vy=v=>H-MB-(VH*v/vmax);
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+function el(t,a,parent){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(parent||svg).appendChild(e);return e;}
+const idx={};BARS.forEach((b,i)=>idx[b[0]]=i);
+
+// future zone (Mon Aug 10 print)
+const fz=el("rect",{x:x(BARS.length-1)+bw,y:MT,width:W-MR-(x(BARS.length-1)+bw)-2,height:CH,fill:"var(--flip-dim)",rx:3});
+el("text",{x:(x(BARS.length-1)+bw+W-MR)/2,y:MT+16,"text-anchor":"middle",fill:"var(--flip)","font-size":"10.5","font-weight":"700","letter-spacing":".08em"}).textContent="MON 8/10";
+el("text",{x:(x(BARS.length-1)+bw+W-MR)/2,y:MT+30,"text-anchor":"middle",fill:"var(--ink-3)","font-size":"9.5"}).textContent="Q2 · AMC";
+
+// levels
+for(const L of LEVELS){
+  el("line",{x1:ML,x2:W-MR,y1:y(L.p),y2:y(L.p),stroke:`var(--${L.c})`,"stroke-width":L.big?1.6:1,
+             "stroke-dasharray":L.big?"":"5 4",opacity:L.big?0.9:0.55});
+  el("text",{x:W-MR+6,y:y(L.p)+3.5,fill:`var(--${L.c})`,"font-size":L.big?"11.5":"10.5",
+             "font-weight":L.big?"700":"600","font-family":"ui-monospace,Consolas,monospace"}).textContent=L.t;
+}
+// y gridline labels (sparse)
+for(const p of [7.5,7.0,6.5,6.0,5.5,5.0,4.5]){
+  el("text",{x:ML+2,y:y(p)-3,fill:"var(--ink-3)","font-size":"9.5","font-family":"ui-monospace,Consolas,monospace",opacity:.8}).textContent=p.toFixed(1);
+  el("line",{x1:ML,x2:W-MR,y1:y(p),y2:y(p),stroke:"var(--rail)","stroke-width":.5,opacity:.35});
+}
+// month ticks
+let lastM="";
+BARS.forEach((b,i)=>{const m=b[0].slice(0,2);if(m!==lastM){lastM=m;
+  const nm={"02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun","07":"Jul","08":"Aug"}[m];
+  el("text",{x:x(i),y:H-4,fill:"var(--ink-3)","font-size":"10"}).textContent=nm;}});
+
+// volume then candles
+BARS.forEach((b,i)=>{
+  const up=b[4]>=b[1];
+  el("rect",{x:x(i)-bw/2,y:vy(b[5]),width:bw,height:H-MB-vy(b[5]),fill:up?"var(--pin)":"var(--slip)",opacity:b[5]>80?0.85:0.28});
+});
+BARS.forEach((b,i)=>{
+  const up=b[4]>=b[1];const col=up?"var(--pin)":"var(--slip)";
+  el("line",{x1:x(i),x2:x(i),y1:y(b[2]),y2:y(b[3]),stroke:col,"stroke-width":1});
+  const top=y(Math.max(b[1],b[4])),bot=y(Math.min(b[1],b[4]));
+  el("rect",{x:x(i)-bw/2,y:top,width:bw,height:Math.max(1.4,bot-top),rx:1,
+             fill:up?"var(--card)":col,stroke:col,"stroke-width":up?1.4:0});
+});
+// event pins
+for(const p of PINS){
+  const i=idx[p.d],b=BARS[i];
+  const anchor=p.side==="up"?y(b[2])-6:y(b[3])+6;
+  const py=p.side==="up"?Math.max(MT+10,anchor-24):Math.min(MT+CH-10,anchor+24);
+  const col=p.cls==="up"?"var(--pin)":"var(--slip)";
+  el("line",{x1:x(i),x2:x(i),y1:anchor,y2:py+(p.side==="up"?9:-9),stroke:col,"stroke-width":1,opacity:.7,"stroke-dasharray":"2 2"});
+  el("circle",{cx:x(i),cy:py,r:9,fill:"var(--card)",stroke:col,"stroke-width":1.5});
+  el("text",{x:x(i),y:py+3.5,"text-anchor":"middle",fill:col,"font-size":"10.5","font-weight":"700"}).textContent=p.n;
+  el("text",{x:x(i),y:py+(p.side==="up"?-14:20),"text-anchor":"middle",fill:"var(--ink-3)","font-size":"9"}).textContent=p.label;
+}
+// earnings pin in future zone
+const ex=(x(BARS.length-1)+bw+W-MR)/2;
+el("circle",{cx:ex,cy:y(5.59),r:10,fill:"var(--card)",stroke:"var(--flip)","stroke-width":1.6});
+el("text",{x:ex,y:y(5.59)+3.5,"text-anchor":"middle",fill:"var(--flip)","font-size":"10.5","font-weight":"800"}).textContent="E";
+
+// hover layer
+const tip=document.getElementById("tip");
+const slotW=(W-ML-MR)/N;
+BARS.forEach((b,i)=>{
+  const r=el("rect",{x:x(i)-slotW/2,y:MT,width:slotW,height:CH+GAP+VH,fill:"transparent"});
+  r.addEventListener("mousemove",ev=>{
+    tip.style.display="block";
+    tip.innerHTML=`<b>2026-${b[0]}</b><br>O <b class="num">${b[1].toFixed(2)}</b> H <b class="num">${b[2].toFixed(2)}</b> L <b class="num">${b[3].toFixed(2)}</b> C <b class="num">${b[4].toFixed(2)}</b><br>vol <b class="num">${b[5].toFixed(1)}M</b>`;
+    const vw=window.innerWidth;
+    tip.style.left=Math.min(ev.clientX+14,vw-170)+"px";
+    tip.style.top=(ev.clientY-14)+"px";
+  });
+  r.addEventListener("mouseleave",()=>tip.style.display="none");
+});
+</script>

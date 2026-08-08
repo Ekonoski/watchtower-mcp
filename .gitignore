@@ -6,7 +6,8 @@ __pycache__/
 venv/
 .DS_Store
 *.log
-.claude/
+.claude/*
+!.claude/skills/
 
 # Generated pipeline artifacts (regenerated daily — do not commit updates)
 daily_brief.md
