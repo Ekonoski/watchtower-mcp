@@ -75,6 +75,12 @@ SELECT json_build_object(
 );
 ```
 
+Shelves (the levels the pattern scanner does NOT emit): call
+`watchtower_levels` (Watchtower MCP; load via ToolSearch) with the ticker —
+multi-touch S/R clustered across timeframes, star-rated by touches x
+confluence x recency. If the tool is absent or errors, the rail renders
+scanner levels only and the footer says shelves were unavailable.
+
 Then one web pass for anything the print/binary needs (verify the earnings date,
 catch a catalyst our feeds missed). Today's bar may be intraday-partial —
 compare against a live quote and stamp the footer accordingly.
@@ -95,6 +101,20 @@ Future pin `E`: the next earnings date, in a shaded zone right of the last bar,
 with estimate and any company-guided number.
 
 ### 3. Levels (right rail, each with a why)
+
+Two level classes, always labeled by source — they answer different
+questions and must never be presented as each other:
+
+- **Shelves** (`watchtower_levels`): where the fight HAPPENS — multi-touch
+  supply/demand, rendered with touch count and stars ("42.3 supply shelf
+  ★★★ · 4 touches · 1D+4H"). A rejection at a 4-touch shelf is normal, not
+  damning.
+- **Pattern levels** (`pattern_scan`): where the fight is DECIDED — triggers,
+  targets, invalidations. Only the invalidation close settles a structure.
+
+When a shelf sits under an invalidation, draw the span between them as the
+battle zone (IREN 2026-08-08: shelf ~42.3 under the 43.72 kill line) and give
+the in-between its honest label: progress, not confirmation.
 
 From `pattern_scan`: triggers, targets, invalidation levels. Call out
 collisions — the best cards are built around one price where structures collide
@@ -135,6 +155,20 @@ pin overlaps, level-label crowding are the recurring bugs.
   "analysts agree"). An errored lookup renders as *unavailable*, never neutral.
 - **Skeptical note is mandatory** and must contain at least one fact that cuts
   against the card's own headline read.
+- **Divergences are weighted, never flat.** Before a divergence carries any
+  argument on the card, grade it on four axes and print the grade:
+
+  | Axis | Heavy | Light |
+  |---|---|---|
+  | Count | 4-of-4 series | 2-of-4 (name which did NOT diverge) |
+  | Timeframe | weekly | 4h/1h (tactical only) |
+  | Location | at a decision level | mid-nowhere |
+  | State | before the corrective leg | correction already ran → largely SPENT |
+
+  A spent divergence re-arms only on a THIRD weaker peak at resistance. A
+  divergence marks a condition, never timing — IREN's weekly one sat at the
+  top for weeks before paying; its 4h one was 2-of-4 with money flow
+  dissenting and mostly spent by the time the card shipped (2026-08-08).
 - Numbers on one line reconcile: derive returns from the bars on the card and
   name reference closes.
 - The desk verdict follows the playbook: binary within ~5 sessions →
