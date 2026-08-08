@@ -67,6 +67,23 @@ SECTOR HEAT: median-stock (breadth) based, not cap-weighted — a green
 tile means the TYPICAL stock is winning, deliberately immune to one
 mega-cap dragging an index.
 
+LEVELS COME IN PAIRS: a multi-touch shelf (watchtower_levels — pivots
+clustered across timeframes, star-rated by touches x confluence x
+recency) says where the fight HAPPENS; a pattern's invalidation
+(watchtower_get_patterns) says where the fight is DECIDED. Read both:
+a rejection at a 4-touch shelf is normal, not damning; only the
+invalidation close settles the structure. Never present one as the
+other.
+
+DIVERGENCES ARE NOT EQUAL — weight them before leaning on one:
+count (4-of-4 series >> 2-of-4; say which diverged and which did NOT),
+timeframe (weekly > daily > 4h in authority), location (at a decision
+level = tactical warning; mid-nowhere = trivia), and state (before the
+corrective leg = live warning; after a correction already ran, largely
+SPENT — a fresh swing is judged on its own internals, and only a THIRD
+weaker peak at resistance re-arms the signal). A divergence marks a
+condition, never timing.
+
 OSCILLATOR: never state a timeframe's direction from the brief line
 alone. That label is a scan summary and can read "bullish" while MACD
 confirms down and money flow curls down — it marks a mean-reversion
@@ -1086,6 +1103,37 @@ def watchtower_brief(ticker: str) -> str:
         return format_brief(build_brief(tk))
     except Exception as e:
         return f"Brief failed for {tk}: {str(e)[:200]}"
+
+
+@mcp.tool()
+def watchtower_levels(ticker: str, timeframes: str = "") -> str:
+    """
+    Multi-timeframe support/resistance shelves — data-derived horizontal
+    levels the way a discretionary trader marks them: swing pivots across
+    1W/1D/4H/1H/15m/5m clustered into volatility-scaled bands, each tagged
+    with the timeframes that produced it, its touch count, and a 1-5 star
+    rating (touches x multi-timeframe confluence x recency). These are the
+    multi-touch shelves the pattern scanner does NOT emit — pattern rows
+    carry trigger/target/invalidation geometry; this carries where supply
+    and demand have repeatedly shown up. Doctrine: the shelf is where the
+    fight happens, the invalidation is where the fight is decided — cite
+    both, with the shelf's touch count and star rating beside it.
+
+    Args:
+        ticker: symbol to compute levels for
+        timeframes: optional comma list from 1W,1D,4H,1H,15m,5m
+                    (default: all six; pass "1W,1D,4H" for swing work)
+    """
+    try:
+        import json as _json
+        from analysis.levels import compute_levels
+        tfs = [t.strip() for t in timeframes.split(",") if t.strip()] or None
+        res = compute_levels(ticker.upper().strip(), timeframes=tfs)
+        return _json.dumps(res, default=str)
+    except Exception as e:
+        # full exception text on purpose — str(e)[:60] once cut an error at
+        # exactly the character where it named the cause
+        return f"levels unavailable ({type(e).__name__}): {e}"
 
 
 @mcp.tool()
