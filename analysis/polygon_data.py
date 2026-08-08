@@ -56,6 +56,14 @@ def fetch_recent_bars(ticker: str, days: int = 300, multiplier: int = 1, timespa
         for a in aggs:
             bars.append({
                 "date": date.fromtimestamp(a.timestamp / 1000).isoformat(),
+                # Raw epoch-ms bar-start. Intraday consumers need this —
+                # "date" collapses a 15m bar to its calendar day, and the
+                # paper trader's _last_closed_15m read a "timestamp" key that
+                # didn't exist here, silently no-op'ing the whole trigger
+                # loop on its first live day (2026-08-07, 0 fills vs ~58
+                # touched triggers). tests/test_paper_bars_contract.py pins
+                # this seam.
+                "timestamp": a.timestamp,
                 "open": a.open,
                 "high": a.high,
                 "low": a.low,
