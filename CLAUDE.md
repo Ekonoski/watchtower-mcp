@@ -53,6 +53,53 @@ So, when writing anything that renders a scan row:
   403 body at exactly the character where it names the cause (credits vs
   key). Log the whole exception; keep ≥300 chars in any surfaced summary.
 
+## The morning brief carries the desk ledger
+
+Every trading-day brief includes a **Desk ledger** section — the paper desk's
+own record, stated every morning whether or not anything happened. The desk is
+a live experiment (est. 2026-08-07) measuring its books against backtest
+priors; an evaluation that only reports on eventful days is not an evaluation.
+
+Content, per book (`gamma_iday`, `swing`):
+
+- **Armed today**: spec count, plus skips with their reason (`skipped_binary`
+  renders as the *decision* it is, with the binary named — it was the desk's
+  best call of week one).
+- **Fills yesterday**: ticker, entry vs trigger, and the R at risk.
+- **Exits yesterday**: ticker, realized R, exit reason — **worst R first**.
+  Losers lead; a ledger that buries them is marketing.
+- **Open positions**: ticker, entry, stop, unrealized R, days held — each with
+  its stop visible and graded on completed closes (no-wick rule).
+- **Running record**: cumulative realized R and win/loss count since
+  2026-08-07, per book. Below ~30 resolved trades, print the count beside any
+  win rate so nobody mistakes anecdote for evidence.
+
+Canonical queries (column names verified against live schema):
+
+```sql
+SELECT book, status, count(*) FROM paper_specs
+WHERE trade_date = CURRENT_DATE GROUP BY book, status;
+
+SELECT s.book, s.ticker, s.direction, t.entered_at, t.entry_px, s.stop,
+       t.exited_at, t.exit_px, t.exit_reason, t.r_multiple
+FROM paper_trades t JOIN paper_specs s ON s.id = t.spec_id
+ORDER BY t.exited_at NULLS FIRST, t.r_multiple ASC;
+```
+
+Rendering doctrine, same spirit as the rest of this file:
+
+- **Zero is data.** "0 fills · 151 armed · 4 skipped (NFP)" prints in full. A
+  quiet day recorded is evidence; a quiet day omitted is a hole in the record.
+- **The section renders every trading day or renders as *unavailable*** — if
+  the paper tables are unreachable, say so. It must never silently disappear
+  (`_social_block` was invisible for weeks because a section that can never
+  fire fails no test).
+- **Stamp the ledger's own freshness**: the max `created_at` it was read from,
+  not the brief's timestamp.
+- When a resolved trade's spec came from a scanned pattern, name the pattern
+  and its backtest prior beside the result — the ledger's job is comparing
+  live results to priors, not just counting money.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
