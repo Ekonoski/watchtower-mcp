@@ -6,7 +6,16 @@ loss booked at a price that never traded), and TNDM "filled" at 18.16
 after opening 4.2% below it (real limit fills at the 17.39 open — the
 win was understated AND, under an attended convention, arguable). The
 fix: resting-limit mechanics with a dead-on-arrival guard, one rule for
-winners and losers alike. These cases use the actual Friday bars.
+winners and losers alike.
+
+Provenance (corrected 2026-08-08, the TNDM lesson: reconstruction is not
+tape): the DAILY facts here are verified — ARW's 209.60 open below its
+stop, BLND's 1.72 high never reaching 1.88, TNDM's 17.39 open 4.2%% below
+its trigger. The intraday 15m SEQUENCES are illustrative of the mechanics;
+an earlier version labeled TNDM's 18.60 confirming bar "actual" and chart
+verification found no such close printed. From 2026-08-10 the loop
+persists every bar it evaluates (paper_spec_bars), so future cases pin
+recorded tape, not vendor archaeology.
 
 Standalone per house convention:  python3 tests/test_paper_fill_model.py
 """
@@ -33,11 +42,13 @@ def main():
                                bar(26.78, 27.00, 27.05, 26.65, 15)])
     assert (verdict, px, kind) == ("fill", 26.65, "touch"), (verdict, px, kind)
 
-    # TNDM, Friday: opened 17.39, 4.2% below the 18.16 trigger (stop 16.14).
-    # Level lost -> RECLAIM mode. Proof = a completed 15m bar CLOSING back
-    # through the trigger (Eric's rule v2, 2026-08-08: a wick is not
-    # proof). The gap bar does not fill; the bar closing 18.60 fills at
-    # ITS CLOSE — the premium over 18.16 is the cost of confirmation.
+    # TNDM-shaped (real daily facts, illustrative 15m sequence): opened
+    # 17.39, 4.2% below the 18.16 trigger (stop 16.14). Level lost ->
+    # RECLAIM mode. Proof = a completed 15m bar CLOSING back through the
+    # trigger (Eric's rule, 2026-08-08: a wick is not proof). The gap bar
+    # does not fill; a bar closing 18.60 fills at ITS CLOSE — the premium
+    # over 18.16 is the cost of confirmation. (TNDM's true confirming
+    # close is pending verification against recorded tape.)
     verdict, px, kind = _swing_fill("long", 18.16, 16.14,
                               [bar(17.39, 17.80, 17.90, 17.07)])
     assert (verdict, px, kind) == (None, None, None), (verdict, px, kind)
