@@ -116,7 +116,19 @@ Rendering doctrine, same spirit as the rest of this file:
   at that bar's close — a wick through is not proof (the wick rule governs
   entries too); the premium over the trigger is the cost of confirmation.
   Every fill price is a price that printed, and R is computed from the
-  ACTUAL entry.
+  ACTUAL entry. **Only regular-session bars decide** (2026-08-08):
+  premarket moves are low-volume fakeouts — bars are persisted whenever
+  seen (`paper_spec_bars`), but fills, stops, and shadows count only bars
+  from 9:30 ET completing by 16:00. The tape that forced it: MOS's
+  premarket dip touched a limit the regular session never confirmed.
+  **Reconstruction is not tape**: any backward-looking price must come
+  from recorded bars, never refetched or inferred history (the fabricated
+  TNDM "18.60" reached a card labeled *real* before chart verification
+  killed it). **Geometry must survive the entry** (2026-08-08): the 1.5:1
+  the spec qualified on is re-checked at the actual fill price on reclaim
+  entries — a violent premium can collapse 2.1:1 to 0.79:1 (TNDM) —
+  and collapsed geometry cancels (`reclaim_geometry`), the refusal
+  gradeable from recorded bars.
   One rule for winners and losers alike — any convention change renders in
   the ledger the day it ships.
 - **The swing book trades positive-prior classes only** (2026-08-08):
