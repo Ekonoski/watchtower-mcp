@@ -299,10 +299,11 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
       trig fills on a touch, at trig — the retest working as speced.
     - LEVEL LOST (bar opens through the trigger): if the open is already
       beyond the STOP, the setup is dead on arrival — cancelled, never
-      entered. Otherwise the order becomes a RECLAIM stop at the trigger:
-      a lost level is only bought back on proof, price crossing back
-      through it. Fills AT the trigger, which printed on the crossing.
-      Below the level, nothing ever fills — no knife-catching at opens.
+      entered. Otherwise the spec enters RECLAIM mode: a lost level is
+      only bought back on proof, and a wick is not proof — the first
+      completed 15m bar CLOSING back through the trigger fills, at that
+      bar's close. Wick-throughs that fade back fill nothing; below the
+      level, nothing ever fills — no knife-catching at opens.
 
     Every fill price is a price that traded; the same rule prunes losers
     (ARW, BLND) and winners' flattery alike.
@@ -311,26 +312,32 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     Returns ("fill", px) | ("doa", None) | (None, None).
     """
     sign = 1 if direction == "long" else -1
-    for _, bop, _, bhi, blo in live_bars:
+    lost = False
+    for _, bop, bc2, bhi, blo in live_bars:
         opened_beyond = (bop < trig) if direction == "long" else (bop > trig)
-        if not opened_beyond:
+        if not lost and not opened_beyond:
             # Price is on the retest side: a limit at trig fills on a touch.
             touched = (blo <= trig) if direction == "long" else (bhi >= trig)
             if touched:
                 return ("fill", trig)
             continue
-        # The level was gapped past. First: if the open is already beyond
-        # the STOP, the setup died before it could act — cancel.
-        if sign * (bop - stop) <= 0:
-            return ("doa", None)
-        # Otherwise the order flips to a RECLAIM stop at the trigger
-        # (Eric, 2026-08-08): a lost level is only bought back on proof —
-        # price crossing back through it. Fills AT the trigger, which by
-        # definition printed on the crossing. Below it, nothing happens.
-        reclaimed = (bhi >= trig) if direction == "long" else (blo <= trig)
-        if reclaimed:
-            return ("fill", trig)
-        continue
+        if not lost:
+            # The level was opened through — lost. If the open is already
+            # beyond the STOP the setup died before it could act: cancel.
+            if sign * (bop - stop) <= 0:
+                return ("doa", None)
+            lost = True
+        # RECLAIM (Eric, 2026-08-08, v2 of his rule): a lost level is only
+        # bought back on PROOF, and per the wick rule a wick through the
+        # trigger is not proof. The first completed 15m bar CLOSING back
+        # through the trigger fills — at that bar's close, a printed
+        # price; the premium over the trigger is the cost of confirmation.
+        # A wick over that fades back is exactly the fakeout this refuses.
+        # Once lost, the spec stays in reclaim mode (a later gap back over
+        # the level still fills on its close — proof is the close, however
+        # price got there).
+        if sign * (bc2 - trig) >= 0:
+            return ("fill", bc2)
     return (None, None)
 
 

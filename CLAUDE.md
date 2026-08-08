@@ -99,16 +99,24 @@ Rendering doctrine, same spirit as the rest of this file:
 - When a resolved trade's spec came from a scanned pattern, name the pattern
   and its backtest prior beside the result — the ledger's job is comparing
   live results to priors, not just counting money.
+- **Structure shorts are retired from entries** (decided 2026-08-08 on the
+  regime cut): 728 short episodes graded net-negative in EVERY regime — and
+  WORSE in weak tape (29.5% win, n=129 SPY-below vs 40.6% SPY-above). No
+  half-sizing a negative edge. Lower-high / bear-flag / breakdown detections
+  serve as WARNINGS on held longs, not entries. Gamma wall-fades are a
+  different mechanism and stand or fall on the replay harness's own grades.
 - **The fill model is declared, symmetric, and phantom-proof** (2026-08-08
   audit: blind fills at the trigger created a phantom loss — ARW "filled" at
   220.87 on a day whose high was 209.60 — AND an asymmetric winner — TNDM
   booked at 18.16 it never touched from above). Swing fills: on the retest
   side, a limit fills on a touch at the trigger; a bar OPENING through the
   trigger means the level was lost — **dead-on-arrival cancelled if the open
-  is already beyond the stop**, otherwise the order becomes a RECLAIM stop
-  that fills only when price crosses back through the trigger (a lost level
-  is bought on proof, never at the open — no knife-catching). Every fill
-  price is a price that printed, and R is computed from the ACTUAL entry.
+  is already beyond the stop**, otherwise the spec enters RECLAIM mode and
+  fills only on the first completed 15m bar CLOSING back through the trigger,
+  at that bar's close — a wick through is not proof (the wick rule governs
+  entries too); the premium over the trigger is the cost of confirmation.
+  Every fill price is a price that printed, and R is computed from the
+  ACTUAL entry.
   One rule for winners and losers alike — any convention change renders in
   the ledger the day it ships.
 
