@@ -405,6 +405,74 @@ def _confirm_shadow(direction: str, trig: float, live_bars: list):
     return None
 
 
+def _spec_bar_rows(tk: str, trade_date, bars: list) -> list:
+    """Map _last_closed_15m tuples (ts, open, close, high, low) to
+    paper_spec_bars rows (ticker, ts, open, high, low, close, trade_date).
+    Pure and pinned by test — the (close, high, low) reordering across this
+    seam is exactly the kind of silent field-swap that killed the trigger
+    loop on day one."""
+    return [(tk, ts, op, hi, lo, cl, trade_date)
+            for ts, op, cl, hi, lo in bars]
+
+
+def _persist_spec_bars(conn, tk, trade_date, bars):
+    """Reconstruction is not tape (TNDM, 2026-08-08): audits must replay
+    from bars the loop actually decided on, not refetched history. Runs
+    every pass, idempotent — a mid-day crash keeps everything seen so far."""
+    rows = _spec_bar_rows(tk, trade_date, bars)
+    if not rows:
+        return
+    with conn.cursor() as c:
+        c.executemany("""INSERT INTO paper_spec_bars
+                         (ticker, ts, open, high, low, close, trade_date)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s)
+                         ON CONFLICT (ticker, ts) DO NOTHING""", rows)
+    conn.commit()
+
+
+def backfill_spec_bars(trade_date) -> int:
+    """One-shot per date: fetch the 15m session bars for every ticker that
+    had a spec on `trade_date` and persist them to paper_spec_bars. Exists
+    for 2026-08-07 — the shadow audit's reclaim entries were priced off
+    reconstruction, and the retraction rule is now: reprice from recorded
+    tape or not at all. Polygon keeps intraday history, the deployed
+    service holds the key; this runs where both exist. Idempotent: skips
+    entirely once the date has any stored bars, so it cannot fight the
+    live loop's own persistence (which covers every day from 2026-08-10)."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT 1 FROM paper_spec_bars WHERE trade_date=%s LIMIT 1",
+                      (trade_date,))
+            if c.fetchone():
+                return 0
+            c.execute("SELECT DISTINCT ticker FROM paper_specs WHERE trade_date=%s",
+                      (trade_date,))
+            tickers = sorted(r[0] for r in c.fetchall())
+        days_back = max(2, (dt.date.today() - trade_date).days + 1)
+        total = 0
+        for tk in tickers:
+            bars = fetch_recent_bars(tk, days=days_back, multiplier=15,
+                                     timespan="minute")
+            out = []
+            for b in bars:
+                ts_ms = b.get("timestamp")
+                if ts_ms is None:
+                    continue
+                te = dt.datetime.fromtimestamp(
+                    ts_ms / 1000, dt.timezone.utc).astimezone(ET)
+                if te.date() == trade_date:
+                    out.append((te, float(b["open"]), float(b["close"]),
+                                float(b["high"]), float(b["low"])))
+            _persist_spec_bars(conn, tk, trade_date, out)
+            total += len(out)
+        log.info("[paper] spec-bar backfill %s: %d bars across %d tickers",
+                 trade_date, total, len(tickers))
+        return total
+    finally:
+        conn.close()
+
+
 def _set_confirm(conn, tid, px, ts, status):
     with conn.cursor() as c:
         c.execute("""UPDATE paper_trades SET confirm_px=%s, confirm_at=%s,
@@ -456,6 +524,12 @@ def run_trigger_loop():
             bars = _last_closed_15m(tk)
             if not bars:
                 continue
+            try:
+                _persist_spec_bars(conn, tk, today, bars)
+            except Exception:
+                conn.rollback()
+                log.exception("[paper] spec-bar persist failed for %s — "
+                              "loop continues, the record has a hole", tk)
             ts, op_, close, hi, lo = bars[-1]
             sign = 1 if direction == "long" else -1
             if tid is None:                          # not entered yet

@@ -980,6 +980,23 @@ def _seed_oscillator_backtest_if_empty():
         log.warning(f"[oscillator] backtest seed skipped: {e}")
 
 
+def _seed_spec_bars_aug7_if_missing():
+    """One-shot: land 2026-08-07's real 15m bars for that day's spec tickers
+    in paper_spec_bars. The shadow audit's reclaim entries were priced off
+    reconstruction and a fabricated close reached a card labeled 'real'
+    (TNDM, retracted 2026-08-08) — repricing happens from recorded tape or
+    not at all. Runs here because this service holds the Polygon key; the
+    date guard inside makes it a no-op forever after the first success."""
+    try:
+        import datetime as _dt
+        from analysis.paper_trader import backfill_spec_bars
+        n = backfill_spec_bars(_dt.date(2026, 8, 7))
+        if n:
+            log.info(f"[paper] Aug 7 spec-bar backfill stored {n} bars")
+    except Exception as e:
+        log.warning(f"[paper] Aug 7 spec-bar backfill skipped: {e}")
+
+
 def _seed_pattern_backtest_if_empty():
     """Deploy-time replay refresh: re-runs whenever the stored rows predate
     the current measurement rules (BT_VERSION) — the audited failure mode
@@ -1365,6 +1382,7 @@ def start_scheduler():
         _seed_vix_if_missing()
         _seed_short_if_missing()
         _seed_oscillator_backtest_if_empty()
+        _seed_spec_bars_aug7_if_missing()
         _seed_pattern_backtest_if_empty()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
