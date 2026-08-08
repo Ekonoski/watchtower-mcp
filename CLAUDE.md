@@ -119,6 +119,15 @@ Rendering doctrine, same spirit as the rest of this file:
   ACTUAL entry.
   One rule for winners and losers alike — any convention change renders in
   the ledger the day it ships.
+- **The swing book trades positive-prior classes only** (2026-08-08):
+  `SWING_CLASSES` in `paper_trader.py` is the explicit (pattern, timeframe)
+  allowlist with each class's backtest prior beside it. No flat
+  pattern×timeframe lists — ema_bounce is the best weekly class (+0.98R,
+  n=205) and the worst daily one (−0.37R, n=162), so only a joint gate can
+  hold the line. The daily neckline classes (higher_low −0.06R, double_bottom
+  −0.19R) ride as a declared experiment: their priors were graded on
+  breakout-close entries, the desk buys the retest at the trigger, and they
+  retire like shorts did if still negative after ~30 resolved live trades.
 - **The cost of confirmation is measured, not argued** (decided 2026-08-08:
   the swing book keeps resting-limit fills at the trigger). Every touch fill
   also records its confirmation shadow — the completed-15m-close entry a

@@ -10,9 +10,10 @@ Three books, never blended (see paper_specs.book):
                levels arm and abandoned levels cancel. Measures how much
                edge the morning-only book leaves on the table. When both
                boards agree the two books deliberately hold the same trade.
-  swing      — neckline-family breakout-retest limits from pattern_scan.
-               Already backtested; runs as the control group (and as the
-               blind-limit vs stall-entry experiment).
+  swing      — breakout-retest limits from pattern_scan, every (pattern,
+               timeframe) class with a positive backtest prior (see
+               SWING_CLASSES). Already backtested; runs as the control
+               group (and as the blind-limit vs stall-entry experiment).
 
 House rules encoded here, not approximated:
   - Wick rule: every trigger and stop is a COMPLETED 15-minute-bar close,
@@ -49,13 +50,46 @@ ET = zoneinfo.ZoneInfo("America/New_York")
 VENUE = ["SPY", "QQQ", "IWM"]
 BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
                  "Core PCE")
-SWING_PATTERNS = ("double_bottom", "inverse_hs", "higher_low")
+# The swing book trades every (pattern, timeframe) CLASS with a positive
+# backtest prior — and no negative-prior class, ever (the lesson that
+# retired shorts). A flat pattern-list × timeframe-list cannot express
+# this: ema_bounce is the strongest weekly class on the board and the
+# WORST daily one. Priors: pattern_backtest, bullish, avg realized R
+# (queried 2026-08-08):
+#   asc_triangle   weekly +2.61 (n=51)    daily +0.47 (n=37)
+#   ema_bounce     weekly +0.98 (n=205)   daily -0.37 (n=162)  EXCLUDED
+#   bull_flag      weekly +0.39 (n=44)    daily +0.19 (n=25)
+#   inverse_hs     weekly +0.31 (n=47)    daily +0.27 (n=13)
+#   double_bottom  weekly +0.28 (n=60)    daily -0.19 (n=19)   kept*
+#   higher_low     weekly +0.27 (n=168)   daily -0.06 (n=49)   kept*
+# *The daily neckline classes ride as the entry-location experiment
+# (Eric, 2026-08-08): their priors were graded on breakout-CLOSE entries;
+# the desk buys the retest at the trigger. If they still grade negative
+# after ~30 resolved live trades, they retire the way shorts did.
+SWING_CLASSES = (
+    ("higher_low", "weekly"), ("higher_low", "daily"),
+    ("double_bottom", "weekly"), ("double_bottom", "daily"),
+    ("inverse_hs", "weekly"), ("inverse_hs", "daily"),
+    ("asc_triangle", "weekly"), ("asc_triangle", "daily"),
+    ("bull_flag", "weekly"), ("bull_flag", "daily"),
+    ("ema_bounce", "weekly"),
+)
+SWING_PATTERNS = tuple(dict.fromkeys(p for p, _tf in SWING_CLASSES))
 # The swing book is a CURATED control, not the whole scanner. Weekly/daily
 # only (the backtested retest claims: weekly higher_low 63%, daily 50% — the
 # 4h was never the retest thesis), one spec per ticker, top-N by score. On
 # 2026-08-07 the uncurated query armed 151 blind limits on an NFP morning.
 SWING_TIMEFRAMES = ("weekly", "daily")
 SWING_MAX = 15
+
+
+def swing_class_ok(pattern: str, timeframe: str) -> bool:
+    """The class gate, pure so it pins in a test. The SQL query filters by
+    pattern AND timeframe independently; this is the joint filter that
+    keeps a pattern's excluded timeframe (ema_bounce daily) out of the
+    book even though both its pattern and its timeframe are individually
+    tradable."""
+    return (pattern, timeframe) in SWING_CLASSES
 
 
 def curate_swing(rows, cap=SWING_MAX):
@@ -173,7 +207,8 @@ def write_morning_specs():
                       (list(SWING_PATTERNS), list(SWING_TIMEFRAMES)))
             candidates = [(tk, tf, pat, d, float(trig), float(tgt), float(inv), score)
                           for tk, tf, pat, d, trig, tgt, inv, score in c.fetchall()
-                          if (float(tgt) - float(trig)) >= 1.5 * (float(trig) - float(inv))]
+                          if swing_class_ok(pat, tf)
+                          and (float(tgt) - float(trig)) >= 1.5 * (float(trig) - float(inv))]
             kept, dropped = curate_swing(candidates)
             if dropped:
                 log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
