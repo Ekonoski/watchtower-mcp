@@ -99,6 +99,16 @@ Rendering doctrine, same spirit as the rest of this file:
 - When a resolved trade's spec came from a scanned pattern, name the pattern
   and its backtest prior beside the result — the ledger's job is comparing
   live results to priors, not just counting money.
+- **The fill model is declared, symmetric, and phantom-proof** (2026-08-08
+  audit: blind fills at the trigger created a phantom loss — ARW "filled" at
+  220.87 on a day whose high was 209.60 — AND a flattered winner — TNDM
+  booked at 18.16 after opening at 17.39). Swing fills use resting-limit
+  mechanics: marketable when a bar trades through the trigger, priced at the
+  bar's OPEN on gap-throughs (else the trigger), **dead-on-arrival cancelled
+  when the first marketable price is already beyond the stop**, and R is
+  computed from the ACTUAL entry price, never the spec trigger. One rule for
+  winners and losers alike — any convention change renders in the ledger the
+  day it ships.
 
 ## Numbers on one line must reconcile with each other
 
