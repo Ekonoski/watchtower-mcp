@@ -270,7 +270,9 @@ def write_intraday_specs(conn):
 # ── Intraday trigger loop (every 5 min, 9:35–15:55 ET) ───────────────────────
 
 def _last_closed_15m(tk):
-    """Completed 15m bars today, oldest→newest: [(ts_et, close, high, low)]."""
+    """Completed 15m bars today, oldest→newest:
+    [(ts_et, open, close, high, low)]. The open matters: honest fill
+    pricing on gap bars needs it (see _swing_fill)."""
     bars = fetch_recent_bars(tk, days=2, multiplier=15, timespan="minute")
     now = dt.datetime.now(dt.timezone.utc)
     out = []
@@ -280,8 +282,39 @@ def _last_closed_15m(tk):
         if t and t + dt.timedelta(minutes=15) <= now:   # completed only
             te = t.astimezone(ET)
             if te.date() == dt.datetime.now(ET).date():
-                out.append((te, float(b["close"]), float(b["high"]), float(b["low"])))
+                out.append((te, float(b["open"]), float(b["close"]),
+                            float(b["high"]), float(b["low"])))
     return out
+
+
+def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
+    """Resting-limit fill for the swing book, honestly priced.
+
+    2026-08-08 shadow audit: fills booked blindly at the trigger create
+    phantoms on BOTH sides — ARW "filled" at 220.87 on a day whose high was
+    209.60 (phantom loss), and TNDM "filled" at 18.16 after opening 4.2%
+    below it (its real fill was the 17.39 open — understated win). Rules:
+
+    - A buy limit at trig is marketable on any bar trading at/below it
+      (mirror for shorts). Fill price = the bar's OPEN when the bar opens
+      through the limit (gap), else the trigger itself.
+    - Dead on arrival: if the first marketable price is already beyond the
+      stop, the setup died before it could fill — cancel, never enter.
+      Nobody knowingly enters a trade that is already stopped out.
+
+    live_bars: [(ts, open, close, high, low)] post-spec-creation only.
+    Returns ("fill", px) | ("doa", None) | (None, None).
+    """
+    sign = 1 if direction == "long" else -1
+    for _, bop, _, bhi, blo in live_bars:
+        marketable = (blo <= trig) if direction == "long" else (bhi >= trig)
+        if not marketable:
+            continue
+        px = min(bop, trig) if direction == "long" else max(bop, trig)
+        if sign * (px - stop) <= 0:
+            return ("doa", None)
+        return ("fill", px)
+    return (None, None)
 
 
 def run_trigger_loop():
@@ -327,7 +360,7 @@ def run_trigger_loop():
             bars = _last_closed_15m(tk)
             if not bars:
                 continue
-            ts, close, hi, lo = bars[-1]
+            ts, op_, close, hi, lo = bars[-1]
             sign = 1 if direction == "long" else -1
             if tid is None:                          # not entered yet
                 # 14:30 no-new is a day-trade clock; a swing resting limit
@@ -338,23 +371,33 @@ def run_trigger_loop():
                     continue
                 # A touch only counts on bars ending after the spec existed —
                 # an intraday-armed level doesn't inherit the morning's tape.
-                touched = any(((lo <= trig <= hi) or _touch(trig, c2))
-                              and bts + dt.timedelta(minutes=15) > created_at
-                              for bts, c2, hi, lo in bars)
+                live_bars = [b for b in bars
+                             if b[0] + dt.timedelta(minutes=15) > created_at]
+                entry_fill = None
                 if book == "swing":
-                    entered = touched                # blind limit — by design
+                    verdict, px = _swing_fill(direction, trig, stop, live_bars)
+                    if verdict == "doa":
+                        _cancel(conn, sid, "gapped past stop — dead on arrival, no fill")
+                        continue
+                    entered, entry_fill = (verdict == "fill"), px
                 else:
+                    touched = any((lo2 <= trig <= hi2) or _touch(trig, c2)
+                                  for _, _, c2, hi2, lo2 in live_bars)
                     entered = touched and (sign * (close - trig) > 0)  # 15m close back through
+                    entry_fill = close
                 if entered:
                     with conn.cursor() as c:
                         c.execute("""INSERT INTO paper_trades (spec_id, entered_at, entry_px)
-                                     VALUES (%s, now(), %s)""", (sid, trig if book == "swing" else close))
+                                     VALUES (%s, now(), %s)""", (sid, entry_fill))
                         c.execute("UPDATE paper_specs SET status='triggered' WHERE id=%s", (sid,))
                     conn.commit()
-                    log.info("[paper] ENTER %s %s %s @ %.2f (%s)", book, tk, direction, close, setup)
+                    log.info("[paper] ENTER %s %s %s @ %.2f (%s)", book, tk, direction, entry_fill, setup)
             else:                                    # open — manage exit
                 entry_px = float(entry_px)
-                r_dist = abs(trig - stop) or 0.01
+                # R risk from the ACTUAL entry, not the spec trigger — a gap
+                # fill below the trigger carries less risk per share, and
+                # grading it off the trigger would misstate every R after it.
+                r_dist = abs(entry_px - stop) or 0.01
                 # Entry fills at the entry bar's close, so that bar's range is
                 # pre-entry price action — grading its high/low as a fill would
                 # be lookahead. Stop/target only count on bars ending after entry.
