@@ -322,6 +322,19 @@ def _last_closed_15m(tk):
     return out
 
 
+def _rth(bars: list) -> list:
+    """Regular-session bars only: start ≥ 9:30 ET and completing by 16:00
+    (bar start ≤ 15:45). Decided 2026-08-08 (Eric): premarket moves are
+    low-volume fakeouts — the desk waits for open-market volume. The tape
+    that forced the rule: MOS's 9:15–9:30 premarket bar dipped to 23.26 and
+    touched a 23.3951 limit the regular session never came back to confirm
+    (day closed 23.06). Every bar is still PERSISTED (paper_spec_bars) —
+    premarket is recorded, never decisive — so the counterfactual stays
+    measurable from stored tape."""
+    return [b for b in bars
+            if dt.time(9, 30) <= b[0].time() <= dt.time(15, 45)]
+
+
 def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     """Resting-limit fill for the swing book, honestly priced.
 
@@ -530,6 +543,10 @@ def run_trigger_loop():
                 conn.rollback()
                 log.exception("[paper] spec-bar persist failed for %s — "
                               "loop continues, the record has a hole", tk)
+            # Persist everything seen; DECIDE only on regular-session bars.
+            bars = _rth(bars)
+            if not bars:
+                continue
             ts, op_, close, hi, lo = bars[-1]
             sign = 1 if direction == "long" else -1
             if tid is None:                          # not entered yet

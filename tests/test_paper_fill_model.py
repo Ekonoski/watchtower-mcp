@@ -42,20 +42,21 @@ def main():
                                bar(26.78, 27.00, 27.05, 26.65, 15)])
     assert (verdict, px, kind) == ("fill", 26.65, "touch"), (verdict, px, kind)
 
-    # TNDM-shaped (real daily facts, illustrative 15m sequence): opened
-    # 17.39, 4.2% below the 18.16 trigger (stop 16.14). Level lost ->
-    # RECLAIM mode. Proof = a completed 15m bar CLOSING back through the
-    # trigger (Eric's rule, 2026-08-08: a wick is not proof). The gap bar
-    # does not fill; a bar closing 18.60 fills at ITS CLOSE — the premium
-    # over 18.16 is the cost of confirmation. (TNDM's true confirming
-    # close is pending verification against recorded tape.)
+    # TNDM, VERIFIED against recorded tape (paper_spec_bars, 2026-08-07):
+    # opened 17.39, 4.2% below the 18.16 trigger (stop 16.14) — level lost,
+    # RECLAIM mode. A bar still below closes nothing; the real 9:30 bar
+    # (17.39 open, 19.62 close on the earnings squeeze) lost AND reclaimed
+    # the level in one bar — entry at ITS CLOSE, 19.62. The 1.46 premium
+    # over the trigger is the cost of confirmation on a vertical open.
+    # (An earlier fabricated "18.60" close died on chart verification —
+    # reconstruction is not tape.)
     verdict, px, kind = _swing_fill("long", 18.16, 16.14,
-                              [bar(17.39, 17.80, 17.90, 17.07)])
+                              [bar(17.85, 17.59, 18.05, 17.59)])
     assert (verdict, px, kind) == (None, None, None), (verdict, px, kind)
     verdict, px, kind = _swing_fill("long", 18.16, 16.14,
-                              [bar(17.39, 17.80, 17.90, 17.07),
-                               bar(17.85, 18.60, 18.75, 17.80, 15)])
-    assert (verdict, px, kind) == ("fill", 18.60, "reclaim"), (verdict, px, kind)
+                              [bar(17.85, 17.59, 18.05, 17.59),
+                               bar(17.39, 19.62, 19.69, 17.07, 15)])
+    assert (verdict, px, kind) == ("fill", 19.62, "reclaim"), (verdict, px, kind)
 
     # The wick fakeout this rule exists to refuse: after the level is
     # lost, a bar SPIKES through 18.16 (high 18.30) but closes back below
