@@ -33,12 +33,26 @@ def main():
                                bar(26.78, 27.00, 27.05, 26.65, 15)])
     assert (verdict, px) == ("fill", 26.65), (verdict, px)
 
-    # TNDM, Friday: opened 17.39, 4.2% below the 18.16 trigger (stop 16.14),
-    # then ripped. Open is above the stop → real limit fills AT THE OPEN,
-    # not the trigger. Booking 18.16 here was the winning-side phantom.
+    # TNDM, Friday: opened 17.39, 4.2% below the 18.16 trigger (stop 16.14).
+    # Level lost -> the order becomes a RECLAIM stop at the trigger. The
+    # opening bar (high 17.90) does NOT fill; the later bar that crosses
+    # back up through 18.16 fills AT 18.16 — a price that printed on the
+    # crossing. (Eric's rule, 2026-08-08: a lost level is only bought on
+    # proof.)
     verdict, px = _swing_fill("long", 18.16, 16.14,
                               [bar(17.39, 17.80, 17.90, 17.07)])
-    assert (verdict, px) == ("fill", 17.39), (verdict, px)
+    assert (verdict, px) == (None, None), (verdict, px)
+    verdict, px = _swing_fill("long", 18.16, 16.14,
+                              [bar(17.39, 17.80, 17.90, 17.07),
+                               bar(17.85, 18.60, 18.75, 17.80, 15)])
+    assert (verdict, px) == ("fill", 18.16), (verdict, px)
+
+    # BLND, Friday: opened below the 1.88 trigger (above the 1.67 stop) and
+    # NEVER reclaimed — high 1.72. No proof, no fill; the spec rests and
+    # cancels at end of day upstream. (The blind model owned this loser.)
+    verdict, px = _swing_fill("long", 1.88, 1.67,
+                              [bar(1.71, 1.63, 1.72, 1.62)])
+    assert (verdict, px) == (None, None), (verdict, px)
 
     # ARW, Friday: opened 209.60 — below the 211.655 STOP of its 220.87
     # trigger. First marketable price is beyond the stop → dead on arrival,
@@ -55,18 +69,17 @@ def main():
                               [bar(103.0, 104.0, 104.5, 101.5)])
     assert (verdict, px) == (None, None), (verdict, px)
 
-    # Short mirror: sell-stop-style limit at 50 with stop 53. Bar opens at
-    # 54 — beyond the stop — DOA. Opens at 51 and trades up through 50?
-    # marketable (hi >= trig), fill at max(open, trig) = 51... above the
-    # trigger is a BETTER short fill; still below the 53 stop → legit.
+    # Short mirrors: trigger 50, stop 53. Opens at 54 — beyond the stop —
+    # DOA. Opens at 51 (level lost for a short, still inside the stop) and
+    # trades back DOWN through 50 → reclaim fills at the trigger.
     verdict, px = _swing_fill("short", 50.0, 53.0,
                               [bar(54.0, 53.5, 54.2, 52.8)])
     assert (verdict, px) == ("doa", None), (verdict, px)
     verdict, px = _swing_fill("short", 50.0, 53.0,
                               [bar(51.0, 50.2, 51.4, 49.9)])
-    assert (verdict, px) == ("fill", 51.0), (verdict, px)
+    assert (verdict, px) == ("fill", 50.0), (verdict, px)
 
-    print("ok — clean touch fills at trigger, gap-open fills at open, "
+    print("ok — retest fills at trigger, lost level fills only on reclaim, "
           "DOA cancels, shorts mirror")
 
 

@@ -101,14 +101,16 @@ Rendering doctrine, same spirit as the rest of this file:
   live results to priors, not just counting money.
 - **The fill model is declared, symmetric, and phantom-proof** (2026-08-08
   audit: blind fills at the trigger created a phantom loss — ARW "filled" at
-  220.87 on a day whose high was 209.60 — AND a flattered winner — TNDM
-  booked at 18.16 after opening at 17.39). Swing fills use resting-limit
-  mechanics: marketable when a bar trades through the trigger, priced at the
-  bar's OPEN on gap-throughs (else the trigger), **dead-on-arrival cancelled
-  when the first marketable price is already beyond the stop**, and R is
-  computed from the ACTUAL entry price, never the spec trigger. One rule for
-  winners and losers alike — any convention change renders in the ledger the
-  day it ships.
+  220.87 on a day whose high was 209.60 — AND an asymmetric winner — TNDM
+  booked at 18.16 it never touched from above). Swing fills: on the retest
+  side, a limit fills on a touch at the trigger; a bar OPENING through the
+  trigger means the level was lost — **dead-on-arrival cancelled if the open
+  is already beyond the stop**, otherwise the order becomes a RECLAIM stop
+  that fills only when price crosses back through the trigger (a lost level
+  is bought on proof, never at the open — no knife-catching). Every fill
+  price is a price that printed, and R is computed from the ACTUAL entry.
+  One rule for winners and losers alike — any convention change renders in
+  the ledger the day it ships.
 
 ## Numbers on one line must reconcile with each other
 

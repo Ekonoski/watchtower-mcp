@@ -290,30 +290,47 @@ def _last_closed_15m(tk):
 def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     """Resting-limit fill for the swing book, honestly priced.
 
-    2026-08-08 shadow audit: fills booked blindly at the trigger create
+    2026-08-08 shadow audit: fills booked blindly at the trigger created
     phantoms on BOTH sides — ARW "filled" at 220.87 on a day whose high was
     209.60 (phantom loss), and TNDM "filled" at 18.16 after opening 4.2%
-    below it (its real fill was the 17.39 open — understated win). Rules:
+    below it. One declared, symmetric model (Eric's reclaim rule):
 
-    - A buy limit at trig is marketable on any bar trading at/below it
-      (mirror for shorts). Fill price = the bar's OPEN when the bar opens
-      through the limit (gap), else the trigger itself.
-    - Dead on arrival: if the first marketable price is already beyond the
-      stop, the setup died before it could fill — cancel, never enter.
-      Nobody knowingly enters a trade that is already stopped out.
+    - RETEST SIDE (price on the pattern's side of the level): a limit at
+      trig fills on a touch, at trig — the retest working as speced.
+    - LEVEL LOST (bar opens through the trigger): if the open is already
+      beyond the STOP, the setup is dead on arrival — cancelled, never
+      entered. Otherwise the order becomes a RECLAIM stop at the trigger:
+      a lost level is only bought back on proof, price crossing back
+      through it. Fills AT the trigger, which printed on the crossing.
+      Below the level, nothing ever fills — no knife-catching at opens.
+
+    Every fill price is a price that traded; the same rule prunes losers
+    (ARW, BLND) and winners' flattery alike.
 
     live_bars: [(ts, open, close, high, low)] post-spec-creation only.
     Returns ("fill", px) | ("doa", None) | (None, None).
     """
     sign = 1 if direction == "long" else -1
     for _, bop, _, bhi, blo in live_bars:
-        marketable = (blo <= trig) if direction == "long" else (bhi >= trig)
-        if not marketable:
+        opened_beyond = (bop < trig) if direction == "long" else (bop > trig)
+        if not opened_beyond:
+            # Price is on the retest side: a limit at trig fills on a touch.
+            touched = (blo <= trig) if direction == "long" else (bhi >= trig)
+            if touched:
+                return ("fill", trig)
             continue
-        px = min(bop, trig) if direction == "long" else max(bop, trig)
-        if sign * (px - stop) <= 0:
+        # The level was gapped past. First: if the open is already beyond
+        # the STOP, the setup died before it could act — cancel.
+        if sign * (bop - stop) <= 0:
             return ("doa", None)
-        return ("fill", px)
+        # Otherwise the order flips to a RECLAIM stop at the trigger
+        # (Eric, 2026-08-08): a lost level is only bought back on proof —
+        # price crossing back through it. Fills AT the trigger, which by
+        # definition printed on the crossing. Below it, nothing happens.
+        reclaimed = (bhi >= trig) if direction == "long" else (blo <= trig)
+        if reclaimed:
+            return ("fill", trig)
+        continue
     return (None, None)
 
 
