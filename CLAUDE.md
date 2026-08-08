@@ -119,6 +119,18 @@ Rendering doctrine, same spirit as the rest of this file:
   ACTUAL entry.
   One rule for winners and losers alike — any convention change renders in
   the ledger the day it ships.
+- **The cost of confirmation is measured, not argued** (decided 2026-08-08:
+  the swing book keeps resting-limit fills at the trigger). Every touch fill
+  also records its confirmation shadow — the completed-15m-close entry a
+  close-through desk would have paid (`confirm_px`, `confirmed`) or the
+  trade it never took (`no_confirm`); reclaim and gamma entries are already
+  closes (`n/a`). The ledger prints the running actual-vs-shadow comparison
+  per book — entry premium paid vs losers skipped, with counts beside it
+  (small-n rule applies). `unresolved` is a data hole and renders as one,
+  never as a zero. The wick rule is untouched: stops, exits, and reclaims
+  still decide on completed closes; a touch filling the resting limit is the
+  order type's execution fact, and the shadow exists to price whether proof
+  should be demanded there too.
 
 ## Numbers on one line must reconcile with each other
 

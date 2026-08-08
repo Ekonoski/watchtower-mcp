@@ -309,7 +309,10 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     (ARW, BLND) and winners' flattery alike.
 
     live_bars: [(ts, open, close, high, low)] post-spec-creation only.
-    Returns ("fill", px) | ("doa", None) | (None, None).
+    Returns ("fill", px, kind) | ("doa", None, None) | (None, None, None),
+    where kind is 'touch' or 'reclaim' — the ledger records which mechanism
+    filled, so touch fills can carry their confirmation shadow (see
+    _confirm_shadow) and audits never have to infer kind from the price.
     """
     sign = 1 if direction == "long" else -1
     lost = False
@@ -319,13 +322,13 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
             # Price is on the retest side: a limit at trig fills on a touch.
             touched = (blo <= trig) if direction == "long" else (bhi >= trig)
             if touched:
-                return ("fill", trig)
+                return ("fill", trig, "touch")
             continue
         if not lost:
             # The level was opened through — lost. If the open is already
             # beyond the STOP the setup died before it could act: cancel.
             if sign * (bop - stop) <= 0:
-                return ("doa", None)
+                return ("doa", None, None)
             lost = True
         # RECLAIM (Eric, 2026-08-08, v2 of his rule): a lost level is only
         # bought back on PROOF, and per the wick rule a wick through the
@@ -337,8 +340,41 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
         # the level still fills on its close — proof is the close, however
         # price got there).
         if sign * (bc2 - trig) >= 0:
-            return ("fill", bc2)
-    return (None, None)
+            return ("fill", bc2, "reclaim")
+    return (None, None, None)
+
+
+def _confirm_shadow(direction: str, trig: float, live_bars: list):
+    """The confirmation shadow (Eric, 2026-08-08): the swing book keeps
+    resting-limit fills at the trigger, but every touch fill also records
+    what a confirmation-gated desk would have done with the same spec —
+    entry at the first completed 15m bar CLOSING back through the trigger
+    AFTER the touch, at that bar's close. The touch bar itself counts if
+    its own close is back through. Bars before the touch never count: for
+    a long, every pre-dip bar closes above the trigger — that is price
+    sitting above the level, not proof it held.
+
+    Pure so it backtests. live_bars: [(ts, open, close, high, low)],
+    post-spec-creation. Returns (px, ts) or None (no confirming close —
+    the confirmation desk never takes the trade the limit owns).
+    """
+    sign = 1 if direction == "long" else -1
+    touched = False
+    for ts, _bop, bc2, bhi, blo in live_bars:
+        if not touched:
+            touched = (blo <= trig) if direction == "long" else (bhi >= trig)
+            if not touched:
+                continue
+        if sign * (bc2 - trig) >= 0:
+            return (bc2, ts)
+    return None
+
+
+def _set_confirm(conn, tid, px, ts, status):
+    with conn.cursor() as c:
+        c.execute("""UPDATE paper_trades SET confirm_px=%s, confirm_at=%s,
+                     confirm_status=%s WHERE id=%s""", (px, ts, status, tid))
+    conn.commit()
 
 
 def run_trigger_loop():
@@ -356,7 +392,8 @@ def run_trigger_loop():
         with conn.cursor() as c:
             c.execute("""SELECT s.id, s.book, s.ticker, s.direction, s.setup,
                                 s.entry_trigger, s.stop, s.target, s.status,
-                                s.created_at, t.id, t.entry_px, t.entered_at, t.exited_at
+                                s.created_at, t.id, t.entry_px, t.entered_at, t.exited_at,
+                                t.confirm_status
                          FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
                          WHERE (s.trade_date=%s AND s.status IN ('armed','triggered'))
                             OR (s.status='triggered' AND t.id IS NOT NULL
@@ -377,7 +414,7 @@ def run_trigger_loop():
         no_new = eod or now.time() >= dt.time(14, 30)
 
         for (sid, book, tk, direction, setup, trig, stop, tgt, status,
-             created_at, tid, entry_px, entered_at, exited) in rows:
+             created_at, tid, entry_px, entered_at, exited, confirm_status) in rows:
             trig, stop, tgt = float(trig), float(stop), float(tgt)
             if exited:
                 continue
@@ -397,9 +434,9 @@ def run_trigger_loop():
                 # an intraday-armed level doesn't inherit the morning's tape.
                 live_bars = [b for b in bars
                              if b[0] + dt.timedelta(minutes=15) > created_at]
-                entry_fill = None
+                entry_fill, kind = None, None
                 if book == "swing":
-                    verdict, px = _swing_fill(direction, trig, stop, live_bars)
+                    verdict, px, kind = _swing_fill(direction, trig, stop, live_bars)
                     if verdict == "doa":
                         _cancel(conn, sid, "gapped past stop — dead on arrival, no fill")
                         continue
@@ -408,16 +445,47 @@ def run_trigger_loop():
                     touched = any((lo2 <= trig <= hi2) or _touch(trig, c2)
                                   for _, _, c2, hi2, lo2 in live_bars)
                     entered = touched and (sign * (close - trig) > 0)  # 15m close back through
-                    entry_fill = close
+                    entry_fill, kind = close, "close_through"
                 if entered:
+                    # Confirmation shadow: only a touch fill has an open
+                    # question — reclaim and gamma entries already ARE
+                    # confirmed closes ('n/a', shadow equals actual).
+                    cpx = cts = None
+                    if kind == "touch":
+                        cstat = "pending"
+                        shadow = _confirm_shadow(direction, trig, live_bars)
+                        if shadow:
+                            cpx, cts, cstat = shadow[0], shadow[1], "confirmed"
+                    else:
+                        cstat = "n/a"
                     with conn.cursor() as c:
-                        c.execute("""INSERT INTO paper_trades (spec_id, entered_at, entry_px)
-                                     VALUES (%s, now(), %s)""", (sid, entry_fill))
+                        c.execute("""INSERT INTO paper_trades (spec_id, entered_at, entry_px,
+                                     fill_kind, confirm_px, confirm_at, confirm_status)
+                                     VALUES (%s, now(), %s, %s, %s, %s, %s)""",
+                                  (sid, entry_fill, kind, cpx, cts, cstat))
                         c.execute("UPDATE paper_specs SET status='triggered' WHERE id=%s", (sid,))
                     conn.commit()
-                    log.info("[paper] ENTER %s %s %s @ %.2f (%s)", book, tk, direction, entry_fill, setup)
+                    log.info("[paper] ENTER %s %s %s @ %.2f (%s, %s, shadow=%s)",
+                             book, tk, direction, entry_fill, setup, kind, cstat)
             else:                                    # open — manage exit
                 entry_px = float(entry_px)
+                # Resolve a pending confirmation shadow. Same-day only: the
+                # confirmation desk either entered by the close or skipped
+                # (unfilled specs cancel at eod). If the loop lost the entry
+                # day (restart, outage), the answer is UNKNOWN — 'unresolved'
+                # renders as a data hole, never as a zero.
+                if confirm_status == "pending":
+                    if entered_at is not None and \
+                            entered_at.astimezone(ET).date() != today:
+                        _set_confirm(conn, tid, None, None, "unresolved")
+                    else:
+                        live_bars = [b for b in bars
+                                     if b[0] + dt.timedelta(minutes=15) > created_at]
+                        shadow = _confirm_shadow(direction, trig, live_bars)
+                        if shadow:
+                            _set_confirm(conn, tid, shadow[0], shadow[1], "confirmed")
+                        elif eod:
+                            _set_confirm(conn, tid, None, None, "no_confirm")
                 # R risk from the ACTUAL entry, not the spec trigger — a gap
                 # fill below the trigger carries less risk per share, and
                 # grading it off the trigger would misstate every R after it.
