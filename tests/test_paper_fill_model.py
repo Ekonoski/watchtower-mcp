@@ -34,18 +34,34 @@ def main():
     assert (verdict, px) == ("fill", 26.65), (verdict, px)
 
     # TNDM, Friday: opened 17.39, 4.2% below the 18.16 trigger (stop 16.14).
-    # Level lost -> the order becomes a RECLAIM stop at the trigger. The
-    # opening bar (high 17.90) does NOT fill; the later bar that crosses
-    # back up through 18.16 fills AT 18.16 — a price that printed on the
-    # crossing. (Eric's rule, 2026-08-08: a lost level is only bought on
-    # proof.)
+    # Level lost -> RECLAIM mode. Proof = a completed 15m bar CLOSING back
+    # through the trigger (Eric's rule v2, 2026-08-08: a wick is not
+    # proof). The gap bar does not fill; the bar closing 18.60 fills at
+    # ITS CLOSE — the premium over 18.16 is the cost of confirmation.
     verdict, px = _swing_fill("long", 18.16, 16.14,
                               [bar(17.39, 17.80, 17.90, 17.07)])
     assert (verdict, px) == (None, None), (verdict, px)
     verdict, px = _swing_fill("long", 18.16, 16.14,
                               [bar(17.39, 17.80, 17.90, 17.07),
                                bar(17.85, 18.60, 18.75, 17.80, 15)])
-    assert (verdict, px) == ("fill", 18.16), (verdict, px)
+    assert (verdict, px) == ("fill", 18.60), (verdict, px)
+
+    # The wick fakeout this rule exists to refuse: after the level is
+    # lost, a bar SPIKES through 18.16 (high 18.30) but closes back below
+    # at 17.85. Cross-fill would have bought the top of a failed reclaim;
+    # close-through fills nothing.
+    verdict, px = _swing_fill("long", 18.16, 16.14,
+                              [bar(17.39, 17.80, 17.90, 17.07),
+                               bar(17.90, 17.85, 18.30, 17.60, 15)])
+    assert (verdict, px) == (None, None), (verdict, px)
+
+    # Once lost, reclaim mode is permanent: a later bar that gaps back
+    # ABOVE the level and closes there is still proof — fills at its
+    # close, however price got back over.
+    verdict, px = _swing_fill("long", 100.0, 95.0,
+                              [bar(98.0, 99.0, 99.5, 97.5),
+                               bar(101.0, 102.0, 102.5, 100.8, 15)])
+    assert (verdict, px) == ("fill", 102.0), (verdict, px)
 
     # BLND, Friday: opened below the 1.88 trigger (above the 1.67 stop) and
     # NEVER reclaimed — high 1.72. No proof, no fill; the spec rests and
@@ -76,11 +92,15 @@ def main():
                               [bar(54.0, 53.5, 54.2, 52.8)])
     assert (verdict, px) == ("doa", None), (verdict, px)
     verdict, px = _swing_fill("short", 50.0, 53.0,
+                              [bar(51.0, 49.8, 51.4, 49.6)])
+    assert (verdict, px) == ("fill", 49.8), (verdict, px)
+    # short wick-fake: dips through 50 (low 49.9) but closes back above.
+    verdict, px = _swing_fill("short", 50.0, 53.0,
                               [bar(51.0, 50.2, 51.4, 49.9)])
-    assert (verdict, px) == ("fill", 50.0), (verdict, px)
+    assert (verdict, px) == (None, None), (verdict, px)
 
-    print("ok — retest fills at trigger, lost level fills only on reclaim, "
-          "DOA cancels, shorts mirror")
+    print("ok — retest fills at trigger, lost level needs a 15m CLOSE back "
+          "through, wick-fakes refused, DOA cancels, shorts mirror")
 
 
 if __name__ == "__main__":
