@@ -1022,17 +1022,22 @@ def _seed_pattern_backtest_if_empty():
                 need = cur.fetchone() is None
                 # v5's whole point is the deep regime window. Replaying
                 # before the deep-history backfill (watchtower repo,
-                # nightly slices) has landed would grade the shallow
-                # window, stamp itself v5-complete, and never look again.
-                # Gate on evidence the data exists; re-checks every start.
-                cur.execute("SELECT count(DISTINCT ticker) FROM daily_prices "
-                            "WHERE trade_date < '2015-01-01'")
-                deep_names = cur.fetchone()[0]
+                # nightly slices) has FINISHED would grade whichever half
+                # of the sample happened to land first, stamp itself
+                # v5-complete, and never revisit the shallow half — a
+                # partial-coverage prior wearing a full-coverage label.
+                # Gate on the backfill's own completion marker, nothing
+                # softer; re-checks every service start.
+                cur.execute("SELECT 1 FROM scheduler_job_claims "
+                            "WHERE job_name = 'daily_history_backfill_complete' "
+                            "LIMIT 1")
+                history_ready = cur.fetchone() is not None
         finally:
             conn.close()
-        if need and deep_names < 500:
-            log.info(f"[patterns] v{BT_VERSION} replay deferred — deep history "
-                     f"at {deep_names} names (<500); backfill still draining")
+        if need and not history_ready:
+            log.info(f"[patterns] v{BT_VERSION} replay deferred — deep-history "
+                     "backfill not yet complete (no completion claim); "
+                     "draining nightly")
             need = False
         if need:
             from analysis.pattern_backtest import run_pattern_backtests
