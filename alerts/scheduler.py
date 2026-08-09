@@ -1020,8 +1020,20 @@ def _seed_pattern_backtest_if_empty():
                             (f"pattern_bt_v{BT_VERSION}_e{ENGINE_VERSION}"
                              "_complete",))
                 need = cur.fetchone() is None
+                # v5's whole point is the deep regime window. Replaying
+                # before the deep-history backfill (watchtower repo,
+                # nightly slices) has landed would grade the shallow
+                # window, stamp itself v5-complete, and never look again.
+                # Gate on evidence the data exists; re-checks every start.
+                cur.execute("SELECT count(DISTINCT ticker) FROM daily_prices "
+                            "WHERE trade_date < '2015-01-01'")
+                deep_names = cur.fetchone()[0]
         finally:
             conn.close()
+        if need and deep_names < 500:
+            log.info(f"[patterns] v{BT_VERSION} replay deferred — deep history "
+                     f"at {deep_names} names (<500); backfill still draining")
+            need = False
         if need:
             from analysis.pattern_backtest import run_pattern_backtests
             log.info("[patterns] backtest predates BT_VERSION — replaying...")
