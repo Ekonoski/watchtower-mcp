@@ -48,7 +48,17 @@ from datetime import date
 
 log = logging.getLogger(__name__)
 
-BT_VERSION = 4   # v4: timeframe dimension (daily+weekly) + native retest measurement
+BT_VERSION = 5   # v5: deep regime window (2005+) — graded through 2008, 2011,
+# 2015, 2018, COVID, and 2022, not just the 2021+ tape (decided 2026-08-08:
+# regime risk is the desk's #1 holdup, and the answer is data). The window is
+# part of the measurement, so the bump truncates v4 — priors from a one-bear
+# sample must never blend with priors from a five-bear one.
+#
+# SURVIVORSHIP, stated where the numbers are made: deep history exists only
+# for names alive in daily_prices since 2021 — names that died before then
+# never entered the table, so pre-2021 grades come from survivors and every
+# bear-market stat reads OPTIMISTIC. Cite it beside any v5 prior the way n
+# is cited. (Delisted-universe onboarding narrows this; its own project.)
 # Timeframes the seeder replays. Weekly bars are aggregated from daily_prices;
 # 4h needs intraday history and its own bounded universe — deliberately absent
 # until built as its own job.
@@ -56,7 +66,11 @@ BACKTEST_TIMEFRAMES = [t.strip() for t in
                        os.environ.get("PATTERN_BT_TIMEFRAMES", "daily,weekly").split(",") if t.strip()]
 STEP = int(os.environ.get("PATTERN_BT_STEP", "2"))        # as-of stride, bars
 SAMPLE = int(os.environ.get("PATTERN_BT_SAMPLE", "2500"))  # universe sample
-HISTORY_START = "2021-06-01"   # everything daily_prices has
+HISTORY_START = os.environ.get("PATTERN_BT_HISTORY_START", "2005-01-01")
+# ^ served by ingestion/backfill_daily_history.py (watchtower repo), which
+# backfills THIS engine's deterministic sample. A sampled ticker whose deep
+# history hasn't landed (or never existed) replays its shallow window —
+# graceful degradation, identical to v4 behavior for that name.
 HORIZON = 130          # bars to wait for resolution before calling it open
 WINDOW = 420           # bars of history per as-of detection (covers max lookback)
 MIN_BARS = 90
@@ -332,6 +346,18 @@ def _spy_regime_map(conn) -> dict:
     return out
 
 
+def _stride_sample(universe: list, cap: int) -> list:
+    """Deterministic stride over the sorted universe. Pure and pinned:
+    ingestion/backfill_daily_history.py (watchtower repo) carries a
+    byte-for-byte copy so the deep-history backfill lands under the SAME
+    names this replay draws — if this changes, that copy must change with
+    it, and test_stride_sample.py exists to make silent drift loud."""
+    if len(universe) <= cap:
+        return universe
+    stride = len(universe) / cap
+    return [universe[int(i * stride)] for i in range(cap)]
+
+
 def run_pattern_backtest(timeframe: str = "daily") -> dict:
     """Replay a deterministic sample of every name daily_prices knows —
     delisted included — and store results incrementally. Truncates the
@@ -375,9 +401,7 @@ def run_pattern_backtest(timeframe: str = "daily") -> dict:
                 GROUP BY ticker HAVING count(*) >= %s
             """, (HISTORY_START, MIN_BARS + 10))
             universe = sorted({r[0] for r in cur.fetchall() if r[0]})
-        if len(universe) > SAMPLE:
-            stride = len(universe) / SAMPLE
-            universe = [universe[int(i * stride)] for i in range(SAMPLE)]
+        universe = _stride_sample(universe, SAMPLE)
         with conn.cursor() as cur:
             # Resume: a deploy mid-run restarts this thread; skip names the
             # interrupted run already stored (eventless names re-scan — a
