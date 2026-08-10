@@ -65,6 +65,9 @@ BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
 #   higher_low     weekly +0.20 64% (n=9,254)   daily +0.01 61% (n=37,034)
 #   inverse_hs     weekly +0.19 63% (n=2,532)   daily +0.07 57% (n=8,798)
 #   ema_bounce     weekly +0.84 63% (n=8,188)   daily -0.16 58% (n=46,979) EXCLUDED
+#   cup_handle     weekly +0.24 63% (n=2,727)   daily +0.01 57% (n=11,795) EXCLUDED
+#   range_breakout weekly +0.19 61% (n=3,423)   daily +0.08 57% (n=22,492) EXCLUDED
+#   falling_wedge  weekly +0.12 59% (n=1,750)   daily +0.09 61% (n=7,059)  EXCLUDED
 # Every weekly class beats its daily twin — the weekly-beats-daily
 # curation rank is now an 8,000-to-47,000-sample fact, not a preference.
 # *The daily neckline classes (higher_low, double_bottom) rode in as the
@@ -83,6 +86,13 @@ SWING_CLASSES = (
     ("asc_triangle", "weekly"), ("asc_triangle", "daily"),
     ("bull_flag", "weekly"), ("bull_flag", "daily"),
     ("ema_bounce", "weekly"),
+    # Added 2026-08-10 on the v6 read (Eric): weekly-only — each positive
+    # at scale (see table above). Their daily twins stay out: +0.01 to
+    # +0.09 edges are too thin to spend capped book slots on, and the
+    # daily-neckline slots are already spoken for by the declared
+    # experiment.
+    ("cup_handle", "weekly"), ("range_breakout", "weekly"),
+    ("falling_wedge", "weekly"),
 )
 SWING_PATTERNS = tuple(dict.fromkeys(p for p, _tf in SWING_CLASSES))
 # The swing book is a CURATED control, not the whole scanner. Weekly/daily
