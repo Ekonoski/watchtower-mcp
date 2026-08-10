@@ -1050,7 +1050,7 @@ def _seed_pattern_backtest_if_empty():
             import time as _time
             import zoneinfo as _zi
             _now = _dt.datetime.now(_zi.ZoneInfo("America/New_York"))
-            if _now.weekday() < 5 and _dt.time(7, 0) <= _now.time() <= _dt.time(16, 15):
+            if _now.weekday() < 5 and _now.time() <= _dt.time(16, 15):
                 _hold = (_now.replace(hour=16, minute=15, second=0,
                                       microsecond=0) - _now).total_seconds()
                 log.info(f"[patterns] replay needed but market hours — "
