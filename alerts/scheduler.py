@@ -1042,8 +1042,23 @@ def _seed_pattern_backtest_if_empty():
         if need:
             from analysis.pattern_backtest import run_pattern_backtests
             log.info("[patterns] backtest predates BT_VERSION — replaying...")
-            res = run_pattern_backtests()
-            log.info(f"[patterns] timing backtest done: {res}")
+            # Retry loop: the replay is hours of work that has died twice
+            # in one night to transient DB errors (boot-time connection
+            # blip, statement timeout under load) — and a dead seed stays
+            # dead until the next deploy. Each retry resumes: stored
+            # tickers skip, so attempts only ever re-do the failed tail.
+            import time as _time
+            for attempt in range(1, 5):
+                try:
+                    res = run_pattern_backtests()
+                    log.info(f"[patterns] timing backtest done: {res}")
+                    break
+                except Exception as e:
+                    log.warning(f"[patterns] backtest replay attempt "
+                                f"{attempt}/4 failed: {e!r}"
+                                + ("" if attempt == 4 else " — retrying in 5m"))
+                    if attempt < 4:
+                        _time.sleep(300)
     except Exception as e:
         log.warning(f"[patterns] backtest seed skipped: {e}")
 
