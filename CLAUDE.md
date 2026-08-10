@@ -140,6 +140,22 @@ Rendering doctrine, same spirit as the rest of this file:
   −0.19R) ride as a declared experiment: their priors were graded on
   breakout-close entries, the desk buys the retest at the trigger, and they
   retire like shorts did if still negative after ~30 resolved live trades.
+- **The ledger grades the signal; the expression layer waits for the data**
+  (decided 2026-08-10, the day of the desk's first resolved trade — SPY
+  wall-fade, +1.03R). Every book records entries/exits in UNDERLYING price
+  and R, instrument-agnostic on purpose: grading the edge in option P&L
+  would smear theta/IV/strike noise into the question "do the levels
+  work?". Going live adds a SEPARATE options-expression layer — for the
+  gamma book, short-dated puts vs a short call spread above the wall,
+  chosen from our own IV-rank history (the 5:35 IV snapshot job is
+  accumulating exactly this); `watchtower_option_ticket` builds the
+  ticket. The expression is graded against the shares-equivalent as its
+  own scoreboard, the same way touch fills carry a confirmation shadow —
+  the edge and the expression each answer for themselves. **Gate (Eric):
+  build the conversion only once the paper record shows profit with
+  roughly two months of live data (~30+ resolved trades per the small-n
+  rule) — not before.** Until then the desk stays paper and the ledger
+  stays in underlying R.
 - **The cost of confirmation is measured, not argued** (decided 2026-08-08:
   the swing book keeps resting-limit fills at the trigger). Every touch fill
   also records its confirmation shadow — the completed-15m-close entry a
