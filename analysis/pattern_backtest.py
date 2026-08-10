@@ -379,7 +379,12 @@ def run_pattern_backtest(timeframe: str = "daily") -> dict:
     try:
         try:
             with conn.cursor() as _c:
-                _c.execute("SET statement_timeout = '600s'")
+                # 1800s, not 600: the deep window pushed daily_prices to
+                # ~14.5M rows and the universe GROUP BY alone crossed 600s
+                # under Sunday-night load (2026-08-10, killing the first
+                # v6 attempt ten minutes after it truncated v5). This is a
+                # background batch job — patience is cheaper than death.
+                _c.execute("SET statement_timeout = '1800s'")
             conn.commit()
         except Exception:
             pass
