@@ -48,7 +48,14 @@ from datetime import date
 
 log = logging.getLogger(__name__)
 
-BT_VERSION = 5   # v5: deep regime window (2005+) — graded through 2008, 2011,
+BT_VERSION = 6   # v6: v5's deep window + the path-1 resolve fix. Since v4,
+# the fresh-breakout path unpacked 6 values from a 7-value _resolve — the
+# first such episode on any ticker raised ValueError and the per-ticker
+# guard silently discarded the ENTIRE ticker at DEBUG level. v4/v5 priors
+# were therefore graded on the SURVIVORS (tickers whose episodes all came
+# through the armed-trigger path) — a censored sample wearing a full-
+# universe label. Every class prior must be re-read from v6.
+# v5: deep regime window (2005+) — graded through 2008, 2011,
 # 2015, 2018, COVID, and 2022, not just the 2021+ tape (decided 2026-08-08:
 # regime risk is the desk's #1 holdup, and the answer is data). The window is
 # part of the measurement, so the bump truncates v4 — priors from a one-bear
@@ -308,9 +315,9 @@ def _replay_ticker(bars: list, spy_above: dict, timeframe: str = "daily") -> lis
             entry = bars[as_of + 1]["open"] or bars[as_of + 1]["close"]
             if not entry or entry <= 0:
                 continue
-            outcome, bto, w1, b1, rr, end_i = _resolve(
+            outcome, bto, w1, b1, rr, retest, end_i = _resolve(
                 bars, as_of, entry, det["target"], det["invalid_level"],
-                det["direction"])
+                det["direction"], det["trigger_price"])
             active[pat] = end_i
             anchor = det.get("anchor_date")
             width = None
@@ -322,7 +329,8 @@ def _replay_ticker(bars: list, spy_above: dict, timeframe: str = "daily") -> lis
             out.append((det["pattern"], det["direction"], anchor, dates[j],
                         width, det["trigger_price"], det["target"],
                         det["invalid_level"], outcome, bto, w1, b1,
-                        round(entry, 4), rr, spy_above.get(dates[as_of])))
+                        round(entry, 4), rr, retest,
+                        spy_above.get(dates[as_of])))
     return out
 
 
@@ -421,6 +429,7 @@ def run_pattern_backtest(timeframe: str = "daily") -> dict:
                  f"{len(universe)} names (step {STEP} bars, "
                  f"engine v{ENGINE_VERSION})")
         total = 0
+        failed = 0
         for i in range(0, len(universe), 120):
             frames = _bars_for(conn, universe[i:i + 120])
             if timeframe == "weekly":
@@ -432,7 +441,13 @@ def run_pattern_backtest(timeframe: str = "daily") -> dict:
                         rows.append((t,) + ev
                                     + (timeframe, ENGINE_VERSION, BT_VERSION))
                 except Exception as e:
-                    log.debug(f"[patterns] backtest {t} failed: {e}")
+                    # A ticker that dies here silently CENSORS the sample —
+                    # v4/v5 lost most deep names this way and nobody saw it
+                    # (log.debug is invisible at INFO). Loud, counted, and
+                    # gating the completion marker below.
+                    failed += 1
+                    if failed <= 5:
+                        log.warning(f"[patterns] backtest {t} replay FAILED: {e!r}")
             if rows:
                 with conn.cursor() as cur:
                     execute_values(cur, """
@@ -462,6 +477,20 @@ def run_pattern_backtest(timeframe: str = "daily") -> dict:
             if i % 600 == 0 and i:
                 log.info(f"[patterns] backtest {i}/{len(universe)} names, "
                          f"{total} breakouts so far")
+        if failed:
+            log.warning(f"[patterns] backtest {timeframe}: {failed} of "
+                        f"{len(universe)} tickers failed replay")
+        if failed > max(10, len(universe) // 50):
+            # A run that lost >2% of its universe is not complete — it is a
+            # censored sample. No marker: the seed refires next start and
+            # the resume machinery retries exactly the failed names.
+            log.warning(f"[patterns] backtest {timeframe}: failure rate too "
+                        "high — completion marker WITHHELD; will retry on "
+                        "next service start")
+            return {"breakouts": total, "tickers": len(universe),
+                    "failed": failed, "bt_version": BT_VERSION,
+                    "incomplete": True,
+                    "seconds": round(time.time() - t0)}
         with conn.cursor() as cur:
             # Permanent completion marker — the seed re-fires until this
             # exists, so an interrupted run always resumes on next deploy.
