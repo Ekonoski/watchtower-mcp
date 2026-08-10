@@ -93,6 +93,14 @@ SWING_CLASSES = (
     # experiment.
     ("cup_handle", "weekly"), ("range_breakout", "weekly"),
     ("falling_wedge", "weekly"),
+    # The goat line (Eric, 2026-08-10, same evening as the study): a
+    # 40-week-qualified uptrend's touch of its 200-WEEK SMA. Prior is the
+    # goat study's OWN grade, not pattern_backtest (the replay's 420-day
+    # windows can't reach 240 weekly bars yet): 82% to +5% / 58% to +10%,
+    # n=2,653, ~126 events/yr universe-wide, survivorship-flattered and
+    # blind to 2008 — a declared provisional prior, reviewed like the
+    # neckline experiment on its own resolved live trades.
+    ("wma_touch", "weekly"),
 )
 SWING_PATTERNS = tuple(dict.fromkeys(p for p, _tf in SWING_CLASSES))
 # The swing book is a CURATED control, not the whole scanner. Weekly/daily

@@ -50,6 +50,13 @@ log = logging.getLogger(__name__)
 # Bump whenever detectors/thresholds change: the scheduler rescans once per
 # version on deploy, so new/changed patterns populate within minutes instead
 # of waiting for the next 6:45 AM slot.
+# NOTE (2026-08-10): wma_touch shipped WITHOUT a bump, deliberately. A bump
+# also invalidates the pattern-backtest marker (keyed v{BT}_e{ENGINE}) and
+# would truncate + re-run the entire 55-minute replay on deploy — for a
+# detector the replay's 420-day windows can't fire anyway (it needs 240
+# weekly bars). wma_touch rows populate at the next 6:45 scan instead; the
+# proper bump rides with the future replay-window extension that lets the
+# harness grade it natively.
 ENGINE_VERSION = 14   # v14: structure shift (higher low / lower high)
 
 # Per-timeframe knobs. `scale` multiplies every percent threshold — a weekly
@@ -1388,6 +1395,100 @@ def _det_range_break(ctx):
     return None
 
 
+# ── The goat line: 200-week SMA touch (added 2026-08-10) ─────────────────────
+
+def _det_wma_touch(ctx):
+    """The goat study, formalized the day it ran (2026-08-10): a long-
+    qualified uptrend meeting its 200-WEEK SMA — "keep it simple, buy the
+    200." The study's grade on our own 2005+ bars: a 40-week-qualified
+    touch of the 200-week line reached +5% before a 3% close-through
+    failure 82.2% of the time and +10% 58.2% (n=2,653 events, ~126/yr
+    across the universe) — the strongest cut in the whole study. The
+    caveats travel with the number: survivorship-flattered (delisted
+    names absent), events begin ~2010 (MA warm-up), grades are
+    touch-entry grades.
+
+    Scan semantics (weekly bars only, needs 240+ COMPLETED weeks — the
+    deep weekly fetch, not the regular ~3y map; NOT in DETECTORS so the
+    other detectors' inputs are untouched):
+      qualifier — each of the last 40 completed weeks CLOSED above its
+        prior-week 200w SMA (the study's established-trend gate);
+      trigger   — the 200w SMA over the last 200 completed weeks: the
+        line a resting limit parks on;
+      invalid   — 3% below the trigger, judged on closes (wick rule);
+      target    — +10% from the trigger, the tier whose prior rides in
+        points;
+      status    — 'breakout' inside the 0-4% approach band (armable: the
+        7:40 writer parks the limit AT the line), 'forming' when 4-12%
+        above (approaching — visible, not armable), 'retest' at/under
+        the line awaiting the close verdict, None once closed through
+        the invalid or still >12% away.
+    The study's gap-through exclusion is NOT re-implemented here: the
+    trigger loop's DOA/reclaim fill model already enforces it at
+    execution time — one rule for every book."""
+    if ctx["tf"] != "weekly":
+        return None
+    closes = ctx["closes"]
+    if len(closes) < 242 or any(c is None for c in closes[-242:]):
+        return None
+    completed = closes[:-1]          # the last bar is the live partial week
+    n_c = len(completed)
+    if n_c < 241:
+        return None
+    trigger = sum(completed[-200:]) / 200.0
+    if trigger <= 0:
+        return None
+    # Qualifier walk, newest completed week backwards: week j must close
+    # above the 200w SMA of the 200 weeks BEFORE it (prior-week line,
+    # exactly as the study graded it). Counted to 120 for scoring.
+    up_run, j = 0, n_c - 1
+    win = sum(completed[j - 200:j])
+    while up_run < 120 and j >= 200:
+        if completed[j] <= win / 200.0:
+            break
+        up_run += 1
+        j -= 1
+        if j >= 200:
+            win += completed[j - 200] - completed[j]
+    if up_run < 40:
+        return None
+    # Low-volatility guard (found on the study's own event list: SPMB and
+    # friends — bond ETFs hug their 200w line permanently, so a touch is
+    # noise and the +10% target is unreachable on pattern timescales). A
+    # real uptrend puts distance between itself and its 200-week line;
+    # demand the QUALIFIED RUN's own high be 15%+ above it. (First cut
+    # used the trailing 240-week high and SPMB slipped through on its
+    # 2021 DOWNTREND high — the amplitude must belong to this trend.)
+    if max(completed[-min(up_run, 240):]) < trigger * 1.15:
+        return None
+    invalid = trigger * 0.97
+    target = trigger * 1.10
+    last = ctx["last"]
+    if last < invalid:
+        return None                       # closed through the line — dead
+    dist = (last - trigger) / trigger * 100.0
+    if last <= trigger:
+        status = "retest"
+    elif dist <= 4.0:
+        status = "breakout"
+    elif dist <= 12.0:
+        status = "forming"
+    else:
+        return None                       # trend intact, line far — not listable
+    anchor_idx = min(j + 1, n_c - 1)      # first week of the counted run
+    # Passing the 40-week gate IS the pattern — it earns base credit, so a
+    # qualified touch clears the writer's 70 bar even on a name with only
+    # the minimum 241 weeks of history (whose run-count is capped by data
+    # depth, not by trend quality).
+    quality = 12.0 + min(8.0, (up_run - 40) / 10.0) + (5.0 if dist <= 8.0 else 2.0)
+    points = {"wma200": round(trigger, 4), "up_weeks": up_run,
+              "prior": "goat study 2026-08-10: 82% to +5%, 58% to +10% "
+                       "(n=2,653; survivorship-flattered)",
+              "_anchor_price": trigger}
+    return _mk(ctx, "wma_touch", "bullish", status, trigger, target,
+               invalid, anchor_idx, anchor_idx, points, quality)
+
+
 DETECTORS = [_det_inverse_hs, _det_hs_top, _det_double_bottom, _det_double_top,
              _det_higher_low, _det_lower_high,
              _det_bull_flag, _det_bear_flag, _det_asc_triangle,
@@ -1486,6 +1587,27 @@ def _fetch_weekly(conn, tickers: list) -> dict:
         return _rows_to_bars(cur.fetchall())
 
 
+def _fetch_weekly_deep(conn, tickers: list) -> dict:
+    """~4.9y of weekly bars for the 200-week detector ONLY (240 completed
+    weeks + buffer). A separate query, not a widening of _fetch_weekly:
+    the other weekly detectors compute pivots over their whole input, so
+    feeding them five years instead of three would silently change their
+    detections. Isolation costs one extra aggregate per batch; the 6:45
+    scan owns its own statement timeout and retry armor."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT ticker, date_trunc('week', trade_date)::date AS wk,
+                   max(COALESCE(high, close)), min(COALESCE(low, close)),
+                   (array_agg(close ORDER BY trade_date DESC))[1],
+                   sum(volume)
+            FROM daily_prices
+            WHERE ticker = ANY(%s) AND trade_date >= CURRENT_DATE - 1780
+            GROUP BY ticker, date_trunc('week', trade_date)
+            ORDER BY ticker, wk
+        """, (tickers,))
+        return _rows_to_bars(cur.fetchall())
+
+
 def _upsert_rows(conn, rows: list, timeframe: str, run_started) -> None:
     """Replace a timeframe's results: upsert what this run found, then drop
     what it no longer sees. detected_at survives while the anchor bar (the
@@ -1557,6 +1679,7 @@ def scan_db_timeframes() -> dict:
             batch = tickers[i:i + 120]
             daily_map = _fetch_daily(conn, batch)
             weekly_map = _fetch_weekly(conn, batch)
+            deep_map = _fetch_weekly_deep(conn, batch)
             for t in batch:
                 for r in detect_patterns(daily_map.get(t) or [], "daily"):
                     r["ticker"] = t
@@ -1564,6 +1687,19 @@ def scan_db_timeframes() -> dict:
                 for r in detect_patterns(weekly_map.get(t) or [], "weekly"):
                     r["ticker"] = t
                     rows_weekly.append(r)
+                # The goat line runs off its own deep bars, called directly
+                # (not via DETECTORS) so the regular detectors' inputs stay
+                # byte-for-byte what they were before it existed.
+                deep_ctx = _ctx(deep_map.get(t) or [], "weekly")
+                if deep_ctx:
+                    try:
+                        r = _det_wma_touch(deep_ctx)
+                        if r:
+                            r["timeframe"] = "weekly"
+                            r["ticker"] = t
+                            rows_weekly.append(r)
+                    except Exception as e:
+                        log.warning(f"[patterns] wma_touch error on {t}: {e}")
         _upsert_rows(conn, rows_daily, "daily", run_started)
         _upsert_rows(conn, rows_weekly, "weekly", run_started)
         found["daily"] = sorted({r["ticker"] for r in rows_daily})
