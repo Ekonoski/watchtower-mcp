@@ -92,6 +92,19 @@ def swing_class_ok(pattern: str, timeframe: str) -> bool:
     return (pattern, timeframe) in SWING_CLASSES
 
 
+def fresh_swing_rows(rows, today):
+    """Pure. rows: pattern_scan candidate tuples whose LAST element is the
+    row's scan date in ET. The freshness gate (2026-08-10): the 6:45 scan
+    died in a database brownout and the 7:40 writer armed the whole swing
+    book from Friday's rows — TNDM's trigger sat 23% below the market it
+    woke up to. A row is armable only if it was scanned TODAY; a dead scan
+    morning shrinks the book, loudly — it never pads it with leftovers.
+    Returns (fresh_rows_without_date, stale_count, stale_latest)."""
+    fresh = [r[:-1] for r in rows if r[-1] == today]
+    stale = [r[-1] for r in rows if r[-1] != today]
+    return fresh, len(stale), max(stale) if stale else None
+
+
 def curate_swing(rows, cap=SWING_MAX):
     """Pure. rows: (ticker, timeframe, pattern, direction, trigger, target,
     invalid, score) already geometry-filtered. One spec per ticker (weekly
@@ -198,15 +211,24 @@ def write_morning_specs():
                 log.info("[paper] %s: no gamma spec — %s", tk, why_skip)
 
             # Swing book: breakout-retest limits (blind by design — control group).
+            # Each row carries its own scan date so the freshness gate can
+            # judge per row — stamp freshness per row, not per page.
             c.execute("""SELECT ticker, timeframe, pattern, direction, trigger_price,
-                                target, invalid_level, score
+                                target, invalid_level, score,
+                                (scanned_at AT TIME ZONE 'America/New_York')::date
                          FROM pattern_scan
                          WHERE pattern = ANY(%s) AND status='breakout' AND score >= 70
                            AND direction='bullish' AND timeframe = ANY(%s)
                            AND dist_to_trigger_pct BETWEEN 0 AND 4""",
                       (list(SWING_PATTERNS), list(SWING_TIMEFRAMES)))
+            rows, n_stale, stale_latest = fresh_swing_rows(c.fetchall(), today)
+            if n_stale:
+                log.warning("[paper] swing: %d candidate row(s) EXCLUDED as "
+                            "stale (latest %s, today %s) — the morning scan "
+                            "didn't finish; the book shrinks rather than "
+                            "arming yesterday's menu", n_stale, stale_latest, today)
             candidates = [(tk, tf, pat, d, float(trig), float(tgt), float(inv), score)
-                          for tk, tf, pat, d, trig, tgt, inv, score in c.fetchall()
+                          for tk, tf, pat, d, trig, tgt, inv, score in rows
                           if swing_class_ok(pat, tf)
                           and (float(tgt) - float(trig)) >= 1.5 * (float(trig) - float(inv))]
             kept, dropped = curate_swing(candidates)

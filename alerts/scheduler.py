@@ -117,6 +117,37 @@ def _claim_daily_job(job_name: str) -> bool:
         return True
 
 
+def _release_daily_job(job_name: str):
+    """Give back a daily claim after a run that failed permanently.
+
+    The claim is written BEFORE the run so sibling containers can't
+    double-fire — which means a run that dies leaves today's slot
+    claimed-but-empty and nothing retries until tomorrow (2026-08-10: the
+    6:45 pattern scan died in a database brownout and the Patterns tab —
+    and the 7:40 spec-writer — served Friday's rows all day). Best-effort:
+    a failed release just means tomorrow's slot is the retry, same as
+    before this existed."""
+    try:
+        from screen.reversal_screen import _conn
+        try:
+            from screen.market_calendar import et_now
+            run_date = et_now().date()
+        except Exception:
+            from datetime import date as _date
+            run_date = _date.today()
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM scheduler_job_claims "
+                            "WHERE job_name = %s AND run_date = %s",
+                            (job_name, run_date))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"[scheduler] claim release for {job_name} failed: {e}")
+
+
 def _build_x_velocity_alerts(market_pulse: dict, results: list, news_alerts: list) -> list:
     """X velocity: tickers trending on X with NO scanner signal and NO news
     behind them — often the earliest tell (rumors, viral DD, halts being
@@ -537,13 +568,30 @@ def run_daily_pattern_scan():
         pass
     if not _claim_daily_job("pattern_scan"):
         return
-    try:
-        from analysis.pattern_scan import run_pattern_scan
-        log.info("[scheduler] Starting daily pattern scan...")
-        counts = run_pattern_scan()
-        log.info(f"[scheduler] Pattern scan done: {counts}")
-    except Exception as e:
-        log.error(f"[scheduler] Pattern scan error: {e}")
+    # Retry armor + claim release (2026-08-10): the 6:45 run died in a
+    # database brownout AFTER claiming its slot, so nothing retried until
+    # the next day — and the 7:40 spec-writer armed the whole swing book
+    # off Friday's rows. Transient DB trouble gets three attempts five
+    # minutes apart; a scan that still can't finish RELEASES the claim so
+    # a restarted container (or the boot catch-up) can take the slot back.
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            from analysis.pattern_scan import run_pattern_scan
+            log.info(f"[scheduler] Starting daily pattern scan (attempt {attempt}/3)...")
+            counts = run_pattern_scan()
+            log.info(f"[scheduler] Pattern scan done: {counts}")
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            log.error(f"[scheduler] Pattern scan attempt {attempt}/3 failed: {e}")
+            if attempt < 3:
+                time.sleep(300)
+    if last_err is not None:
+        log.error("[scheduler] Pattern scan failed all attempts — releasing "
+                  "today's claim so a retry can take the slot")
+        _release_daily_job("pattern_scan")
     _run_oscillator_scan_safe(include_daily_weekly=True)
 
 
@@ -1077,6 +1125,55 @@ def _seed_pattern_backtest_if_empty():
         log.warning(f"[patterns] backtest seed skipped: {e}")
 
 
+def _run_missed_daily_pattern_scan():
+    """Boot-time catch-up for a dead 6:45 scan (2026-08-10): the scan claimed
+    its slot, died in the database brownout, and nothing retried — the 7:40
+    spec-writer armed the whole swing book from Friday-stale rows (TNDM's
+    trigger sat 23% below the market it woke up to). On boot during a
+    trading day, if the 6:45 slot has passed and pattern_scan holds no row
+    written today (ET), take the claim — retaking one orphaned by a run
+    that died >30 minutes ago without writing — and scan now. Runs AFTER
+    _seed_pattern_scan_if_stale so a seed rescan satisfies the check."""
+    try:
+        import datetime as _dtm
+        from screen.market_calendar import is_trading_day, et_now
+        now = et_now()
+        if not is_trading_day() or now.time() < _dtm.time(6, 45):
+            return
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT max(scanned_at AT TIME ZONE 'America/New_York')
+                               FROM pattern_scan""")
+                row = cur.fetchone()
+                last = row[0] if row else None
+                if last is not None and last.date() >= now.date():
+                    return          # today's scan wrote — nothing to heal
+                cur.execute(
+                    """INSERT INTO scheduler_job_claims (job_name, run_date)
+                       VALUES ('pattern_scan', %s)
+                       ON CONFLICT (job_name, run_date) DO UPDATE
+                       SET claimed_at = now()
+                       WHERE scheduler_job_claims.claimed_at < now() - interval '30 minutes'""",
+                    (now.date(),))
+                won = cur.rowcount == 1
+            conn.commit()
+        finally:
+            conn.close()
+        if not won:
+            log.info("[scheduler] missed-scan catch-up: a sibling holds a "
+                     "live claim — standing down")
+            return
+        log.warning(f"[scheduler] pattern_scan last wrote {last} — today's "
+                    "6:45 scan never landed; running catch-up scan now")
+        from analysis.pattern_scan import run_pattern_scan
+        counts = run_pattern_scan()
+        log.info(f"[scheduler] Catch-up pattern scan done: {counts}")
+    except Exception as e:
+        log.error(f"[scheduler] missed-scan catch-up failed: {e}")
+
+
 def _seed_pattern_scan_if_stale():
     """Deploy-time seeding: run a full pattern scan right away (even on a
     weekend) when the table has never been populated OR this deploy ships a
@@ -1421,6 +1518,7 @@ def start_scheduler():
         except Exception:
             pass
         _seed_pattern_scan_if_stale()
+        _run_missed_daily_pattern_scan()
         _seed_oscillator_if_empty()
         _seed_momentum_if_empty()
         _seed_iv_snapshot_if_missing()
