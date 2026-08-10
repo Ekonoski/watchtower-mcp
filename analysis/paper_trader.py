@@ -54,18 +54,28 @@ BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
 # backtest prior — and no negative-prior class, ever (the lesson that
 # retired shorts). A flat pattern-list × timeframe-list cannot express
 # this: ema_bounce is the strongest weekly class on the board and the
-# WORST daily one. Priors: pattern_backtest, bullish, avg realized R
-# (queried 2026-08-08):
-#   asc_triangle   weekly +2.61 (n=51)    daily +0.47 (n=37)
-#   ema_bounce     weekly +0.98 (n=205)   daily -0.37 (n=162)  EXCLUDED
-#   bull_flag      weekly +0.39 (n=44)    daily +0.19 (n=25)
-#   inverse_hs     weekly +0.31 (n=47)    daily +0.27 (n=13)
-#   double_bottom  weekly +0.28 (n=60)    daily -0.19 (n=19)   kept*
-#   higher_low     weekly +0.27 (n=168)   daily -0.06 (n=49)   kept*
-# *The daily neckline classes ride as the entry-location experiment
-# (Eric, 2026-08-08): their priors were graded on breakout-CLOSE entries;
-# the desk buys the retest at the trigger. If they still grade negative
-# after ~30 resolved live trades, they retire the way shorts did.
+# WORST daily one. Priors: pattern_backtest v6 — the first replay AFTER
+# the path-1 censorship fix, 357,946 episodes / 2,340 tickers / 2005+
+# (read 2026-08-10; v4's numbers were graded on censored survivors and
+# are struck). avg realized R · win-1R% · n, bullish, breakout-close
+# entries:
+#   asc_triangle   weekly +0.28 67% (n=1,896)   daily +0.08 61% (n=6,631)
+#   bull_flag      weekly +0.24 67% (n=2,561)   daily +0.09 60% (n=11,496)
+#   double_bottom  weekly +0.21 67% (n=2,998)   daily +0.04 63% (n=13,208)
+#   higher_low     weekly +0.20 64% (n=9,254)   daily +0.01 61% (n=37,034)
+#   inverse_hs     weekly +0.19 63% (n=2,532)   daily +0.07 57% (n=8,798)
+#   ema_bounce     weekly +0.84 63% (n=8,188)   daily -0.16 58% (n=46,979) EXCLUDED
+# Every weekly class beats its daily twin — the weekly-beats-daily
+# curation rank is now an 8,000-to-47,000-sample fact, not a preference.
+# *The daily neckline classes (higher_low, double_bottom) rode in as the
+# entry-location experiment (Eric, 2026-08-08) when v4 graded them
+# negative; v6 re-grades them marginally POSITIVE, so the experiment
+# continues with a friendlier prior — same review gate: judged on their
+# own resolved live trades at ~30, retest entries vs these breakout-close
+# grades. Survivorship caveat stands: pre-2021 delistings never entered
+# daily_prices, so all bullish priors read optimistic. spy_above regime
+# tags cover only ~⅓ of v6 episodes (nulls elsewhere) — regime splits are
+# directional until that backfills.
 SWING_CLASSES = (
     ("higher_low", "weekly"), ("higher_low", "daily"),
     ("double_bottom", "weekly"), ("double_bottom", "daily"),
