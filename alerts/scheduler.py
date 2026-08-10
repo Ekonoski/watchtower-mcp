@@ -1041,13 +1041,27 @@ def _seed_pattern_backtest_if_empty():
             need = False
         if need:
             from analysis.pattern_backtest import run_pattern_backtests
+            # Hold the replay outside regular trading hours: it is an
+            # hours-long IO-heavy grind, and 2026-08-10 proved the small
+            # instance degrades PLATFORM-WIDE under that load (statement
+            # timeouts every minute for hours after the bulk backfill).
+            # The live desk owns the daytime IO; the replay owns the night.
+            import datetime as _dt
+            import time as _time
+            import zoneinfo as _zi
+            _now = _dt.datetime.now(_zi.ZoneInfo("America/New_York"))
+            if _now.weekday() < 5 and _dt.time(7, 0) <= _now.time() <= _dt.time(16, 15):
+                _hold = (_now.replace(hour=16, minute=15, second=0,
+                                      microsecond=0) - _now).total_seconds()
+                log.info(f"[patterns] replay needed but market hours — "
+                         f"holding {_hold / 3600:.1f}h until after the close")
+                _time.sleep(_hold)
             log.info("[patterns] backtest predates BT_VERSION — replaying...")
             # Retry loop: the replay is hours of work that has died twice
             # in one night to transient DB errors (boot-time connection
             # blip, statement timeout under load) — and a dead seed stays
             # dead until the next deploy. Each retry resumes: stored
             # tickers skip, so attempts only ever re-do the failed tail.
-            import time as _time
             for attempt in range(1, 5):
                 try:
                     res = run_pattern_backtests()
