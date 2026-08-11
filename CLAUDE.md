@@ -185,6 +185,28 @@ Rendering doctrine, same spirit as the rest of this file:
   order type's execution fact, and the shadow exists to price whether proof
   should be demanded there too.
 
+- **The cipher rides as a tag, not a gate** (decided 2026-08-11, the night
+  the cipher-at-episodes study read out — 320,144 v6 episodes through the
+  LIVE compute_oscillator path). The finding: within the weekly RSI-45-60
+  band, mf-slope-up + MACD-hist-positive + wt2-not-overbought separates
+  +0.69R (n=9,264) from +0.10R (n=4,175); on the daily the same stack is
+  only a veto (wt2>=53 at breakout = -0.18R, n=19,756) and reopens
+  nothing. So every swing spec now carries `osc_state` — components at
+  the timeframe's last completed bar, stamped at write time AFTER
+  curation so the tag cannot influence arming even accidentally (a
+  tiebreaker is a gate in disguise). The prior was graded on
+  breakout-close entries and this desk buys the retest, so the tag is
+  measured like the confirmation shadow: judged on ~30 resolved weekly
+  live trades, then promoted asymmetrically (weekly selector, daily
+  veto) or dropped. Two hard rules regardless of outcome: the blended
+  0-100 confluence score NEVER gates anything (it sign-flips across
+  timeframes — daily 40-58 bucket -0.64R, weekly +0.97R; components
+  carry the signal, the composite is decoration); and a missing tag is
+  `cipher_ok: null` plus a reason, rendered as *unavailable*, never as
+  "cipher said no". `tests/test_cipher_tag.py` pins the contract, the
+  hole-handling, and — by signature — the arming pipeline's blindness
+  to the tag.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
