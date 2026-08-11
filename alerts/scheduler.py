@@ -1125,6 +1125,44 @@ def _seed_pattern_backtest_if_empty():
         log.warning(f"[patterns] backtest seed skipped: {e}")
 
 
+def _seed_cipher_study_if_missing():
+    """Boot-time runner for the cipher-at-episodes study (Eric, 2026-08-11):
+    the live oscillator engine graded across every v6 replay episode. Runs
+    ONLY outside market hours (the live desk owns daytime database I/O —
+    same hold as the pattern replay), resumes per ticker across boots, and
+    no-ops forever once its completion marker exists. Keep this LAST in
+    _seed_all: its hold would otherwise block later seeders."""
+    try:
+        import datetime as _dt
+        import time as _time
+        import zoneinfo as _zi
+        from analysis.cipher_episode_study import run, COMPLETE_MARKER
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s LIMIT 1",
+                            (COMPLETE_MARKER,))
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        _now = _dt.datetime.now(_zi.ZoneInfo("America/New_York"))
+        if _now.weekday() < 5 and _now.time() <= _dt.time(16, 15):
+            _hold = (_now.replace(hour=16, minute=15, second=0, microsecond=0)
+                     - _now).total_seconds()
+            log.info(f"[cipher-study] needed but market hours — holding "
+                     f"{_hold/3600:.1f}h until after the close")
+            _time.sleep(_hold)
+        # Up to four budget cycles (~3.7h) so one evening finishes the whole
+        # study instead of stranding the tail until some future deploy.
+        for _attempt in range(4):
+            if run():
+                break
+    except Exception as e:
+        log.warning(f"[scheduler] cipher study seed skipped: {e}")
+
+
 def _run_missed_daily_pattern_scan():
     """Boot-time catch-up for a dead 6:45 scan (2026-08-10): the scan claimed
     its slot, died in the database brownout, and nothing retried — the 7:40
@@ -1528,6 +1566,7 @@ def start_scheduler():
         _seed_oscillator_backtest_if_empty()
         _seed_spec_bars_aug7_if_missing()
         _seed_pattern_backtest_if_empty()
+        _seed_cipher_study_if_missing()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
