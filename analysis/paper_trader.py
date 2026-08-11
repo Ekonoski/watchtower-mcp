@@ -36,8 +36,13 @@ House rules encoded here, not approximated:
     the wick rule (a daily pattern is judged on daily bars, not 15m pokes).
   - R is computed against the SPEC's stop distance; fills are the trigger
     bar's close. Slippage lives in the gap between spec R and realized R.
+  - Cipher tag (2026-08-12 books onward): every swing spec carries
+    `osc_state` — the cipher components at its timeframe's last completed
+    bar, stamped at write time, AFTER curation. Measurement only; see the
+    doctrine block above cipher_ok().
 """
 import datetime as dt
+import json
 import logging
 import os
 import sys
@@ -133,6 +138,82 @@ def swing_geometry_ok(pattern: str, trigger: float, target: float,
         return False
     ratio = (target - trigger) / risk
     return ratio >= (0.95 if pattern in NECKLINE_CLASSES else 1.5)
+
+
+# ── Cipher tag: measurement only, NEVER a gate (Eric, 2026-08-11) ────────────
+# The cipher-at-episodes study (320,144 v6 episodes, run 2026-08-11) split
+# the weekly RSI-45-60 cohort 7x: +0.69R with mf-slope-up + MACD-hist-positive
+# + wt2 below overbought, vs +0.10R without (n=9,264 / 4,175). That prior was
+# graded on breakout-close entries; this desk buys the retest — so the tag
+# rides as a shadow label on every swing spec until ~30 resolved weekly
+# trades grade the live split, exactly like the confirmation shadow. It must
+# not touch arming, curation, fills, or exits during the measurement window —
+# a tiebreaker is a gate in disguise and would contaminate the experiment.
+# The COMPONENTS carry the signal; the blended 0-100 confluence score
+# sign-flips across timeframes (daily 40-58 bucket -0.64R, weekly +0.97R)
+# and is recorded for the archive but must never gate anything.
+CIPHER_WT_OVERBOUGHT = 53.0   # evaluate_signals' own overbought band edge
+
+
+def cipher_ok(mf_slope_pos, macd_hist_pos, wt2) -> "bool | None":
+    """Pure. The studied weekly-selector condition: money-flow slope up,
+    MACD histogram positive, wavetrend not overbought. Returns None when
+    any component is missing — a data hole is not a verdict, and the
+    ledger renders it as one (never as False)."""
+    if mf_slope_pos is None or macd_hist_pos is None or wt2 is None:
+        return None
+    return bool(mf_slope_pos) and bool(macd_hist_pos) \
+        and float(wt2) < CIPHER_WT_OVERBOUGHT
+
+
+def swing_osc_state(bars, timeframe: str) -> dict:
+    """Cipher components at the last COMPLETED bar of the spec's timeframe,
+    computed by the SAME code path the episode study graded (state_at over
+    compute_oscillator — not a lookalike). bars: daily_prices rows
+    (trade_date, open, high, low, close, volume), oldest first, as recorded
+    — reconstruction is not tape, so the tag only ever reads stored bars.
+    Weekly specs resample with drop_partial=True: at a 7:40 write the
+    current week is incomplete and must not leak into the tag.
+
+    ALWAYS returns a renderable dict: the tag, or
+    {"cipher_ok": None, "unavailable": reason} — a failed lookup is not a
+    neutral reading, and a spec without a tag must say so."""
+    try:
+        from analysis.cipher_episode_study import state_at, _frame
+        from analysis.oscillator import compute_oscillator, resample_weekly
+        if len(bars) < 80:
+            return {"cipher_ok": None,
+                    "unavailable": f"only {len(bars)} daily bars on record"}
+        df = _frame(bars)
+        if timeframe == "weekly":
+            df = resample_weekly(df, drop_partial=True)
+            if len(df) < 80:
+                return {"cipher_ok": None,
+                        "unavailable": f"only {len(df)} completed weeks on record"}
+        ind = compute_oscillator(df)
+        st = state_at(ind, len(ind) - 1)
+        return {
+            "asof": ind.index[-1].date().isoformat(),
+            "timeframe": timeframe,
+            "rsi": None if st["rsi"] is None else round(st["rsi"], 2),
+            "wt2": None if st["wt2"] is None else round(st["wt2"], 2),
+            "mf": None if st["mf"] is None else round(st["mf"], 2),
+            "mf_slope_pos": st["mf_slope_pos"],
+            "macd_hist_pos": st["macd_hist_pos"],
+            "confluence": st["confluence"],
+            "cipher_ok": cipher_ok(st["mf_slope_pos"], st["macd_hist_pos"],
+                                   st["wt2"]),
+        }
+    except Exception as e:
+        # Keep the whole reason (>=300 chars rule) — a tag that failed
+        # quietly would read as "cipher neutral" downstream.
+        return {"cipher_ok": None, "unavailable": str(e)[:300]}
+
+
+def cipher_tag_label(tag: dict) -> str:
+    """Pure. One word per spec for the admissions-style morning log line."""
+    v = (tag or {}).get("cipher_ok")
+    return "unavailable" if v is None else ("cipher_ok" if v else "cipher_not")
 
 
 def swing_class_ok(pattern: str, timeframe: str) -> bool:
@@ -250,6 +331,11 @@ def write_morning_specs():
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
+            # Cipher-tag column (2026-08-11): idempotent ensure, committed
+            # on its own so an early return can't roll the DDL back.
+            c.execute("ALTER TABLE paper_specs ADD COLUMN IF NOT EXISTS osc_state jsonb")
+        conn.commit()
+        with conn.cursor() as c:
             # book-scoped so a restart after the open doesn't mistake the
             # intraday book's rows for an already-written morning batch
             c.execute("""SELECT 1 FROM paper_specs
@@ -268,9 +354,12 @@ def write_morning_specs():
                                 gamma_flip, net_gex, regime
                          FROM gex_levels WHERE ticker = ANY(%s)
                          ORDER BY ticker, computed_at DESC""", (VENUE,))
-            specs, skips = build_gamma_specs(today, c.fetchall(), status)
+            gamma_specs, skips = build_gamma_specs(today, c.fetchall(), status)
             for tk, why_skip in skips:
                 log.info("[paper] %s: no gamma spec — %s", tk, why_skip)
+            # The cipher was studied on structure breakouts, not gamma
+            # mechanics — gamma specs carry no tag, deliberately.
+            specs = [s + (None,) for s in gamma_specs]
 
             # Swing book: breakout-retest limits (blind by design — control group).
             # Each row carries its own scan date so the freshness gate can
@@ -322,17 +411,37 @@ def write_morning_specs():
             if dropped:
                 log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
                          len(candidates), len(kept), dropped)
+            # Cipher tag per kept spec (measurement only — the tag is
+            # computed AFTER curation so it cannot influence which specs
+            # arm, even accidentally). ~15 history reads at 7:40; the same
+            # per-ticker cost the episode study paid.
+            tag_mix = {}
             for tk, tf, pat, _dir, trig, tgt, inv, score in kept:
+                c.execute("""SELECT trade_date, COALESCE(open, close),
+                                    COALESCE(high, close), COALESCE(low, close),
+                                    close, COALESCE(volume, 0)
+                             FROM daily_prices WHERE ticker=%s AND close IS NOT NULL
+                             ORDER BY trade_date""", (tk,))
+                tag = swing_osc_state(c.fetchall(), tf)
+                tag_mix[tk] = cipher_tag_label(tag)
                 specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
                               trig, inv, tgt, "armed",
                               f"{pat} {tf} breakout (score {score}); blind limit at the "
-                              f"trigger per retest doctrine; stop=pattern invalid {inv:g}"))
+                              f"trigger per retest doctrine; stop=pattern invalid {inv:g}",
+                              json.dumps(tag)))
+            if tag_mix:
+                from collections import Counter as _Counter
+                mix = _Counter(tag_mix.values())
+                log.info("[paper] swing cipher tags (measurement only, never a "
+                         "gate): %s [%s]",
+                         ", ".join(f"{k} {v}" for k, v in sorted(mix.items())),
+                         ", ".join(f"{tk}:{lbl}" for tk, lbl in sorted(tag_mix.items())))
 
         with conn.cursor() as c:
             c.executemany("""INSERT INTO paper_specs
                 (trade_date, book, ticker, direction, setup, entry_trigger, stop,
-                 target, status, rationale)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", specs)
+                 target, status, rationale, osc_state)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", specs)
         conn.commit()
         log.info("[paper] %d specs written for %s (binary_day=%s: %s)",
                  len(specs), today, binary_day, ", ".join(highs) or "none")
