@@ -23,7 +23,9 @@ House rules encoded here, not approximated:
     no put-wall dip-buys in v1 (the flip gate makes them rare and they are
     the easiest rule to get subtly wrong — excluded until the ledger earns
     the complexity).
-  - Geometry filter: target room must be >= 1.5x stop distance or no spec.
+  - Geometry filter: class-aware (2026-08-11) — neckline classes admit at
+    their native measured-move 1:1 (their priors were graded there);
+    every variable-geometry class needs target room >= 1.5x stop distance.
   - Binary gate: NFP / CPI / FOMC / PCE days mark every gamma spec
     skipped_binary at spec time. Other 10:00 ET High-impact releases block
     NEW entries 9:55-10:15 (loop-level).
@@ -111,6 +113,28 @@ SWING_TIMEFRAMES = ("weekly", "daily")
 SWING_MAX = 15
 
 
+# Neckline classes target the measured move: target−trigger EQUALS
+# trigger−invalid by construction, so the flat 1.5:1 gate could never admit
+# them (caught 2026-08-11 when Eric asked why the book was all higher-lows:
+# 91 armable iHS/double-bottom candidates that morning, scores to 83.0,
+# ZERO eligible — the "daily neckline experiment" had never actually been
+# running). Their v6 priors were graded AT native 1:1 geometry, so the
+# gate was double-punishing a trade shape the record already validated.
+NECKLINE_CLASSES = {"inverse_hs", "double_bottom"}
+
+
+def swing_geometry_ok(pattern: str, trigger: float, target: float,
+                      invalid: float) -> bool:
+    """Class-aware R:R gate, pure so it pins in a test. Neckline classes
+    admit at their native measured-move geometry (>=0.95 tolerates detector
+    rounding); every variable-geometry class keeps the 1.5:1 bar."""
+    risk = trigger - invalid
+    if risk <= 0:
+        return False
+    ratio = (target - trigger) / risk
+    return ratio >= (0.95 if pattern in NECKLINE_CLASSES else 1.5)
+
+
 def swing_class_ok(pattern: str, timeframe: str) -> bool:
     """The class gate, pure so it pins in a test. The SQL query filters by
     pattern AND timeframe independently; this is the joint filter that
@@ -152,6 +176,16 @@ def _touch(level, px):
     return abs(px - level) / level <= 0.001
 
 
+def _qlvl(p: float) -> float:
+    """Quantize a level for the spec's NAME only (half-point grid). The
+    intraday flip drifts by cents between sweeps, and since the one-shot
+    rule keys on (ticker, setup), each cent minted a "new" level —
+    2026-08-11's ledger carried ~30 flip_hold cancels that were one level
+    wobbling (766.75→767.77). Trigger/stop/target keep full precision;
+    only the identity is quantized."""
+    return round(p * 2) / 2.0
+
+
 def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
     """Playbook rules → paper_specs rows. The single source of truth: the live
     morning spec-writer, the intraday re-armer, and the replay harness
@@ -181,7 +215,7 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
             tgt = max(flip or 0, (cw + pw) / 2 if pw else 0)
             stop = round(cw * 1.0015, 2)
             if tgt and (cw - tgt) >= 1.5 * (stop - cw):
-                specs.append((trade_date, book, tk, "short", f"wall_fade_{cw:g}",
+                specs.append((trade_date, book, tk, "short", f"wall_fade_{_qlvl(cw):g}",
                               cw, stop, round(tgt, 2), status,
                               f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
                               f"entry=15m close back under wall after touch; "
@@ -190,7 +224,7 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
         if regime == "pinning" and flip and cw and flip < spot < cw:
             stop = round(flip * 0.9985, 2)
             if (cw - flip) >= 1.5 * (flip - stop):
-                specs.append((trade_date, book, tk, "long", f"flip_hold_{flip:g}",
+                specs.append((trade_date, book, tk, "long", f"flip_hold_{_qlvl(flip):g}",
                               flip, stop, cw, status,
                               f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
                               f"entry=touch then 15m close back above flip; "
@@ -202,7 +236,7 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
             stop = round(stack * 1.0015, 2)
             tgt = round(spot - (stack - spot), 2)  # symmetric room, capped by geometry
             if (stack - tgt) >= 1.5 * (stop - stack):
-                specs.append((trade_date, book, tk, "short", f"stack_fade_{stack:g}",
+                specs.append((trade_date, book, tk, "short", f"stack_fade_{_qlvl(stack):g}",
                               stack, stop, tgt, status,
                               f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
                               f"counter-trend entry, with-trend hold"))
@@ -255,10 +289,35 @@ def write_morning_specs():
                             "stale (latest %s, today %s) — the morning scan "
                             "didn't finish; the book shrinks rather than "
                             "arming yesterday's menu", n_stale, stale_latest, today)
+            # Tickers with an OPEN swing position never re-arm (2026-08-11:
+            # the writer re-armed COR at 320.58 while Monday's COR position
+            # was working at that exact entry — an honest fill would have
+            # been an undecided doubling).
+            c.execute("""SELECT DISTINCT s.ticker FROM paper_specs s
+                         JOIN paper_trades t ON t.spec_id = s.id
+                         WHERE s.book='swing' AND t.exited_at IS NULL""")
+            open_tks = {r[0] for r in c.fetchall()}
             candidates = [(tk, tf, pat, d, float(trig), float(tgt), float(inv), score)
                           for tk, tf, pat, d, trig, tgt, inv, score in rows
-                          if swing_class_ok(pat, tf)
-                          and (float(tgt) - float(trig)) >= 1.5 * (float(trig) - float(inv))]
+                          if tk not in open_tks
+                          and swing_class_ok(pat, tf)
+                          and swing_geometry_ok(pat, float(trig), float(tgt), float(inv))]
+            for tk in sorted(open_tks & {r[0] for r in rows}):
+                log.info("[paper] swing: %s skipped — position already open", tk)
+            # Class-admission audit — assert admission, not just detection
+            # (2026-08-11: iHS/double-bottom sat allowlisted-but-unarmable
+            # for days and nothing said so). One line, every morning.
+            from collections import Counter
+            band = Counter(f"{r[2]}/{r[1]}" for r in rows)
+            admit = Counter(f"{c_[2]}/{c_[1]}" for c_ in candidates)
+            log.info("[paper] class admissions (in-band -> eligible): %s",
+                     ", ".join(f"{k} {band[k]}->{admit.get(k, 0)}"
+                               for k in sorted(band)))
+            zero_admit = [k for k in band if band[k] >= 5 and admit.get(k, 0) == 0]
+            if zero_admit:
+                log.warning("[paper] class(es) with candidates but ZERO "
+                            "eligible: %s — if this persists, a gate is "
+                            "structurally excluding them", ", ".join(zero_admit))
             kept, dropped = curate_swing(candidates)
             if dropped:
                 log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
@@ -559,6 +618,44 @@ def _set_confirm(conn, tid, px, ts, status):
         c.execute("""UPDATE paper_trades SET confirm_px=%s, confirm_at=%s,
                      confirm_status=%s WHERE id=%s""", (px, ts, status, tid))
     conn.commit()
+
+
+def persist_closing_bars():
+    """One persistence-only pass after the close (scheduled ~16:07 ET).
+
+    The loop's last pass runs by 15:58 — before the 15:45–16:00 bar
+    completes — so the day's FINAL bar never reached paper_spec_bars
+    (2026-08-10: COR ran three points into the close and the record ended
+    at the 15:45 bar; Eric's chart said 325, ours said 321.85). Bars are
+    persisted whenever seen; the closing bar is the one most worth seeing.
+    No fills, no exits, no state changes — persistence only."""
+    now = dt.datetime.now(ET)
+    if now.weekday() >= 5:
+        return
+    today = now.date()
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as c:
+            c.execute("""SELECT DISTINCT s.ticker
+                         FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
+                         WHERE s.trade_date=%s
+                            OR (s.status='triggered' AND t.exited_at IS NULL)""",
+                      (today,))
+            tks = [r[0] for r in c.fetchall()]
+        n_ok = 0
+        for tk in tks:
+            bars = _last_closed_15m(tk)
+            if not bars:
+                continue
+            try:
+                _persist_spec_bars(conn, tk, today, bars)
+                n_ok += 1
+            except Exception:
+                conn.rollback()
+                log.exception("[paper] closing-bar persist failed for %s", tk)
+        log.info("[paper] closing-bar pass: %d/%d tickers persisted", n_ok, len(tks))
+    finally:
+        conn.close()
 
 
 def run_trigger_loop():

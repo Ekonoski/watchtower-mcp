@@ -1394,6 +1394,19 @@ def start_scheduler():
         id="paper_loop_market", replace_existing=True,
     )
 
+    # Closing-bar capture (2026-08-11): the loop's last pass runs by 15:58,
+    # before the final 15m bar completes — one persistence-only pass at
+    # 16:07 records the day's most important bar for every tracked ticker.
+    def _paper_closing_bars():
+        from analysis.paper_trader import persist_closing_bars
+        persist_closing_bars()
+
+    scheduler.add_job(
+        _paper_closing_bars,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="7", timezone=et),
+        id="paper_closing_bars", replace_existing=True,
+    )
+
     # Morning gamma sweep — 7:30 AM ET, full universe on overnight-settled
     # OI. The authoritative map for the day, ready while premarket prep is
     # underway. 7:30 is the practical floor: OCC/Polygon's overnight OI
