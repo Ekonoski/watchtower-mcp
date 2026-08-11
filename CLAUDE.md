@@ -156,6 +156,22 @@ Rendering doctrine, same spirit as the rest of this file:
   roughly two months of live data (~30+ resolved trades per the small-n
   rule) — not before.** Until then the desk stays paper and the ledger
   stays in underlying R.
+- **Assert admission, not just detection** (2026-08-11, the geometry-gate
+  lockout): inverse_hs and double_bottom sat on the SWING_CLASSES allowlist
+  scoring in the 80s while the flat 1.5:1 geometry gate — impossible for a
+  measured-move target, whose R:R is 1.0 by construction — silently made
+  them unarmable. Two days of all-higher_low books read as "what the
+  scanner found" until Eric asked "just higher lows?". Every unit was
+  correct; the integration property was asserted nowhere. The rules that
+  came out of it: every allowlisted class carries a declared NATIVE
+  geometry that `tests/test_class_admission.py` proves can pass its gates
+  (a class that can never fire fails CI, not a human's attention); the
+  writer logs per-class in-band→eligible admissions every morning and
+  WARNs on candidates-with-zero-eligible; and the ledger's "armed today"
+  states the class mix, so a monoculture renders as a question. Same
+  family as `_social_block`: zero fills from armed specs is the market
+  declining — zero specs ever armed is the system declining, and only the
+  first kind was being watched.
 - **The cost of confirmation is measured, not argued** (decided 2026-08-08:
   the swing book keeps resting-limit fills at the trigger). Every touch fill
   also records its confirmation shadow — the completed-15m-close entry a
