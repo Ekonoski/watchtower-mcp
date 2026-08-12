@@ -779,6 +779,15 @@ def run_trigger_loop():
         except Exception:
             conn.rollback()
             log.exception("[paper] gamma_iday arming failed — managing existing specs")
+        try:
+            # Binary-day shadow: bars + 10:30 decision + grade for today's
+            # skipped_binary specs. Runs BEFORE the armed/triggered query —
+            # a pure binary day has no live rows, and the shadow is the
+            # only thing keeping that day's record from being empty.
+            run_binary_shadow(conn, today, now)
+        except Exception:
+            conn.rollback()
+            log.exception("[paper] binary shadow failed — live loop unaffected")
         with conn.cursor() as c:
             c.execute("""SELECT s.id, s.book, s.ticker, s.direction, s.setup,
                                 s.entry_trigger, s.stop, s.target, s.status,
@@ -942,3 +951,224 @@ def _cancel(conn, sid, note):
         c.execute("UPDATE paper_specs SET status='cancelled', "
                   "rationale = rationale || ' | cancelled: ' || %s WHERE id=%s", (note, sid))
     conn.commit()
+
+
+# ── Binary-day shadow re-arm (Eric, 2026-08-12, the CPI post-mortem) ─────────
+# The binary gate skips the WHOLE day; the print resolves by mid-morning.
+# On 2026-08-12 every recorded gex snapshot from 9:35 on read pinning and
+# none of the four skipped triggers ever printed — the skip cost 0R, but the
+# desk only knew from snapshots because the watcher never subscribed to the
+# skipped tickers. Whether the full-day skip over-pays is measured, not
+# argued — the confirmation-shadow pattern: skipped_binary specs
+# shadow-re-arm at 10:30 ET if the recorded 10:30 board still shows their
+# level, then grade by the live gamma rules from recorded bars. The shadow
+# never places a trade and never touches spec status; promotion (or the
+# skip's vindication) waits on ~30 shadow-resolved specs, small-n rule.
+
+SHADOW_REARM_TIME = dt.time(10, 30)
+SHADOW_FRESH_MIN = IDAY_FRESH_MIN   # same freshness bar as the intraday armer
+# 0.25%: the flip's cent-wobble between sweeps matches (716.65 vs 716.09 —
+# the same level _qlvl would misname across its half-point grid); a real
+# wall migration (775 -> 780, 0.65%) does not.
+SHADOW_LEVEL_TOL = 0.0025
+
+
+def shadow_rearm_decision(ticker, setup, trigger, live_specs,
+                          tol=SHADOW_LEVEL_TOL):
+    """Pure. Does the 10:30 board still show this skipped spec's level?
+
+    live_specs: build_gamma_specs output off the recorded 10:30 board — so
+    the regime check is implicit (a wall_fade only exists under pinning) and
+    every arming gate (magnitude, collapsed magnet, geometry) is re-applied
+    by the same code the live books use. A match is same ticker + same setup
+    FAMILY + trigger within tol; the family compares because the quantized
+    setup NAME calls a 0.08% flip wobble a different level (see _qlvl) and
+    the shadow asks about the level, not its name.
+
+    Returns (rearmed, reason) — the reason names itself in both directions,
+    so a no-re-arm ledger row is a decision, never a blank."""
+    fam = setup.rsplit("_", 1)[0]
+    for sp in live_specs:
+        if sp[2] != ticker:
+            continue
+        live_setup, live_trig = sp[4], float(sp[5])
+        if live_setup.rsplit("_", 1)[0] == fam \
+                and abs(live_trig - trigger) / trigger <= tol:
+            return True, (f"level held at 10:30 — board shows {live_setup} "
+                          f"trigger {live_trig:g} vs spec {trigger:g}")
+    return False, ("level absent from the 10:30 board — wall/flip moved or "
+                   "regime changed; the morning's trade no longer existed")
+
+
+def shadow_outcome(direction, trig, stop, tgt, bars):
+    """Pure. Grade a shadow-re-armed gamma spec by the live book's own
+    rules, replayed from recorded bars. bars: [(ts, open, close, high, low)]
+    completed regular-session 15m bars ending AFTER the 10:30 decision,
+    oldest first (the caller applies _rth and the post-decision cut).
+
+    Mirrors run_trigger_loop's gamma path exactly: entry is a touch (bar
+    range spans the trigger, or a close within 0.1%) followed by the first
+    bar CLOSING back through — at that bar's close, the touch bar itself
+    counting when its own close is back through; no entries on bars ending
+    at/after 14:30 ET (the live no-new clock). Exits: 15m close beyond the
+    stop (at that close) or a target touch (at the target), decided only on
+    bars the live loop could decide on (ending by 15:45); an open trade
+    flattens eod_flat at the close of the last such bar — the same bar the
+    live 15:55 pass reads — but only if the record proves the day reached
+    the flat window (a bar starting >= 15:30 exists). R from the ACTUAL
+    shadow entry. Declared simplification: each shadow grades alone — the
+    live two-stop book halt is not simulated (a shadow book of at most a
+    few specs rarely reaches it, and cross-spec state would make the
+    replay order-dependent).
+
+    Returns {entered_at, entry_px, exited_at, exit_px, exit_reason,
+    r_multiple}. entered_at None = the trigger never filled ("the skip cost
+    0R", from tape). exited_at None with an entry = the record ended
+    mid-trade — a hole, never graded as a flat close."""
+    sign = 1 if direction == "long" else -1
+    out = {"entered_at": None, "entry_px": None, "exited_at": None,
+           "exit_px": None, "exit_reason": None, "r_multiple": None}
+    touched = False
+    last_decidable = None
+    for ts, _bop, bc, bhi, blo in bars:
+        bar_end = ts + dt.timedelta(minutes=15)
+        if bar_end.time() > dt.time(15, 45) or ts.time() > dt.time(15, 30):
+            continue                       # the live loop never decides here
+        last_decidable = (ts, bc)
+        if out["entered_at"] is None:
+            touched = touched or (blo <= trig <= bhi) or _touch(trig, bc)
+            if touched and sign * (bc - trig) > 0 \
+                    and bar_end.time() < IDAY_LAST_NEW:
+                out["entered_at"], out["entry_px"] = bar_end, bc
+            continue
+        if sign * (bc - stop) < 0:
+            out["exited_at"], out["exit_px"] = bar_end, bc
+            out["exit_reason"] = "stop"
+        elif (direction == "long" and bhi >= tgt) \
+                or (direction == "short" and blo <= tgt):
+            out["exited_at"], out["exit_px"] = bar_end, tgt
+            out["exit_reason"] = "target"
+        if out["exited_at"] is not None:
+            break
+    if out["entered_at"] is not None and out["exited_at"] is None \
+            and last_decidable is not None \
+            and last_decidable[0].time() >= dt.time(15, 30):
+        out["exited_at"] = last_decidable[0] + dt.timedelta(minutes=15)
+        out["exit_px"], out["exit_reason"] = last_decidable[1], "eod_flat"
+    if out["exited_at"] is not None:
+        r_dist = abs(out["entry_px"] - stop) or 0.01
+        out["r_multiple"] = round(
+            sign * (out["exit_px"] - out["entry_px"]) / r_dist, 2)
+    return out
+
+
+def _ensure_shadow_table(conn):
+    """Idempotent, committed on its own (the osc_state pattern): the loop
+    must not depend on the migration having reached the live database."""
+    with conn.cursor() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS paper_shadow_rearm (
+            spec_id     bigint PRIMARY KEY REFERENCES paper_specs(id),
+            decided_at  timestamptz NOT NULL,
+            rearmed     boolean,
+            reason      text NOT NULL,
+            entered_at  timestamptz,
+            entry_px    numeric,
+            exited_at   timestamptz,
+            exit_px     numeric,
+            exit_reason text,
+            r_multiple  numeric,
+            updated_at  timestamptz NOT NULL DEFAULT now())""")
+        c.execute("ALTER TABLE paper_shadow_rearm ENABLE ROW LEVEL SECURITY")
+    conn.commit()
+
+
+def run_binary_shadow(conn, today, now):
+    """Bars, decision, grade — for today's skipped_binary specs. Called from
+    every trigger-loop pass; every step idempotent; reads paper_specs but
+    never writes it (the shadow is a measurement riding beside the skip)."""
+    with conn.cursor() as c:
+        c.execute("""SELECT id, ticker, direction, setup, entry_trigger,
+                            stop, target
+                     FROM paper_specs
+                     WHERE trade_date=%s AND status='skipped_binary'""",
+                  (today,))
+        specs = c.fetchall()
+    if not specs:
+        return
+    _ensure_shadow_table(conn)
+    # Watch the tape. Skipped specs never reach the main loop, so without
+    # this a binary day records NOTHING for its own tickers and the
+    # counterfactual is unanswerable from the desk's own record.
+    bars_by_tk = {}
+    for tk in sorted({s[1] for s in specs}):
+        bars = _last_closed_15m(tk)
+        bars_by_tk[tk] = bars
+        if not bars:
+            continue
+        try:
+            _persist_spec_bars(conn, tk, today, bars)
+        except Exception:
+            conn.rollback()
+            log.exception("[paper] shadow bar persist failed for %s — "
+                          "loop continues, the record has a hole", tk)
+    if now.time() < SHADOW_REARM_TIME:
+        return
+    decision_ts = dt.datetime.combine(today, SHADOW_REARM_TIME, tzinfo=ET)
+    with conn.cursor() as c:
+        c.execute("SELECT spec_id, rearmed FROM paper_shadow_rearm "
+                  "WHERE spec_id = ANY(%s)", ([s[0] for s in specs],))
+        decided = dict(c.fetchall())
+    undecided = [s for s in specs if s[0] not in decided]
+    if undecided:
+        # The 10:30 decision, stamped once, from the RECORDED board — the
+        # freshest gex_intraday row at or before 10:30, same staleness bar
+        # as the live armer — so the decision replays offline byte-for-byte.
+        with conn.cursor() as c:
+            c.execute("""SELECT DISTINCT ON (ticker) ticker, spot, call_wall,
+                                put_wall, gamma_flip, net_gex, regime
+                         FROM gex_intraday
+                         WHERE ticker = ANY(%s) AND ts <= %s
+                           AND ts > %s - %s * interval '1 minute'
+                         ORDER BY ticker, ts DESC""",
+                      (VENUE, decision_ts, decision_ts, SHADOW_FRESH_MIN))
+            board = c.fetchall()
+        board_tks = {b[0] for b in board}
+        live_specs, _ = build_gamma_specs(today, board, "shadow") \
+            if board else ([], [])
+        for sid, tk, direction, setup, trig, _stop, _tgt in undecided:
+            if tk not in board_tks:
+                rearmed, reason = None, (
+                    f"10:30 board unavailable — no gex_intraday row for "
+                    f"{tk} within {SHADOW_FRESH_MIN} min of the decision")
+            else:
+                rearmed, reason = shadow_rearm_decision(
+                    tk, setup, float(trig), live_specs)
+            with conn.cursor() as c:
+                c.execute("""INSERT INTO paper_shadow_rearm
+                             (spec_id, decided_at, rearmed, reason)
+                             VALUES (%s,%s,%s,%s)
+                             ON CONFLICT (spec_id) DO NOTHING""",
+                          (sid, decision_ts, rearmed, reason))
+            conn.commit()
+            decided[sid] = rearmed
+            log.info("[paper] shadow decision %s %s: rearmed=%s — %s",
+                     tk, setup, rearmed, reason)
+    # Grade re-armed shadows: pure recompute from recorded bars, upserted
+    # every pass — no incremental state to corrupt across restarts.
+    for sid, tk, direction, _setup, trig, stop, tgt in specs:
+        if decided.get(sid) is not True:
+            continue
+        live = [b for b in _rth(bars_by_tk.get(tk, []))
+                if b[0] + dt.timedelta(minutes=15) > decision_ts]
+        out = shadow_outcome(direction, float(trig), float(stop),
+                             float(tgt), live)
+        with conn.cursor() as c:
+            c.execute("""UPDATE paper_shadow_rearm
+                         SET entered_at=%s, entry_px=%s, exited_at=%s,
+                             exit_px=%s, exit_reason=%s, r_multiple=%s,
+                             updated_at=now()
+                         WHERE spec_id=%s""",
+                      (out["entered_at"], out["entry_px"], out["exited_at"],
+                       out["exit_px"], out["exit_reason"],
+                       out["r_multiple"], sid))
+        conn.commit()
