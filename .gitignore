@@ -8,6 +8,7 @@ venv/
 *.log
 .claude/*
 !.claude/skills/
+!.claude/settings.json
 
 # Generated pipeline artifacts (regenerated daily — do not commit updates)
 daily_brief.md
