@@ -13,7 +13,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from analysis.paper_trader import _entry_geometry_ok  # noqa: E402
+from analysis.paper_trader import (  # noqa: E402
+    _entry_geometry_ok, native_geometry_ratio, swing_spec_pattern,
+)
 
 
 def main():
@@ -43,8 +45,29 @@ def main():
     ok, r = _entry_geometry_ok("short", 42.0, 53.0, 40.0)
     assert not ok, (ok, r)
 
+    # ATRC, 2026-08-12: the re-check that forgot admission had gone
+    # class-aware. double_bottom weekly, trigger 42.675, stop 25.36,
+    # target 59.99 — native measured-move 1:1. The reclaim entry printed
+    # 42.69, a 1.5-CENT premium, and the flat 1.5 demand cancelled it as
+    # "1.00:1 vs 1.5" — a bar no neckline class can ever clear. Re-checked
+    # at the class's own ratio, the entry survives; the pattern comes from
+    # the setup name, the only place the spec records it.
+    pat = swing_spec_pattern("retest_double_bottom_weekly")
+    assert pat == "double_bottom", pat
+    req = native_geometry_ratio(pat)
+    ok, r = _entry_geometry_ok("long", 42.69, 25.36, 59.99, req)
+    assert ok and round(r, 2) == 1.00, (ok, r)
+    # A premium that genuinely collapses even the native 1:1 still cancels
+    # — the gate is class-aware, not gone.
+    ok, r = _entry_geometry_ok("long", 45.00, 25.36, 59.99, req)
+    assert not ok and round(r, 2) == 0.76, (ok, r)
+    # Variable-geometry classes keep the 1.5 bar through the same path.
+    assert native_geometry_ratio(swing_spec_pattern(
+        "retest_higher_low_daily")) == 1.5
+
     print("ok — TNDM's 0.79:1 refused, modest premiums pass, 1.5 boundary "
-          "passes, shorts mirror")
+          "passes, shorts mirror, and ATRC's 1:1 measured-move reclaim "
+          "survives at its class's native ratio")
 
 
 if __name__ == "__main__":

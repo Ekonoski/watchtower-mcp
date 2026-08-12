@@ -128,6 +128,16 @@ SWING_MAX = 15
 NECKLINE_CLASSES = {"inverse_hs", "double_bottom"}
 
 
+def native_geometry_ratio(pattern: str) -> float:
+    """Pure. The R:R a class is admitted at — and therefore the R:R every
+    later geometry re-check must demand. ONE source: on 2026-08-12 the
+    reclaim re-check still carried its own flat 1.5 while admission had
+    gone class-aware, and ATRC's 1.5-cent reclaim premium was refused at
+    "1.00:1 vs 1.5" on a measured-move class the writer admits at 1:1 —
+    a gate a neckline class could never pass, entry-side this time."""
+    return 0.95 if pattern in NECKLINE_CLASSES else 1.5
+
+
 def swing_geometry_ok(pattern: str, trigger: float, target: float,
                       invalid: float) -> bool:
     """Class-aware R:R gate, pure so it pins in a test. Neckline classes
@@ -137,7 +147,15 @@ def swing_geometry_ok(pattern: str, trigger: float, target: float,
     if risk <= 0:
         return False
     ratio = (target - trigger) / risk
-    return ratio >= (0.95 if pattern in NECKLINE_CLASSES else 1.5)
+    return ratio >= native_geometry_ratio(pattern)
+
+
+def swing_spec_pattern(setup: str) -> str:
+    """Pure. 'retest_double_bottom_weekly' -> 'double_bottom'. The spec row
+    carries no pattern column; the setup name is the record, and patterns
+    contain underscores, so strip the prefix and the timeframe suffix."""
+    s = setup[len("retest_"):] if setup.startswith("retest_") else setup
+    return s.rsplit("_", 1)[0]
 
 
 # ── Cipher tag: measurement only, NEVER a gate (Eric, 2026-08-11) ────────────
@@ -614,12 +632,15 @@ def _entry_geometry_ok(direction: str, entry: float, stop: float,
                        tgt: float, ratio: float = 1.5):
     """Geometry must survive the entry (Eric, 2026-08-08: same standard,
     no special cases — there will be plenty of entries). The spec-writer
-    demands reward ≥ 1.5× risk at the TRIGGER; a violent reclaim premium
-    can quietly collapse that (TNDM 2026-08-07: 2.1:1 at the 18.16 trigger
-    became 0.79:1 at the real 19.62 entry). Re-checked at the actual fill
-    price on any entry that isn't the trigger; collapsed geometry cancels
-    instead of filling, and the refusal stays gradeable from recorded bars.
-    Returns (ok, actual_ratio)."""
+    demands the class's NATIVE ratio at the TRIGGER; a violent reclaim
+    premium can quietly collapse that (TNDM 2026-08-07: 2.1:1 at the 18.16
+    trigger became 0.79:1 at the real 19.62 entry). Re-checked at the
+    actual fill price on any entry that isn't the trigger, against the
+    SAME ratio the spec qualified on — callers pass
+    native_geometry_ratio(pattern); demanding a flat 1.5 here refused
+    ATRC's 1.5-cent reclaim premium on a 1:1 measured-move class
+    (2026-08-12). Collapsed geometry cancels instead of filling, and the
+    refusal stays gradeable from recorded bars. Returns (ok, actual_ratio)."""
     sign = 1 if direction == "long" else -1
     reward, risk = sign * (tgt - entry), sign * (entry - stop)
     if risk <= 0:
@@ -856,15 +877,18 @@ def run_trigger_loop():
                     entered = touched and (sign * (close - trig) > 0)  # 15m close back through
                     entry_fill, kind = close, "close_through"
                 if entered and kind == "reclaim":
-                    # The reclaim premium repriced the trade — the 1.5:1
-                    # the spec qualified on must survive the actual entry.
+                    # The reclaim premium repriced the trade — the geometry
+                    # the spec QUALIFIED on must survive the actual entry:
+                    # the class's native ratio, not a flat 1.5 (ATRC,
+                    # 2026-08-12 — see native_geometry_ratio).
+                    req = native_geometry_ratio(swing_spec_pattern(setup))
                     ok, ratio = _entry_geometry_ok(direction, entry_fill,
-                                                   stop, tgt)
+                                                   stop, tgt, req)
                     if not ok:
                         _cancel(conn, sid,
                                 f"reclaim_geometry — {ratio:.2f}:1 at entry "
                                 f"{entry_fill:g} (target {tgt:g}, stop {stop:g}); "
-                                f"spec demanded 1.5:1")
+                                f"spec demanded {req:g}:1")
                         log.info("[paper] REFUSE %s %s reclaim @ %.2f — "
                                  "geometry %.2f:1", book, tk, entry_fill, ratio)
                         continue
