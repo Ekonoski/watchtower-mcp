@@ -207,6 +207,39 @@ Rendering doctrine, same spirit as the rest of this file:
   hole-handling, and — by signature — the arming pipeline's blindness
   to the tag.
 
+- **The binary-day skip carries its own shadow** (decided 2026-08-12, the
+  CPI post-mortem — Eric watched the 8:30 print resolve by mid-morning and
+  asked what the skip had cost; the honest answer had to be graded off
+  15-minute gex snapshots because the bar watcher never subscribes to
+  skipped specs). Whether the full-day binary skip over-pays is measured,
+  not argued: every `skipped_binary` spec shadow-re-arms at 10:30 ET if the
+  recorded 10:30 board (freshest `gex_intraday` row ≤10:30, same ≤25-min
+  staleness bar as the live armer) still shows its level — matched through
+  `build_gamma_specs` on live code (regime and every arming gate re-applied)
+  as same setup family + trigger within 0.25%, the LEVEL and not the
+  quantized name (the flip's cent-wobble is one level; a 775→780 wall walk
+  is not). Re-armed shadows grade by the live gamma rules from recorded
+  bars — skipped tickers' bars now persist to `paper_spec_bars` — wick rule
+  on entries and stops, 14:30 no-new clock, eod_flat on the bar the 15:55
+  pass reads, R from the actual shadow entry. The shadow never arms, fills,
+  or cancels anything live (`tests/test_binary_shadow.py` pins this by
+  signature, plus 2026-08-12's boards as the permanent fixture). On a
+  binary day the ledger prints, beside the skips: shadow re-arms, shadow
+  fills, and shadow R — `rearmed` NULL (board unavailable) and an exit-less
+  entry (record cut mid-trade) render as data holes, never as zeros — plus
+  the running shadow record with counts (small-n rule). "4 skipped (CPI) ·
+  4 shadow-rearmed · 0 shadow fills · skip cost 0R" is the expected quiet
+  row, and it is evidence. Promotion gate: ~30 shadow-resolved specs, then
+  mid-morning re-arming goes live or the full-day skip stands vindicated.
+  Canonical query:
+
+  ```sql
+  SELECT s.ticker, s.setup, r.rearmed, r.reason, r.entered_at, r.entry_px,
+         r.exit_reason, r.r_multiple
+  FROM paper_shadow_rearm r JOIN paper_specs s ON s.id = r.spec_id
+  WHERE s.trade_date = CURRENT_DATE;
+  ```
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
