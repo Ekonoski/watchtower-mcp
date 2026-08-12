@@ -124,11 +124,16 @@ Rendering doctrine, same spirit as the rest of this file:
   **Reconstruction is not tape**: any backward-looking price must come
   from recorded bars, never refetched or inferred history (the fabricated
   TNDM "18.60" reached a card labeled *real* before chart verification
-  killed it). **Geometry must survive the entry** (2026-08-08): the 1.5:1
+  killed it). **Geometry must survive the entry** (2026-08-08): the ratio
   the spec qualified on is re-checked at the actual fill price on reclaim
   entries — a violent premium can collapse 2.1:1 to 0.79:1 (TNDM) —
   and collapsed geometry cancels (`reclaim_geometry`), the refusal
-  gradeable from recorded bars.
+  gradeable from recorded bars. The re-check demands the class's NATIVE
+  ratio (`native_geometry_ratio`, one source with admission), not a flat
+  1.5 — learned 2026-08-12 when ATRC's 1.5-cent reclaim premium on a 1:1
+  measured-move class was refused at "1.00:1 vs 1.5", a bar no neckline
+  class can ever clear; the 2026-08-11 admission fix had left the
+  entry-side gate class-blind.
   One rule for winners and losers alike — any convention change renders in
   the ledger the day it ships.
 - **The swing book trades positive-prior classes only** (2026-08-08):
