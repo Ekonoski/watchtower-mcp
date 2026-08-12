@@ -39,9 +39,9 @@ if _SENTRY_DSN:
 # instructions — so any chat, device, or future model that talks to
 # Watchtower thinks with our rules instead of re-learning them.
 _DOCTRINE = """\
-Watchtower is Eric's personal trading system. Its data is 15-minute
-delayed until the real-time upgrade; nightly feeds are stamped with
-their session. Follow these house rules when reading its tools:
+Watchtower is Eric's personal trading system. Its Polygon feed is
+REAL-TIME (upgraded 2026-08-12 — quotes are up-to-the-second when
+pulled); nightly feeds are stamped with their session. Follow these house rules when reading its tools:
 
 MAGNITUDE RULE (gamma): net GEX in the billions = dealer force is real
 and the walls/flip are load-bearing levels. Net GEX around +/-0.0Xbn =
@@ -371,7 +371,7 @@ def watchtower_run_screen(
 
 @mcp.tool()
 def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: bool = False) -> str:
-    """Scan for intraday setups forming right now using live Polygon data (15-min delayed on Starter tier).
+    """Scan for intraday setups forming right now using live Polygon data (real-time feed).
 
     Bullish: GAP_AND_GO, INTRADAY_BREAKOUT, VWAP_BREAKOUT, FLUSH_REVERSAL, GAP_REVERSAL
     Bearish: VWAP_REJECTION, INTRADAY_BREAKDOWN, GAP_DOWN_CONFIRM, DISTRIBUTION
@@ -393,7 +393,7 @@ def watchtower_intraday_scan(top_n: int = 10, ticker: str = "", with_synthesis: 
     # Check market hours from first result
     is_market_hours = results[0].get("is_market_hours", True) if results else True
     minutes_elapsed = results[0].get("minutes_elapsed", 0) if results else 0
-    header = "**INTRADAY SCAN** (Live Polygon — 15-min delayed)"
+    header = "**INTRADAY SCAN** (Live Polygon — real-time)"
     if not is_market_hours:
         header += " ⚠️ Market closed — showing last session data"
     else:
@@ -795,8 +795,7 @@ def watchtower_get_social_buzz(ticker: str) -> str:
 
     Returns what traders are saying on X right now — sentiment direction,
     buzz level, a 1-sentence summary, and any notable narrative driving chatter.
-    This is genuinely real-time even on our delayed data setup since Grok
-    queries X directly.
+    This is real-time — Grok queries X directly.
     """
     ticker = ticker.upper().strip()
     try:
@@ -1049,7 +1048,7 @@ def watchtower_momentum(scanner: str = "gappers", top_n: int = 15) -> str:
                     "Passes run every 10 minutes in-session (first at 8:50 AM ET).")
         lines = [f"**Momentum — {scanner}** ({len(rows)} shown, "
                  f"as of {data.get('as_of') or 'n/a'}, {data.get('session') or ''}; "
-                 "data delayed per plan)", ""]
+                 "real-time feed)", ""]
         for r in rows:
             flt = (f"{r['float_shares']/1e6:.1f}M" if r.get("float_shares") else "?")
             rv = f"{r['relvol']:.1f}x" if r.get("relvol") else "?"
@@ -1216,8 +1215,8 @@ def watchtower_option_ticket(ticker: str) -> str:
     a RUNNER leg sized to the full measured resolution (2x p75) — plus a
     vertical spread built from the pattern's own entry/target strikes,
     IV rich/cheap context, open-interest liquidity gating, and an
-    earnings-inside-the-window flag. Prices are 15-min delayed snapshot
-    data — decision support; the broker's screen is the final price check.
+    earnings-inside-the-window flag. Prices are real-time snapshots —
+    decision support; the broker's screen is the final price check.
     """
     try:
         from analysis.options_picker import build_ticket
@@ -1288,8 +1287,8 @@ def watchtower_option_ticket(ticker: str) -> str:
         if t.get("oi_note"):
             lines.append(f"- ⚠️ {t['oi_note']}")
         lines.append("")
-        lines.append("Prices are 15-min delayed last-trade/close — confirm live "
-                     "pricing at your broker before entering.")
+        lines.append("Prices are real-time last-trade/close — still confirm "
+                     "at your broker before entering.")
         return "\n".join(lines)
     except Exception as e:
         return f"Error building option ticket for {ticker}: {e}"
