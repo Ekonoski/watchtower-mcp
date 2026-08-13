@@ -1407,6 +1407,22 @@ def start_scheduler():
         id="paper_closing_bars", replace_existing=True,
     )
 
+    # FVG snapshot (2026-08-13): imbalance zones persisted every morning so
+    # the gamma board — and any session without the live engine — reads
+    # them from the record (fvg_runs / fvg_zones) like every other board
+    # input. 7:35: after the overnight daily bars have settled, before the
+    # 7:40 spec writer reads the world. The Aug 13 board shipped this
+    # section as a declared hole; persistence is the fix, not reachability.
+    def _fvg_snapshot():
+        from analysis.fvg import write_fvg_snapshot
+        write_fvg_snapshot()
+
+    scheduler.add_job(
+        _fvg_snapshot,
+        CronTrigger(day_of_week="mon-fri", hour="7", minute="35", timezone=et),
+        id="fvg_snapshot_morning", replace_existing=True,
+    )
+
     # Morning gamma sweep — 7:30 AM ET, full universe on overnight-settled
     # OI. The authoritative map for the day, ready while premarket prep is
     # underway. 7:30 is the practical floor: OCC/Polygon's overnight OI

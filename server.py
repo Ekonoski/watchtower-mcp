@@ -1207,6 +1207,64 @@ def watchtower_gamma(ticker: str = "SPY") -> str:
 
 
 @mcp.tool()
+def watchtower_fvg(ticker: str = "") -> str:
+    """
+    Fair value gaps (imbalances) from the persisted morning snapshot —
+    displacement-quality daily zones for the gamma venues, the active
+    watchlist, and every open paper position. A gap is a LEVEL WITH
+    EDGES: respected it acts as S/R; CLOSED through, it inverts and the
+    dead-zone retest is the failed-reclaim entry. Zones are computed each
+    morning (7:35 ET) from Watchtower's own recorded daily bars and read
+    from the record, so they are available whether or not the engine is.
+
+    ticker="" returns every ticker's freshest read; a ticker returns just
+    its zones. Every row stamps its own bars_through date — check it
+    before leaning on a zone. "0 open zones" is a recorded quiet read;
+    "no snapshot on record" means the sweep has not covered the ticker.
+    """
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as c:
+                c.execute("""
+                    SELECT r.ticker, r.bars_through, r.n_bars, r.n_zones,
+                           z.side, z.status, z.top, z.bottom, z.age_bars,
+                           z.formed, z.inverted_on
+                    FROM (SELECT DISTINCT ON (ticker) *
+                          FROM fvg_runs ORDER BY ticker, computed_at DESC) r
+                    LEFT JOIN fvg_zones z ON z.run_id = r.id
+                    WHERE (%s = '' OR r.ticker = %s)
+                    ORDER BY r.ticker, z.age_bars""",
+                    (ticker.upper().strip(), ticker.upper().strip()))
+                rows = c.fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            who = ticker.upper().strip() or "any ticker"
+            return (f"No FVG snapshot on record for {who} — the 7:35 sweep "
+                    f"has not covered it. That is a hole, not an empty read.")
+        lines = []
+        cur = None
+        for tk, through, n_bars, n_zones, side, status, top, bot, age, formed, inv in rows:
+            if tk != cur:
+                cur = tk
+                lines.append(f"\n**{tk}** — bars through {through} "
+                             f"({n_bars} bars): "
+                             + (f"{n_zones} zone(s)" if n_zones else
+                                "0 open zones — a recorded quiet read"))
+            if side is not None:
+                inv_txt = f", inverted {inv}" if inv else ""
+                lines.append(f"  - {side} · {status} · {bot}–{top} · formed "
+                             f"{formed} ({age} bars ago{inv_txt})")
+        return "\n".join(lines).strip()
+    except Exception as e:
+        # full exception text on purpose — str(e)[:60] once cut an error at
+        # exactly the character where it named the cause
+        return f"FVG snapshot unavailable ({type(e).__name__}): {e}"
+
+
+@mcp.tool()
 def watchtower_option_ticket(ticker: str) -> str:
     """
     Turn a ticker's best live pattern into a concrete options ticket:
