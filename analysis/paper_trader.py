@@ -234,6 +234,26 @@ def cipher_tag_label(tag: dict) -> str:
     return "unavailable" if v is None else ("cipher_ok" if v else "cipher_not")
 
 
+def bearish_conflicts(rows):
+    """Pure. rows: (ticker, timeframe, pattern, status, trigger) for LIVE
+    bearish structures on tickers the writer is about to arm long. Returns
+    {ticker: one warning string}.
+
+    2026-08-13, the CIFR case: the writer queries direction='bullish' only,
+    so it armed an 83-score daily inverse_hs blind to a weekly hs_top
+    (forming) and a daily lower_high (at RETEST) the same scanner held on
+    the same ticker. Doctrine already says breakdown detections serve as
+    WARNINGS on held longs — this closes the arming-time blind spot: the
+    warning stamps into the spec's rationale (so the ledger carries it) and
+    the morning log WARNs. It never gates — shorts are retired, warnings
+    are warnings, and a tiebreaker would be a gate in disguise."""
+    out = {}
+    for tk, tf, pat, st, trig in rows:
+        out.setdefault(tk, []).append(
+            f"{pat} {tf} {st} (trig {float(trig):g})")
+    return {tk: " + ".join(v) for tk, v in out.items()}
+
+
 def swing_class_ok(pattern: str, timeframe: str) -> bool:
     """The class gate, pure so it pins in a test. The SQL query filters by
     pattern AND timeframe independently; this is the joint filter that
@@ -429,6 +449,21 @@ def write_morning_specs():
             if dropped:
                 log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
                          len(candidates), len(kept), dropped)
+            # Bearish-structure warning (2026-08-13, CIFR): the bullish-only
+            # candidate query can't see the scanner's OTHER opinion of the
+            # same ticker. Stamp it, never gate on it.
+            warns = {}
+            if kept:
+                c.execute("""SELECT ticker, timeframe, pattern, status,
+                                    trigger_price
+                             FROM pattern_scan
+                             WHERE ticker = ANY(%s) AND direction='bearish'
+                               AND status IN ('forming','retest','breakout')""",
+                          ([k[0] for k in kept],))
+                warns = bearish_conflicts(c.fetchall())
+                for tk, w in sorted(warns.items()):
+                    log.warning("[paper] swing: %s armed LONG against live "
+                                "bearish structure(s): %s", tk, w)
             # Cipher tag per kept spec (measurement only — the tag is
             # computed AFTER curation so it cannot influence which specs
             # arm, even accidentally). ~15 history reads at 7:40; the same
@@ -442,10 +477,12 @@ def write_morning_specs():
                              ORDER BY trade_date""", (tk,))
                 tag = swing_osc_state(c.fetchall(), tf)
                 tag_mix[tk] = cipher_tag_label(tag)
+                rationale = (f"{pat} {tf} breakout (score {score}); blind limit at the "
+                             f"trigger per retest doctrine; stop=pattern invalid {inv:g}")
+                if tk in warns:
+                    rationale += f" | ⚠ bearish structure live: {warns[tk]}"
                 specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
-                              trig, inv, tgt, "armed",
-                              f"{pat} {tf} breakout (score {score}); blind limit at the "
-                              f"trigger per retest doctrine; stop=pattern invalid {inv:g}",
+                              trig, inv, tgt, "armed", rationale,
                               json.dumps(tag)))
             if tag_mix:
                 from collections import Counter as _Counter

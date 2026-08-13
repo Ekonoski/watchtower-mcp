@@ -190,6 +190,21 @@ Rendering doctrine, same spirit as the rest of this file:
   order type's execution fact, and the shadow exists to price whether proof
   should be demanded there too.
 
+- **A long armed against a live bearish structure says so** (2026-08-13,
+  the CIFR case): the writer's bullish-only candidate query armed a daily
+  inverse_hs while the same scanner held a weekly hs_top (forming) and a
+  daily lower_high (at retest) on the same ticker — and nothing said so.
+  `bearish_conflicts` now stamps `⚠ bearish structure live: …` into the
+  spec's rationale (the ledger carries it) and the morning log WARNs per
+  ticker. Measurement only, never a gate — shorts are retired, warnings
+  are warnings, and `tests/test_bearish_warning.py` pins the CIFR rows
+  plus, by signature, the function's inability to gate. Related queued
+  work: the CIFR detection itself (head Mar 31, right shoulder Aug 10,
+  price 50% through the "neckline" mid-pattern) exposed a candidate
+  detector constraint — disqualify a neckline pattern when price CLOSED
+  through the neckline between head and far shoulder — which changes the
+  class definition and therefore waits on a full re-grade before adoption.
+
 - **The cipher rides as a tag, not a gate** (decided 2026-08-11, the night
   the cipher-at-episodes study read out — 320,144 v6 episodes through the
   LIVE compute_oscillator path). The finding: within the weekly RSI-45-60
