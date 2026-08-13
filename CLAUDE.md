@@ -245,6 +245,25 @@ Rendering doctrine, same spirit as the rest of this file:
   WHERE s.trade_date = CURRENT_DATE;
   ```
 
+- **The gamma board's Imbalances read from the record, not the engine**
+  (2026-08-13: the board shipped its FVG section as a declared hole because
+  zones were only ever computed per-request in the dashboard). The 7:35
+  sweep persists displacement-quality daily zones — gamma venues + active
+  watchlist + every open paper position — into `fvg_runs`/`fvg_zones` from
+  recorded `daily_prices` bars. A run row per ticker per sweep makes
+  absence unambiguous: `n_zones = 0` is a recorded quiet read, a missing
+  run is a hole (the `_social_block` family). `watchtower_fvg` serves the
+  same read over MCP. Canonical query:
+
+  ```sql
+  SELECT r.ticker, r.bars_through, r.n_zones, z.side, z.status,
+         z.top, z.bottom, z.age_bars, z.formed, z.inverted_on
+  FROM (SELECT DISTINCT ON (ticker) * FROM fvg_runs
+        ORDER BY ticker, computed_at DESC) r
+  LEFT JOIN fvg_zones z ON z.run_id = r.id
+  ORDER BY r.ticker, z.age_bars;
+  ```
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
