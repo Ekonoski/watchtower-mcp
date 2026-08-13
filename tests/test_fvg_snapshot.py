@@ -49,9 +49,13 @@ def main():
     assert gaps[0]["bottom"] == 10.0 and gaps[0]["top"] == 12.0, gaps
     assert gaps[0]["formed"] == "2026-08-10", gaps
 
-    # 2. Universe: venues + watchlist + held, sorted, deduped.
-    u = fvg_universe(("SPY", "QQQ"), ["NVDA", "SPY"], ["COR", "NVDA"])
-    assert u == ["COR", "NVDA", "QQQ", "SPY"], u
+    # 2. Universe: venues+dials + watchlist + held + this morning's
+    #    load-bearing names, sorted, deduped — a card must never out-run
+    #    its imbalance record (NVDA, 2026-08-13).
+    u = fvg_universe(("SPY", "QQQ"), ["MU", "SPY"], ["COR", "MU"], ["NVDA"])
+    assert u == ["COR", "MU", "NVDA", "QQQ", "SPY"], u
+    u = fvg_universe(("SPY",), [], [])
+    assert u == ["SPY"], u
 
     # 3. Zone rows keep every doctrinal field, in table order.
     zr = _zone_rows(7, [{"side": "bullish", "status": "open", "top": 12.0,

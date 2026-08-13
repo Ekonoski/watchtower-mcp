@@ -106,12 +106,18 @@ def _bar_dicts(rows):
             for d, o, h, l, c in rows]
 
 
-def fvg_universe(venue, watchlist_tickers, open_position_tickers):
-    """Pure. Who gets a morning zone sweep: the gamma venues, the active
-    watchlist, and every ticker the paper desk is currently holding (an
-    open position without its imbalance map is flying blind). Sorted so
-    runs are deterministic and diffs read cleanly."""
-    return sorted({*venue, *watchlist_tickers, *open_position_tickers})
+def fvg_universe(venue, watchlist_tickers, open_position_tickers,
+                 load_bearing_tickers=()):
+    """Pure. Who gets a morning zone sweep: the gamma venues and dials,
+    the active watchlist, every ticker the paper desk is currently holding
+    (an open position without its imbalance map is flying blind), and —
+    because the sweep runs AFTER the 7:30 gamma sweep — every name whose
+    net GEX cleared the load-bearing bar this morning: the board cards
+    exactly those, and a card must never out-run its imbalance record
+    (2026-08-13: NVDA carded load-bearing while the universe rule would
+    have skipped it). Sorted so runs are deterministic."""
+    return sorted({*venue, *watchlist_tickers, *open_position_tickers,
+                   *load_bearing_tickers})
 
 
 def _zone_rows(run_id, zones):
@@ -174,7 +180,14 @@ def write_fvg_snapshot():
                          FROM paper_specs s JOIN paper_trades t ON t.spec_id = s.id
                          WHERE t.exited_at IS NULL""")
             held = [r[0] for r in c.fetchall()]
-        universe = fvg_universe(("SPY", "QQQ", "IWM", "DIA"), wl, held)
+            # Today's load-bearing names — the 7:30 sweep has already run,
+            # so the board's card roster is knowable here.
+            c.execute("""SELECT DISTINCT ticker FROM gex_levels
+                         WHERE computed_at >= CURRENT_DATE
+                           AND abs(net_gex) >= 1.0""")
+            heavy = [r[0] for r in c.fetchall()]
+        universe = fvg_universe(("SPY", "QQQ", "IWM", "DIA", "HYG", "TLT"),
+                                wl, held, heavy)
         if not universe:
             log.warning("[fvg] snapshot universe is EMPTY — no runs written; "
                         "that absence will read as a hole, as it should")
