@@ -96,7 +96,15 @@ PERF_MIN_CONFLUENCE = 60
 #     Williams %R(28) pinned at/below −80 inside the last 10 bars and
 #     rising on the last confirmed bar. Same live-graded status as the
 #     stoch leg: %R isn't in the episode record either.
-SIGNALS_VERSION = 8
+# v9: still-red-NOW (the COLM case, same evening): flow troughed at −10.4
+#     but had recovered to −3.4 by the fire bar — a sliver below zero
+#     that renders neutral on the panel, the wash already digested (the
+#     AGO disease, in the flow itself). The current flow must still be
+#     ≤ −4. Stated honestly: the record is equivocal between −8 and 0
+#     (−8..−4 grades +0.054, −4..0 grades +0.085, both under the ≤ −8
+#     core's +0.105), so this threshold is LOOK calibration judged by
+#     forward returns, not a backtest claim.
+SIGNALS_VERSION = 9
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
 # red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
@@ -105,6 +113,7 @@ SIGNALS_VERSION = 8
 # rather than a mid-range wobble, and the RSI above which a "turn" is
 # actually a finished recovery.
 CR_MF_DEEP = -8.0
+CR_MF_RED_NOW = -4.0
 CR_X_FRESH_BARS = 4
 CR_WT_TROUGH = -40.0
 CR_RSI_MAX = 60.0
@@ -572,7 +581,12 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
     if len(mfv) >= 12 and not np.isnan(mfv[-12:]).any() \
             and rsi_last is not None and not np.isnan(p["rsi"]):
         trough = float(np.min(mfv[-10:]))
-        deep = trough <= CR_MF_DEEP and mfv[-1] < 0
+        # v9 (the COLM/GOOS case): "deep in the red and curving up" means
+        # the flow is red NOW, not that it visited the red last week. A
+        # trough that recovered to a sliver below zero (COLM −10.4 → −3.4,
+        # GOOS −10.0 → −1.2) renders neutral on the panel — the wash is
+        # already digested.
+        deep = trough <= CR_MF_DEEP and mfv[-1] <= CR_MF_RED_NOW
         mr = sig.get("mf_round") or {}
         curving = bool(mfv[-1] > mfv[-2] > mfv[-3]) or mr.get("dir") == "up"
         bsc = _bars_since_cross(df)
@@ -610,6 +624,10 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
             dv = sig.get("divergence") or {}
             sig["cipher_reversal"] = {
                 "dir": "up",
+                # Eric wants the flow turn "rounded and not jagged" — a
+                # confirmed mf_round arc is the archetype and ranks first;
+                # a jagged three-bar rise qualifies but says so.
+                "rounded": mr.get("dir") == "up",
                 "mf": round(float(mfv[-1]), 2),
                 "mf_trough": round(trough, 2),
                 "wt2": round(float(c["wt2"]), 1),

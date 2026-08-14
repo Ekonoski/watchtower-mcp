@@ -968,7 +968,11 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     the replay's best cohort (money flow or %R dips while RSI holds 50 —
     shallow digestion in strength; bullish only, direction arg ignored).
     cipher_reversal = the washed-out-and-turning state (money flow deep
-    in the red AND curving up, waves crossing up out of the LOWER BAND —
+    in the red AND curving up — trough ≤ −8 within 10 bars and STILL
+    ≤ −4 at fire, because a flow that recovered to a sliver renders
+    neutral on the panel; a ROUNDED arc is the archetype and ranks
+    first, a jagged three-bar rise qualifies but is tagged — waves
+    crossing up out of the LOWER BAND —
     trough ≤ −40, a mid-range wobble never qualifies — cross no older
     than 4 bars, RSI turning but still ≤ 60, the GREEN-RSI look:
     StochRSI pair still low and curling, d ≤ 50 with k ≥ d — a stoch

@@ -3,16 +3,16 @@ Same-evening close sync — the day's daily bars from Polygon at the bell.
 
 Eric, 2026-08-14: "our data is realtime. that shouldn't be an issue ever
 again." The desk's daily/weekly oscillator reads were hostage to the
-nightly FMP batch (price-cron, ~10 PM ET): all evening the freshest bar
-in daily_prices was YESTERDAY'S, and Friday's close would not reach a
-screen until Monday's 6:45 scan. But one grouped-daily call to Polygon
+nightly price-cron (polygon_price_daily, ~10 PM ET): all evening the
+freshest bar in daily_prices was YESTERDAY'S, and Friday's close would
+not reach a screen until Monday's 6:45 scan. But one grouped-daily call to Polygon
 returns every US ticker's completed session bar minutes after the close.
 
 This module upserts the day's bars for tickers the desk already tracks —
 never inserting unknown symbols, so the table's universe stays owned by
 the ingestion pipeline — and the 4:35 PM re-stamp then reads TODAY. The
-nightly FMP ingest remains the settling authority: its later upsert
-overwrites these rows with official closes.
+nightly price-cron remains the settling authority: its later upsert
+re-lands these rows as settled bars.
 """
 import datetime as dt
 import logging
