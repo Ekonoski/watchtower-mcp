@@ -76,13 +76,25 @@ PERF_MIN_CONFLUENCE = 60
 #     SHAPE with no requirement on the LEVEL it turns from, so a healthy
 #     uptrend's flow wobble screens identically to a washout unless the
 #     deep-red level is a hard leg.
-SIGNALS_VERSION = 5
+# v6: cipher_reversal grows two legs from same-day calibration (Eric,
+#     reviewing the first live list: "these charts do not match"). The
+#     v5 legs admitted mid-range ripples (ALG 1h: waves −20/−33, RSI 50
+#     in sideways chop) and already-recovered states (STM 1h: RSI 61.6).
+#     Location: the wave trough must sit in the lower band. Timing: RSI
+#     must still be turning, not recovered — episodes with the wash but
+#     RSI > 60 grade −0.194R (n=78) vs +0.146R (n=1,093) at RSI ≤ 60.
+SIGNALS_VERSION = 6
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
-# red" (mf_candle scale, typical range ±15), and how fresh the wave
-# cross-up must be to count as "momentum coming in" rather than history.
+# red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
+# must be to count as "momentum coming in" rather than history, how deep
+# the wave trough must be for the turn to come from the END of a decline
+# rather than a mid-range wobble, and the RSI above which a "turn" is
+# actually a finished recovery.
 CR_MF_DEEP = -8.0
 CR_X_FRESH_BARS = 8
+CR_WT_TROUGH = -40.0
+CR_RSI_MAX = 60.0
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -549,9 +561,16 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
         mr = sig.get("mf_round") or {}
         curving = bool(mfv[-1] > mfv[-2] > mfv[-3]) or mr.get("dir") == "up"
         bsc = _bars_since_cross(df)
+        # Location leg (v6): the turn must come out of the LOWER BAND — a
+        # cross whose wave trough never left mid-range is a wobble, not a
+        # reversal, no matter how red the flow got.
+        wt2_trough = float(np.nanmin(df["wt2"].values[-10:]))
         wave_turn = bool(c["wt1"] > c["wt2"]) and float(c["wt2"]) <= 0 \
+            and wt2_trough <= CR_WT_TROUGH \
             and bsc is not None and bsc <= CR_X_FRESH_BARS
-        rsi_turn = rsi_last > float(p["rsi"])
+        # Timing leg (v6): turning, not recovered — RSI above the ceiling
+        # means the reversal already happened and this bar is chasing it.
+        rsi_turn = rsi_last > float(p["rsi"]) and rsi_last <= CR_RSI_MAX
         if deep and curving and wave_turn and rsi_turn:
             mh = df["macd_hist"].iloc[-60:].values
             piv = _pivot_idx(mh, 3, "low")
@@ -565,6 +584,7 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                 "mf": round(float(mfv[-1]), 2),
                 "mf_trough": round(trough, 2),
                 "wt2": round(float(c["wt2"]), 1),
+                "wt_trough": round(wt2_trough, 1),
                 "x_up_bars_ago": int(bsc),
                 "rsi": round(rsi_last, 1),
                 "macd_hl": macd_hl,
