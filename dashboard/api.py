@@ -1708,6 +1708,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         order_sql = {
             "loaded_spring": "(o.signals->'loaded_spring'->>'rsi')::float DESC",
             "cipher_reversal":
+                "COALESCE((o.signals->'cipher_reversal'->>'rounded')::boolean, false) DESC, "
                 "(o.signals->'cipher_reversal'->>'full_stack')::boolean DESC, "
                 "(o.signals->'cipher_reversal'->>'mf_trough')::float ASC",
         }.get(setup, "o.confluence_score DESC NULLS LAST")

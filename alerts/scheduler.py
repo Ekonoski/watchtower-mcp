@@ -639,7 +639,7 @@ def run_close_sync_and_restamp():
     shouldn't be an issue ever again"). One Polygon grouped-daily call
     upserts the session's bars for known tickers, then the full fleet
     re-stamps so daily/weekly reads carry TODAY at review time instead
-    of waiting on the 10 PM FMP batch. A 0-row sync skips the re-stamp
+    of waiting on the 10 PM price-cron. A 0-row sync skips the re-stamp
     loudly — re-stamping yesterday's table would only dress up stale."""
     try:
         from screen.market_calendar import is_trading_day
@@ -661,7 +661,7 @@ def run_close_sync_and_restamp():
 
 
 def run_evening_oscillator_restamp():
-    """Settling pass after the nightly FMP price ingest (price-cron,
+    """Settling pass after the nightly price-cron (polygon_price_daily,
     ~10 PM ET) overwrites the Polygon close-sync rows with official
     closes. Also the safety net for a failed 4:35 sync: without it,
     Friday's close would not reach the screens until Monday 6:45 and a

@@ -28,7 +28,8 @@ N = 90
 
 
 def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False,
-           wt_shift=0.0, rsi_hot=False, stoch_hot=False, pctr_flat=False):
+           wt_shift=0.0, rsi_hot=False, stoch_hot=False, pctr_flat=False,
+           mf_recovered=False):
     """The NFLX-3D geometry: flow arcs from +5 down to a −12 trough six
     bars back and rises into a still-red −6; waves bleed to −50 and wt1
     crosses up 2 bars ago; RSI ticks 45→47; StochRSI pair low and curling
@@ -44,7 +45,10 @@ def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False,
 
     mf = np.full(N, 5.0)
     mf[N - 20:N - 5] = np.linspace(5, -12, 15)
-    mf[N - 5:] = [-11, -10, -9, -8, -6]
+    # Default: still deep red and curving. mf_recovered: same deep trough,
+    # same curve, but the flow has climbed back to a sliver below zero —
+    # the COLM (−10.4 → −3.4) / GOOS (−10.0 → −1.2) look.
+    mf[N - 5:] = [-8, -6, -4.5, -3, -2] if mf_recovered else [-11, -10, -9, -8, -6]
     mf = mf + mf_shift
 
     mh = np.full(N, 0.2)
@@ -79,6 +83,7 @@ def main():
     assert cr["wt2"] <= 0, cr
     assert cr["macd_hl"] and cr["full_stack"], cr
     assert cr["pctr_min"] <= -80 and cr["pctr"] > cr["pctr_min"], cr
+    assert cr["rounded"] is True, cr  # the arc, not a jagged staircase
 
     # 2) The LNG trap: the IDENTICAL arc shifted into positive territory
     # still fires mf_round (shape-only, by design) but must NOT read as a
@@ -117,6 +122,12 @@ def main():
     ev = evaluate_signals(_frame(pctr_flat=True))
     assert "cipher_reversal" not in ev["signals"], ev["signals"]
 
+    # 4f) The COLM/GOOS trap (v9): deep trough, textbook curve, but the
+    # flow already recovered to a sliver below zero — "deep in the red
+    # and curving up" means red NOW. Must be refused.
+    ev = evaluate_signals(_frame(mf_recovered=True))
+    assert "cipher_reversal" not in ev["signals"], ev["signals"]
+
     # 5) Structurally unable to gate: the confluence score — which feeds
     # entry_grade ranking — is identical with and without the composite
     # present (the cipher-tag rule: a tiebreaker is a gate in disguise).
@@ -129,9 +140,10 @@ def main():
 
     print("ok — the washed-out-and-turning state fires with an auditable "
           "payload; the LNG shape-without-level, ALG mid-range-wobble, "
-          "STM already-recovered, AGO spent-stoch, and flat-%R traps are "
-          "refused, along with stale crosses and fading RSI; and the "
-          "composite cannot touch the confluence score")
+          "STM already-recovered, AGO spent-stoch, flat-%R, and "
+          "COLM/GOOS recovered-flow traps are refused, along with stale "
+          "crosses and fading RSI; and the composite cannot touch the "
+          "confluence score")
 
 
 if __name__ == "__main__":

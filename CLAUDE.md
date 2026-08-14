@@ -240,12 +240,23 @@ Rendering doctrine, same spirit as the rest of this file:
   side of "our data is realtime": `analysis/close_sync.py` upserts
   the session's grouped-daily Polygon bars at 4:35 PM and re-stamps
   the fleet, so daily/weekly rows carry TODAY at evening review
-  instead of waiting for the 10 PM FMP batch ("why thursdays bars?"
+  instead of waiting for the 10 PM price-cron ("why thursdays bars?"
   — because the scan predated the ingest, and Friday's close would
-  otherwise not exist on a screen until Monday). FMP's nightly
-  ingest stays the settling authority (10:45/11:30 PM re-stamp), and
-  a 0-row sync skips the re-stamp loudly rather than dressing up a
-  stale table.
+  otherwise not exist on a screen until Monday). The nightly
+  price-cron (`polygon_price_daily`, per `ingestion_log` — not FMP as
+  first written here) stays the settling authority (10:45/11:30 PM
+  re-stamp), and a 0-row sync skips the re-stamp loudly rather than
+  dressing up a stale table. Fourth pass (COLM, then GOOS — "neither
+  one of them have deep red money flow"): **still-red-NOW** — the
+  trough leg alone let flows that had recovered to a sliver (−10.4 →
+  −3.4, −10.0 → −1.2) fire while rendering neutral on the panel, so
+  the flow must also be ≤ −4 at the fire bar. Stated honestly: the
+  record is equivocal inside (−8, 0) (−8..−4 grades +0.054, −4..0
+  +0.085, both under the ≤ −8 core's +0.105), so −4 is LOOK
+  calibration graded live, like the stoch/%R legs. And "rounded, not
+  jagged": a confirmed mf_round arc is the archetype — it ranks first
+  in the screen and the payload tags `rounded`; a jagged three-bar
+  rise still qualifies but says so.
 
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
