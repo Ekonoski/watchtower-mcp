@@ -965,16 +965,22 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     fighting the trade, and a relative-strength floor. loaded_spring =
     the replay's best cohort (money flow or %R dips while RSI holds 50 —
     shallow digestion in strength; bullish only, direction arg ignored).
+    cipher_reversal = the washed-out-and-turning state (money flow deep
+    in the red AND curving up, waves crossing up from the lower half,
+    RSI turning; MACD higher-low ranks first as full_stack but is not
+    required; bullish only, direction arg ignored — the row's computed
+    direction usually reads bearish because the wash IS the setup).
     high_confluence = the raw washout watchlist (most stretched names in
     the market — where turns START; stalk for the higher low, don't buy
     the first green dot). Bearish setups are warnings on longs, not short
     entries — every bearish oscillator cohort has positive forward returns.
 
     Args:
-        setup: entry_grade | loaded_spring | high_confluence |
-               wt_extreme_cross | pctr_hook | divergence (price vs wave,
-               confirmed pivots) | mf_round (smooth rounded money-flow
-               turn — the arc, not a one-bar curl) | mf_curl | any_signal
+        setup: entry_grade | loaded_spring | cipher_reversal |
+               high_confluence | wt_extreme_cross | pctr_hook |
+               divergence (price vs wave, confirmed pivots) |
+               mf_round (smooth rounded money-flow turn — the arc, not a
+               one-bar curl) | mf_curl | any_signal
         timeframe: daily | weekly | 4h | 1h
         direction: bullish | bearish | all   (default bullish)
         top_n: max rows (default 15)

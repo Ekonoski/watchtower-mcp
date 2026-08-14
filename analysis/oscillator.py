@@ -70,7 +70,19 @@ PERF_MIN_CONFLUENCE = 60
 #     edge vs SPY in 61k replayed events — kept computed for continuity).
 # v4: ETF universe (etf_theme_map) joins the fleet scan — index/sector
 #     structures are where-the-market-leans information.
-SIGNALS_VERSION = 4
+# v5: cipher_reversal — Eric's NFLX-3D washed-out-and-turning state as a
+#     named composite (deep-red flow curving up + fresh wave cross from the
+#     lower half + RSI turning). The LNG lesson: mf_round matches the arc
+#     SHAPE with no requirement on the LEVEL it turns from, so a healthy
+#     uptrend's flow wobble screens identically to a washout unless the
+#     deep-red level is a hard leg.
+SIGNALS_VERSION = 5
+
+# cipher_reversal legs: the money-flow trough that counts as "deep in the
+# red" (mf_candle scale, typical range ±15), and how fresh the wave
+# cross-up must be to count as "momentum coming in" rather than history.
+CR_MF_DEEP = -8.0
+CR_X_FRESH_BARS = 8
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -518,6 +530,48 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
             sig["loaded_spring"] = {"rsi": round(rsi_last, 1),
                                     "flavors": flavors}
 
+    # 8) CIPHER REVERSAL — Eric's NFLX-3D state (2026-08-14) as a named
+    # composite, bullish only. Four hard legs: (a) money flow washed out
+    # DEEP (trough <= CR_MF_DEEP inside the last 10 bars) and still red;
+    # (b) curving up — three strictly rising closes of the flow line, or a
+    # confirmed mf_round up; (c) waves crossing up from the lower half,
+    # cross no older than CR_X_FRESH_BARS; (d) RSI turning up. The MACD
+    # higher-low is Eric's "nice if they align" — recorded as full_stack,
+    # never required. Exists as a composite because no single component
+    # can screen for the state: LNG's 4h (MF +1.9, %R −3) fired mf_round
+    # on the arc shape alone and read as a match when it was a healthy
+    # uptrend's wobble.
+    mfv = df[MF_DEFAULT].values
+    if len(mfv) >= 12 and not np.isnan(mfv[-12:]).any() \
+            and rsi_last is not None and not np.isnan(p["rsi"]):
+        trough = float(np.min(mfv[-10:]))
+        deep = trough <= CR_MF_DEEP and mfv[-1] < 0
+        mr = sig.get("mf_round") or {}
+        curving = bool(mfv[-1] > mfv[-2] > mfv[-3]) or mr.get("dir") == "up"
+        bsc = _bars_since_cross(df)
+        wave_turn = bool(c["wt1"] > c["wt2"]) and float(c["wt2"]) <= 0 \
+            and bsc is not None and bsc <= CR_X_FRESH_BARS
+        rsi_turn = rsi_last > float(p["rsi"])
+        if deep and curving and wave_turn and rsi_turn:
+            mh = df["macd_hist"].iloc[-60:].values
+            piv = _pivot_idx(mh, 3, "low")
+            troughs = [float(mh[i]) for i in piv
+                       if not np.isnan(mh[i]) and mh[i] < 0]
+            macd_hl = bool(len(troughs) >= 2 and troughs[-1] > troughs[-2]) \
+                or (sig.get("macd_cross") or {}).get("dir") == "up"
+            dv = sig.get("divergence") or {}
+            sig["cipher_reversal"] = {
+                "dir": "up",
+                "mf": round(float(mfv[-1]), 2),
+                "mf_trough": round(trough, 2),
+                "wt2": round(float(c["wt2"]), 1),
+                "x_up_bars_ago": int(bsc),
+                "rsi": round(rsi_last, 1),
+                "macd_hl": macd_hl,
+                "div_bull": int(dv.get("count") or 0) if dv.get("dir") == "bullish" else 0,
+                "full_stack": bool(macd_hl),
+            }
+
     score, direction = _confluence(df, sig, pattern_ctx)
     return {"signals": sig, "confluence_score": score, "direction": direction}
 
@@ -777,7 +831,8 @@ def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
         return None
     x = sig.get("wt_cross")
     curl = sig.get("mf_curl") or {}
-    qualifying = [k for k in ("loaded_spring", "divergence", "pctr_hook") if k in sig]
+    qualifying = [k for k in ("loaded_spring", "divergence", "pctr_hook",
+                              "cipher_reversal") if k in sig]
     if x and x["zone"] == "extreme":
         qualifying.append("wt_cross")
     if curl.get("volume_backed"):

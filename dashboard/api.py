@@ -1602,8 +1602,8 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
 
 
 _OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
-               "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
-               "mf_curl", "any_signal")
+               "cipher_reversal", "wt_extreme_cross", "pctr_hook",
+               "divergence", "mf_round", "mf_curl", "any_signal")
 
 
 def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
@@ -1683,6 +1683,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         setup_sql = {
             "high_confluence": "o.confluence_score >= 60",
             "loaded_spring": "o.signals ? 'loaded_spring'",
+            "cipher_reversal": "o.signals ? 'cipher_reversal'",
             "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
@@ -1696,15 +1697,20 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
             "any_signal": "o.signals != '{}'::jsonb",
         }[setup]
-        # Loaded spring is bullish by construction, but the row's COMPUTED
-        # direction is usually bearish (the flow is pointing down — that's
-        # the setup) — filtering on it would hide exactly the names this
-        # screen exists to find. Rank by how firmly RSI is holding.
-        dir_clause = ("" if setup == "loaded_spring" else
+        # Loaded spring and cipher reversal are bullish by construction, but
+        # the row's COMPUTED direction is usually bearish (the flow is deep
+        # red / pointing down — that's the setup) — filtering on it would
+        # hide exactly the names these screens exist to find. Spring ranks
+        # by how firmly RSI is holding; cipher reversal ranks the full
+        # stack (MACD higher-low aligned) first, then the deepest wash.
+        dir_clause = ("" if setup in ("loaded_spring", "cipher_reversal") else
                       "AND (%(dir)s = 'all' OR o.direction = %(dir)s)")
-        order_sql = ("(o.signals->'loaded_spring'->>'rsi')::float DESC"
-                     if setup == "loaded_spring"
-                     else "o.confluence_score DESC NULLS LAST")
+        order_sql = {
+            "loaded_spring": "(o.signals->'loaded_spring'->>'rsi')::float DESC",
+            "cipher_reversal":
+                "(o.signals->'cipher_reversal'->>'full_stack')::boolean DESC, "
+                "(o.signals->'cipher_reversal'->>'mf_trough')::float ASC",
+        }.get(setup, "o.confluence_score DESC NULLS LAST")
         query = base_select + f"""
         FROM oscillator_scan o
         LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
