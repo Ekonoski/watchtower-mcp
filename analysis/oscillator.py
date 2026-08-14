@@ -92,7 +92,11 @@ PERF_MIN_CONFLUENCE = 60
 #     tightens to ≤ 4 bars (NFLX-3D archetype fired at 3; AGO's 7 is a
 #     chase). Stoch isn't in the episode record, so this leg is graded
 #     live by alert-performance forward returns, stated where surfaced.
-SIGNALS_VERSION = 7
+# v8: the %R leg (Eric: "add a curving up williams %R from the bottom") —
+#     Williams %R(28) pinned at/below −80 inside the last 10 bars and
+#     rising on the last confirmed bar. Same live-graded status as the
+#     stoch leg: %R isn't in the episode record either.
+SIGNALS_VERSION = 8
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
 # red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
@@ -105,6 +109,7 @@ CR_X_FRESH_BARS = 4
 CR_WT_TROUGH = -40.0
 CR_RSI_MAX = 60.0
 CR_STOCH_D_MAX = 50.0
+CR_PCTR_FLOOR = -80.0
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -588,7 +593,14 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
         sd = float(c["stoch_d"]) if not np.isnan(c["stoch_d"]) else None
         green_rsi = sk is not None and sd is not None \
             and sd <= CR_STOCH_D_MAX and sk >= sd
-        if deep and curving and wave_turn and rsi_turn and green_rsi:
+        # %R leg (v8): Williams %R(28) curving up off the floor — pinned
+        # at/below −80 inside the last 10 bars, rising this bar.
+        rv = df["pctr"].values
+        pctr_min = float(np.nanmin(rv[-10:]))
+        pctr_curl = (not np.isnan(rv[-1]) and not np.isnan(rv[-2])
+                     and pctr_min <= CR_PCTR_FLOOR and rv[-1] > rv[-2])
+        if deep and curving and wave_turn and rsi_turn and green_rsi \
+                and pctr_curl:
             mh = df["macd_hist"].iloc[-60:].values
             piv = _pivot_idx(mh, 3, "low")
             troughs = [float(mh[i]) for i in piv
@@ -606,6 +618,8 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                 "rsi": round(rsi_last, 1),
                 "stoch_k": round(sk, 1),
                 "stoch_d": round(sd, 1),
+                "pctr": round(float(rv[-1]), 1),
+                "pctr_min": round(pctr_min, 1),
                 "macd_hl": macd_hl,
                 "div_bull": int(dv.get("count") or 0) if dv.get("dir") == "bullish" else 0,
                 "full_stack": bool(macd_hl),

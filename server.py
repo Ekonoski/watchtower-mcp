@@ -968,9 +968,11 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     cipher_reversal = the washed-out-and-turning state (money flow deep
     in the red AND curving up, waves crossing up out of the LOWER BAND —
     trough ≤ −40, a mid-range wobble never qualifies — cross no older
-    than 4 bars, RSI turning but still ≤ 60, and the GREEN-RSI look:
+    than 4 bars, RSI turning but still ≤ 60, the GREEN-RSI look:
     StochRSI pair still low and curling, d ≤ 50 with k ≥ d — a stoch
-    that already ran means the turn is spent; MACD higher-low ranks
+    that already ran means the turn is spent — and Williams %R(28)
+    curling up off the floor (pinned ≤ −80 within 10 bars, rising this
+    bar); MACD higher-low ranks
     first as full_stack but is not required; bullish only, direction arg
     ignored — the row's computed direction usually reads bearish because
     the wash IS the setup).

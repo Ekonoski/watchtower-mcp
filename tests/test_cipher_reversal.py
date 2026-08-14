@@ -28,12 +28,13 @@ N = 90
 
 
 def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False,
-           wt_shift=0.0, rsi_hot=False, stoch_hot=False):
+           wt_shift=0.0, rsi_hot=False, stoch_hot=False, pctr_flat=False):
     """The NFLX-3D geometry: flow arcs from +5 down to a −12 trough six
     bars back and rises into a still-red −6; waves bleed to −50 and wt1
     crosses up 2 bars ago; RSI ticks 45→47; StochRSI pair low and curling
-    (37/18, the UNH green look); MACD histogram carries two sub-zero
-    troughs, the second higher (the full-stack bonus)."""
+    (37/18, the UNH green look); Williams %R pinned to −85 then curling
+    up through −71; MACD histogram carries two sub-zero troughs, the
+    second higher (the full-stack bonus)."""
     idx = pd.date_range("2026-01-01", periods=N, freq="D")
     close = 100 + np.arange(N) * 0.5
     wt2 = np.linspace(10, -50, N) + wt_shift
@@ -53,10 +54,14 @@ def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False,
     rsi = np.full(N, 45.0)
     rsi[-1] = 44.0 if rsi_fade else (61.0 if rsi_hot else 47.0)
 
+    pctr = np.full(N, -50.0)
+    if not pctr_flat:
+        pctr[-8:] = [-70, -80, -85, -83, -80, -77, -74, -71]
+
     return pd.DataFrame({
         "close": close, "high": close + 1, "low": close - 1,
         "volume": np.full(N, 1e6), "wt1": wt1, "wt2": wt2,
-        "pctr": np.full(N, -50.0), "rsi": rsi,
+        "pctr": pctr, "rsi": rsi,
         "stoch_k": np.full(N, 84.0 if stoch_hot else 37.0),
         "stoch_d": np.full(N, 64.0 if stoch_hot else 18.0),
         "macd": np.zeros(N), "macd_signal": np.zeros(N), "macd_hist": mh,
@@ -73,6 +78,7 @@ def main():
     assert cr["x_up_bars_ago"] == 2, cr
     assert cr["wt2"] <= 0, cr
     assert cr["macd_hl"] and cr["full_stack"], cr
+    assert cr["pctr_min"] <= -80 and cr["pctr"] > cr["pctr_min"], cr
 
     # 2) The LNG trap: the IDENTICAL arc shifted into positive territory
     # still fires mf_round (shape-only, by design) but must NOT read as a
@@ -106,6 +112,11 @@ def main():
     ev = evaluate_signals(_frame(stoch_hot=True))
     assert "cipher_reversal" not in ev["signals"], ev["signals"]
 
+    # 4e) %R leg (v8): a %R that never reached the floor has nothing to
+    # curl out of — refused, however washed the flow is.
+    ev = evaluate_signals(_frame(pctr_flat=True))
+    assert "cipher_reversal" not in ev["signals"], ev["signals"]
+
     # 5) Structurally unable to gate: the confluence score — which feeds
     # entry_grade ranking — is identical with and without the composite
     # present (the cipher-tag rule: a tiebreaker is a gate in disguise).
@@ -118,9 +129,9 @@ def main():
 
     print("ok — the washed-out-and-turning state fires with an auditable "
           "payload; the LNG shape-without-level, ALG mid-range-wobble, "
-          "STM already-recovered, and AGO spent-stoch traps are refused, "
-          "along with stale crosses and fading RSI; and the composite "
-          "cannot touch the confluence score")
+          "STM already-recovered, AGO spent-stoch, and flat-%R traps are "
+          "refused, along with stale crosses and fading RSI; and the "
+          "composite cannot touch the confluence score")
 
 
 if __name__ == "__main__":
