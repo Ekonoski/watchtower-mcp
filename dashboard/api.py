@@ -1728,8 +1728,11 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
     try:
         with conn.cursor() as cur:
             # Freshness gate: a stale intraday series (truncated Polygon
-            # response) must never surface as a current pick.
-            fresh_days = 4 if tf in ("4h", "1h") else 30
+            # response, or a name that fell out of the candidate set) must
+            # never surface as a current pick. An hourly reversal state has
+            # a shelf life of hours — the 2026-08-14 lesson was ADT's
+            # Tuesday 1h bar rendering as Friday's state under a 4-day gate.
+            fresh_days = {"1h": 1, "4h": 2}.get(tf, 30)
             cur.execute(query, {"tf": tf, "dir": direction, "fresh": fresh_days})
             rows = cur.fetchall()
             cur.execute("SELECT max(scanned_at) FROM oscillator_scan "

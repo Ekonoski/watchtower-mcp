@@ -27,14 +27,15 @@ from analysis.oscillator import (  # noqa: E402
 N = 90
 
 
-def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False):
+def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False,
+           wt_shift=0.0, rsi_hot=False):
     """The NFLX-3D geometry: flow arcs from +5 down to a −12 trough six
     bars back and rises into a still-red −6; waves bleed to −50 and wt1
     crosses up 2 bars ago; RSI ticks 45→47; MACD histogram carries two
     sub-zero troughs, the second higher (the full-stack bonus)."""
     idx = pd.date_range("2026-01-01", periods=N, freq="D")
     close = 100 + np.arange(N) * 0.5
-    wt2 = np.linspace(10, -50, N)
+    wt2 = np.linspace(10, -50, N) + wt_shift
     wt1 = wt2 - 3.0
     flip = 20 if stale_cross else 3
     wt1[-flip:] = wt2[-flip:] + 3.0
@@ -49,7 +50,7 @@ def _frame(mf_shift=0.0, stale_cross=False, rsi_fade=False):
     mh[N - 12:N - 6] = [0.0, -0.1, -0.2, -0.1, 0.0, 0.1]
 
     rsi = np.full(N, 45.0)
-    rsi[-1] = 44.0 if rsi_fade else 47.0
+    rsi[-1] = 44.0 if rsi_fade else (61.0 if rsi_hot else 47.0)
 
     return pd.DataFrame({
         "close": close, "high": close + 1, "low": close - 1,
@@ -85,6 +86,17 @@ def main():
     ev = evaluate_signals(_frame(rsi_fade=True))
     assert "cipher_reversal" not in ev["signals"], ev["signals"]
 
+    # 4b) The ALG trap (2026-08-14 calibration): identical flow wash, but
+    # the wave trough never left mid-range (−20) — a wobble in chop, not
+    # a turn at the end of a decline. Must be refused.
+    ev = evaluate_signals(_frame(wt_shift=30.0))
+    assert "cipher_reversal" not in ev["signals"], ev["signals"]
+
+    # 4c) The STM trap: RSI rising but already through 60 — recovered
+    # isn't turning; that cohort grades −0.194R at episodes.
+    ev = evaluate_signals(_frame(rsi_hot=True))
+    assert "cipher_reversal" not in ev["signals"], ev["signals"]
+
     # 5) Structurally unable to gate: the confluence score — which feeds
     # entry_grade ranking — is identical with and without the composite
     # present (the cipher-tag rule: a tiebreaker is a gate in disguise).
@@ -96,9 +108,10 @@ def main():
     assert _confluence(df, sig, None) == _confluence(df, bare, None)
 
     print("ok — the washed-out-and-turning state fires with an auditable "
-          "payload, the LNG shape-without-level trap is refused, stale "
-          "crosses and fading RSI are refused, and the composite cannot "
-          "touch the confluence score")
+          "payload; the LNG shape-without-level, ALG mid-range-wobble, "
+          "and STM already-recovered traps are refused, along with stale "
+          "crosses and fading RSI; and the composite cannot touch the "
+          "confluence score")
 
 
 if __name__ == "__main__":

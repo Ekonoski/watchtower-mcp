@@ -966,10 +966,12 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     the replay's best cohort (money flow or %R dips while RSI holds 50 —
     shallow digestion in strength; bullish only, direction arg ignored).
     cipher_reversal = the washed-out-and-turning state (money flow deep
-    in the red AND curving up, waves crossing up from the lower half,
-    RSI turning; MACD higher-low ranks first as full_stack but is not
-    required; bullish only, direction arg ignored — the row's computed
-    direction usually reads bearish because the wash IS the setup).
+    in the red AND curving up, waves crossing up out of the LOWER BAND —
+    trough ≤ −40, a mid-range wobble never qualifies — RSI turning but
+    still ≤ 60, because recovered isn't turning; MACD higher-low ranks
+    first as full_stack but is not required; bullish only, direction arg
+    ignored — the row's computed direction usually reads bearish because
+    the wash IS the setup).
     high_confluence = the raw washout watchlist (most stretched names in
     the market — where turns START; stalk for the higher low, don't buy
     the first green dot). Bearish setups are warnings on longs, not short
@@ -1017,11 +1019,19 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
                 bsc = r.get("bars_since_cross")
                 xst = (f" ({'x-up' if r['wt1'] > r['wt2'] else 'x-down'}"
                        + (f" {bsc}b ago" if bsc is not None else "") + ")")
+            # Per-row bar stamp — timeframes settle at different times and
+            # names fall out of the scan set, so freshness is a row fact,
+            # not a page fact (the ADT lesson: a Tuesday 1h bar is not a
+            # Friday state).
+            bts = (r.get("bar_ts") or "")
+            stamp = (f" · bar {bts[:16].replace('T', ' ')}Z"
+                     if timeframe.lower() in ("4h", "1h") else
+                     (f" · bar {bts[:10]}" if bts else ""))
             lines.append(
                 f"- **{r['ticker']}** {arrow} {_n(r['confluence_score'], '.0f')}/100 — "
                 f"{px}wt {_n(r['wt1'], '+.0f')}/{_n(r['wt2'], '+.0f')}{xst}, "
                 f"MF {_n(r['mf'], '+.1f')}, %R {_n(r['pctr'], '.0f')}, "
-                f"MACDh {_n(r['macd_hist'], '+.2f')}{wk}{pat} · {sigs}{rs}{sec}")
+                f"MACDh {_n(r['macd_hist'], '+.2f')}{wk}{pat} · {sigs}{rs}{sec}{stamp}")
         lines.append("")
         lines.append("Deep dive any name with watchtower_get_oscillator(ticker).")
         return "\n".join(lines)

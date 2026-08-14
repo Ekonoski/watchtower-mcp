@@ -211,7 +211,17 @@ Rendering doctrine, same spirit as the rest of this file:
   or cross-freshness legs, so the live definition is stricter than the
   graded core. The composite is confluence-blind by test
   (`tests/test_cipher_reversal.py`) and earns its own 7/30/90-day
-  forward returns via alert-performance.
+  forward returns via alert-performance. Same-evening calibration
+  (Eric, reviewing the first live list: "these charts do not match")
+  added two legs the first cut missed: **location** — the wave trough
+  must sit in the lower band (≤ −40 within 10 bars; ALG's 1h "wash" was
+  a −20/−33 mid-range wobble in chop) — and **timing** — RSI ≤ 60 at
+  fire, because recovered isn't turning (in the deep-flow wash zone,
+  RSI ≤ 60 grades +0.146R n=1,093; RSI > 60 grades **−0.194R** n=78).
+  The same review caught two screen-surface sins: intraday freshness
+  was 4 days (ADT's Tuesday 1h bar rendered as Friday's state — now
+  1h = same day, 4h = 2 days) and rows carried no bar stamp (now
+  per-row, the stamp-freshness-per-row rule applied to the screen).
 
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
