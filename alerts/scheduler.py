@@ -633,6 +633,75 @@ def run_hourly_oscillator_refresh():
     _run_oscillator_scan_safe(include_daily_weekly=False)
 
 
+def run_close_sync_and_restamp():
+    """4:35 PM ET — the day's daily bars land the same evening, from the
+    real-time source (Eric, 2026-08-14: "our data is realtime. that
+    shouldn't be an issue ever again"). One Polygon grouped-daily call
+    upserts the session's bars for known tickers, then the full fleet
+    re-stamps so daily/weekly reads carry TODAY at review time instead
+    of waiting on the 10 PM FMP batch. A 0-row sync skips the re-stamp
+    loudly — re-stamping yesterday's table would only dress up stale."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    try:
+        from analysis.close_sync import sync_todays_closes
+        n = sync_todays_closes()
+        if n == 0:
+            log.warning("[close-sync] nothing landed — skipping the 4:35 "
+                        "re-stamp; the 10:45 settling pass will retry")
+            return
+    except Exception as e:
+        log.error(f"[close-sync] failed: {e}")
+        return
+    _run_oscillator_scan_safe(include_daily_weekly=True)
+
+
+def run_evening_oscillator_restamp():
+    """Settling pass after the nightly FMP price ingest (price-cron,
+    ~10 PM ET) overwrites the Polygon close-sync rows with official
+    closes. Also the safety net for a failed 4:35 sync: without it,
+    Friday's close would not reach the screens until Monday 6:45 and a
+    weekend review reads Thursday (found 2026-08-14, Eric: "why
+    thursdays bars?"). Two slots (10:45, 11:30 PM ET) so a late ingest
+    gets a second chance; the run is skipped honestly — with a log —
+    while today's bars are absent, and the daily claim is only taken
+    when a re-stamp actually runs."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    try:
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT max(trade_date) FROM daily_prices")
+                latest = cur.fetchone()[0]
+        finally:
+            conn.close()
+        # Compare in ET — at 10:45 PM ET the server's UTC date is already
+        # tomorrow, and a UTC compare would deem the ingest forever late.
+        today_et = _dt.datetime.now(ZoneInfo("America/New_York")).date()
+        if latest is None or latest < today_et:
+            log.warning("[oscillator] evening re-stamp: today's daily bars "
+                        f"not ingested yet (latest {latest}) — skipping slot")
+            return
+    except Exception as e:
+        log.warning(f"[oscillator] evening re-stamp freshness check failed: {e}")
+        return
+    if not _claim_daily_job("oscillator_evening_restamp"):
+        return
+    _run_oscillator_scan_safe(include_daily_weekly=True)
+
+
 def run_iv_snapshot_job():
     """Nightly ATM-IV / open-interest snapshot (5:35 PM ET) — grows
     Watchtower's own IV-rank history so option structure choices (spreads
@@ -1549,6 +1618,31 @@ def start_scheduler():
         CronTrigger(day_of_week="mon-fri", hour="10,11,13,14,15", minute="5",
                     timezone=et),
         id="hourly_oscillator_refresh",
+        replace_existing=True,
+    )
+
+    # Same-evening close sync + full re-stamp — 4:35 PM ET: the session's
+    # daily bars from Polygon (grouped daily, one call), then daily/weekly
+    # oscillator rows carry TODAY at evening review time.
+    scheduler.add_job(
+        run_close_sync_and_restamp,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="35", timezone=et),
+        id="close_sync_restamp",
+        replace_existing=True,
+    )
+
+    # Settling re-stamp after the official nightly ingest (10 PM ET), with
+    # a second slot for late ingests.
+    scheduler.add_job(
+        run_evening_oscillator_restamp,
+        CronTrigger(day_of_week="mon-fri", hour="22", minute="45", timezone=et),
+        id="evening_oscillator_restamp",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_evening_oscillator_restamp,
+        CronTrigger(day_of_week="mon-fri", hour="23", minute="30", timezone=et),
+        id="evening_oscillator_restamp_late",
         replace_existing=True,
     )
 

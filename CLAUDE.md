@@ -233,7 +233,19 @@ Rendering doctrine, same spirit as the rest of this file:
   excuse correctly: the data is real-time, the CADENCE was the gap —
   the 4h/1h oscillator scan now refreshes hourly through the session
   (10:05–15:05 plus the 12:45 chain), so stored intraday rows track
-  the tape, not the morning.
+  the tape, not the morning. Third pass, same evening: the **%R leg**
+  (Eric: "add a curving up williams %R from the bottom") — %R(28)
+  pinned ≤ −80 within 10 bars and rising at fire; like the stoch leg
+  it isn't in the episode record, so it grades live. And the daily
+  side of "our data is realtime": `analysis/close_sync.py` upserts
+  the session's grouped-daily Polygon bars at 4:35 PM and re-stamps
+  the fleet, so daily/weekly rows carry TODAY at evening review
+  instead of waiting for the 10 PM FMP batch ("why thursdays bars?"
+  — because the scan predated the ingest, and Friday's close would
+  otherwise not exist on a screen until Monday). FMP's nightly
+  ingest stays the settling authority (10:45/11:30 PM re-stamp), and
+  a 0-row sync skips the re-stamp loudly rather than dressing up a
+  stale table.
 
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
