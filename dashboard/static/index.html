@@ -806,14 +806,21 @@
       the trade direction within reach of its trigger, a weekly that isn't fighting the trade, and
       real relative strength — the setups you'd actually enter. <b>Loaded spring</b> is the
       backtest's best cohort (+4.4%/+2.7% vs SPY per 21d): money flow or %R dips while RSI refuses
-      to give up 50 — shallow digestion in a strong name, always bullish. <b>Washout watch</b> is
+      to give up 50 — shallow digestion in a strong name, always bullish. <b>Cipher reversal</b>
+      is the washed-out-and-turning state, six hard legs at once: money flow deep in the red
+      (≤ −8) and curving up, waves crossing up out of the lower band (trough ≤ −40, cross ≤ 4
+      bars old), RSI turning but still ≤ 60, the StochRSI pair low and curling (d ≤ 50, k ≥ d),
+      and %R rising off a pinned floor — always bullish, and the row's computed direction often
+      reads bearish because the wash IS the setup (graded +0.105R vs a −0.012R daily baseline at
+      the 320k-episode record; the stoch and %R legs grade live). <b>Washout watch</b> is
       the raw stretched-and-turning list: the most oversold names in the market, where turns
       <i>start</i> — stalk them until they build the higher low, don't buy the first green dot.
       Divergence stack counts (2/4, 3/4…) are context, not conviction — the replay shows stacking
       doesn't add edge. Bearish setups here are <i>warnings on longs</i>, not short entries (every
       bearish oscillator cohort has positive forward returns); shorts come from the Patterns tab.
-      Refreshed with the pattern scans: full at 6:45 AM ET, 4H/1H again at 12:45 PM. Click a row
-      for the chart drawer.</p>
+      Refreshed continuously: full scan 6:45 AM ET, 4H/1H hourly through the session, daily/weekly
+      re-stamped from the day's closes at 4:35 PM. Every row shows the bar it was computed on.
+      Click a row for the chart drawer.</p>
     </div>
     <div class="controls">
       <div class="seg" id="osc-tf">
@@ -831,6 +838,7 @@
         <select id="osc-setup">
           <option value="entry_grade" selected>Entry grade (quality-gated)</option>
           <option value="loaded_spring">Loaded spring (RSI holds 50, flow/%R dip)</option>
+          <option value="cipher_reversal">Cipher reversal (washed out + turning)</option>
           <option value="high_confluence">Washout watch (raw confluence 60+)</option>
           <option value="wt_extreme_cross">Wave cross from extreme</option>
           <option value="divergence">Wave divergence</option>
@@ -862,10 +870,11 @@
           <th title="Relative strength 1–99 vs the screener universe">RS</th>
           <th class="left" title="Best live chart pattern in the trade direction (entry-grade view), with distance to trigger">Pattern</th>
           <th class="left" title="Signals fired at the last confirmed bar">Signals</th>
+          <th title="The confirmed bar this row was computed on — freshness is a row fact, not a page fact">Bar</th>
         </tr></thead>
         <tbody id="osc-body"></tbody>
       </table>
-      <div id="osc-empty" class="empty" style="display:none">No names match this setup right now — the scan refreshes at 6:45 AM / 12:45 PM ET.</div>
+      <div id="osc-empty" class="empty" style="display:none">No names match this setup right now — a quiet screen is a recorded read, not an error. 4H/1H refresh hourly through the session; daily/weekly re-stamp at 4:35 PM ET from the day's closes.</div>
     </div>
   </section>
 
@@ -1504,6 +1513,19 @@ async function loadOscillator() {
   state.oscAsOf = d.as_of_et || "";
   renderOscillator();
 }
+function fmtBarTs(ts, tf) {
+  // Per-row bar stamp (the ADT lesson: a Tuesday 1h bar is not a Friday
+  // state). Intraday shows ET date+time; daily/weekly the bar date.
+  if (!ts) return "—";
+  try {
+    if (tf === "4h" || tf === "1h") {
+      const d = new Date(ts);
+      return d.toLocaleString("en-US", { timeZone: "America/New_York",
+        month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+    }
+    return ts.slice(0, 10);
+  } catch { return String(ts).slice(0, 10); }
+}
 function renderOscillator() {
   const q = (state.osc.search || "").trim().toUpperCase();
   const secCounts = {};
@@ -1547,6 +1569,7 @@ function renderOscillator() {
       <td class="num">${r.rs_pct != null ? `<b style="color:${rsColor(r.rs_pct)}">${r.rs_pct}</b>` : "—"}</td>
       <td class="left" style="font-size:11px">${pat}</td>
       <td class="left" style="font-size:11px;color:var(--muted)">${esc((r.signal_names || []).join(", ") || "—")}</td>
+      <td class="num" style="font-size:10px;color:var(--muted)">${fmtBarTs(r.bar_ts, state.osc.tf)}</td>
     </tr>`;
   }).join("");
   body.querySelectorAll("tr").forEach(tr => tr.onclick = () => openDrawer(tr.dataset.ticker));

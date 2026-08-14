@@ -957,8 +957,10 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
                                  top_n: int = 15) -> str:
     """
     Pull names whose Watchtower Oscillator is flashing a setup. Reads the
-    fleet scan (refreshed after each pattern scan: full at 6:45 AM ET,
-    4h/1h again at 12:45 PM ET).
+    fleet scan (full at 6:45 AM ET; 4h/1h hourly through the session;
+    daily/weekly re-stamped from the day's closes at 4:35 PM ET, settled
+    against the official ingest at 10:45 PM). Every row carries its own
+    bar stamp.
 
     entry_grade (default) = ENTRIES: supportive oscillator PLUS a live
     pattern in the trade direction near its trigger, a weekly that isn't
@@ -999,8 +1001,9 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
         rows = (data.get("rows") or [])[:max(1, min(top_n, 50))]
         if not rows:
             return (f"No {timeframe} names currently match setup '{setup}' "
-                    f"({direction}). The scan refreshes after each pattern scan "
-                    "(6:45 AM / 12:45 PM ET).")
+                    f"({direction}) — a quiet screen is a recorded read, not "
+                    "an error. 4h/1h refresh hourly through the session; "
+                    "daily/weekly re-stamp at 4:35 PM ET from the day's closes.")
         lines = [f"**Oscillator screen — {setup}, {timeframe}, {direction}** "
                  f"({len(rows)} shown; scanned {data.get('as_of_et') or 'n/a'})", ""]
         def _n(v, spec):
