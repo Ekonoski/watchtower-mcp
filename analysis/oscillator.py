@@ -83,7 +83,16 @@ PERF_MIN_CONFLUENCE = 60
 #     Location: the wave trough must sit in the lower band. Timing: RSI
 #     must still be turning, not recovered — episodes with the wash but
 #     RSI > 60 grade −0.194R (n=78) vs +0.146R (n=1,093) at RSI ≤ 60.
-SIGNALS_VERSION = 6
+# v7: the green-RSI leg (Eric, same evening, AGO vs UNH — "it doesn't
+#     have green RSIs like UNH does"). AGO's 4h carried the whole v6
+#     stack but its StochRSI pair had already run to 84/64 with the wave
+#     cross 7 bars old — the turn was SPENT, and the panel showed no
+#     green. UNH: stoch 37/18 curling, cross this bar. So: stoch_d ≤ 50
+#     with k ≥ d (the pair still low and curling up), and the wave cross
+#     tightens to ≤ 4 bars (NFLX-3D archetype fired at 3; AGO's 7 is a
+#     chase). Stoch isn't in the episode record, so this leg is graded
+#     live by alert-performance forward returns, stated where surfaced.
+SIGNALS_VERSION = 7
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
 # red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
@@ -92,9 +101,10 @@ SIGNALS_VERSION = 6
 # rather than a mid-range wobble, and the RSI above which a "turn" is
 # actually a finished recovery.
 CR_MF_DEEP = -8.0
-CR_X_FRESH_BARS = 8
+CR_X_FRESH_BARS = 4
 CR_WT_TROUGH = -40.0
 CR_RSI_MAX = 60.0
+CR_STOCH_D_MAX = 50.0
 
 
 # ── Math helpers (vectorized) ────────────────────────────────────────────────
@@ -571,7 +581,14 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
         # Timing leg (v6): turning, not recovered — RSI above the ceiling
         # means the reversal already happened and this bar is chasing it.
         rsi_turn = rsi_last > float(p["rsi"]) and rsi_last <= CR_RSI_MAX
-        if deep and curving and wave_turn and rsi_turn:
+        # Green-RSI leg (v7): the StochRSI pair must still be low and
+        # curling up. A stoch that already ran (AGO: 84/64, cross 7 bars
+        # old) is the same washed chart with the turn already spent.
+        sk = float(c["stoch_k"]) if not np.isnan(c["stoch_k"]) else None
+        sd = float(c["stoch_d"]) if not np.isnan(c["stoch_d"]) else None
+        green_rsi = sk is not None and sd is not None \
+            and sd <= CR_STOCH_D_MAX and sk >= sd
+        if deep and curving and wave_turn and rsi_turn and green_rsi:
             mh = df["macd_hist"].iloc[-60:].values
             piv = _pivot_idx(mh, 3, "low")
             troughs = [float(mh[i]) for i in piv
@@ -587,6 +604,8 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                 "wt_trough": round(wt2_trough, 1),
                 "x_up_bars_ago": int(bsc),
                 "rsi": round(rsi_last, 1),
+                "stoch_k": round(sk, 1),
+                "stoch_d": round(sd, 1),
                 "macd_hl": macd_hl,
                 "div_bull": int(dv.get("count") or 0) if dv.get("dir") == "bullish" else 0,
                 "full_stack": bool(macd_hl),

@@ -222,6 +222,18 @@ Rendering doctrine, same spirit as the rest of this file:
   was 4 days (ADT's Tuesday 1h bar rendered as Friday's state — now
   1h = same day, 4h = 2 days) and rows carried no bar stamp (now
   per-row, the stamp-freshness-per-row rule applied to the screen).
+  Second calibration pass, same evening (AGO vs UNH): the **green-RSI
+  leg** — AGO carried the full stack but its StochRSI pair had run to
+  84/64 with the cross 7 bars old (turn SPENT, no green on the panel);
+  UNH sat at 37/18 curling with the cross that bar. So stoch_d ≤ 50
+  with k ≥ d, and cross freshness tightened 8 → 4 bars (the NFLX-3D
+  archetype fired at 3; AGO's 7 was a chase). Stoch isn't in the
+  episode record — this leg grades live via alert-performance, stated
+  wherever the numbers surface. And Eric killed the freshness-gate
+  excuse correctly: the data is real-time, the CADENCE was the gap —
+  the 4h/1h oscillator scan now refreshes hourly through the session
+  (10:05–15:05 plus the 12:45 chain), so stored intraday rows track
+  the tape, not the morning.
 
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
