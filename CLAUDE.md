@@ -190,6 +190,29 @@ Rendering doctrine, same spirit as the rest of this file:
   order type's execution fact, and the shadow exists to price whether proof
   should be demanded there too.
 
+- **cipher_reversal is a named screen, not a gate** (2026-08-14, the LNG
+  miss): asked for charts matching the NFLX-3D state — money flow deep in
+  the red and curving up, waves crossing up from the low band, RSI turning
+  — the mf_round screen surfaced LNG's 4h (MF **+1.9**, %R −3), because
+  the arc SHAPE carries no requirement on the LEVEL it turns from. The
+  composite (`cipher_reversal` in `evaluate_signals`, screener setup of
+  the same name) makes the level a hard leg: mf trough ≤ −8 and still
+  red, curving up, wave cross-up ≤ 8 bars old from the lower half, RSI
+  turning; MACD higher-low tags `full_stack`, never required. Graded at
+  the 320k v6 episodes: daily bullish breakouts in the core state pay
+  **+0.105R (n=6,505, 63.9% 1R) against a −0.012R daily baseline**, the
+  gradient in wash depth is monotone, and the shape-only cohort (same
+  curve, mf > 0) grades **−0.020R (n=8,578)** — the level IS the signal.
+  On the WEEKLY the state underperforms the +0.357R weekly baseline
+  (+0.167R, n=1,473): washouts are a daily/intraday reversal read; the
+  weekly selector remains mid-band strength (the cipher-tag finding).
+  Caveats stated where the numbers surface: graded on breakout-close
+  entries at pattern episodes, and the record can't express the RSI-turn
+  or cross-freshness legs, so the live definition is stricter than the
+  graded core. The composite is confluence-blind by test
+  (`tests/test_cipher_reversal.py`) and earns its own 7/30/90-day
+  forward returns via alert-performance.
+
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
   inverse_hs while the same scanner held a weekly hs_top (forming) and a
