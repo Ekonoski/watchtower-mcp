@@ -616,6 +616,23 @@ def run_midday_pattern_scan():
     _run_oscillator_scan_safe(include_daily_weekly=False)
 
 
+def run_hourly_oscillator_refresh():
+    """4h/1h oscillator refresh every hour through the session (Eric,
+    2026-08-14: "we have up to date real time data" — and he's right; the
+    bottleneck was never the data, it was the twice-a-day scan cadence.
+    An hourly reversal state has a shelf life of hours: TXN and AORT were
+    washes at the 12:45 stamp and had already bounced by 4 PM). Runs :05
+    past the hour so the just-completed hourly bar is what gets read.
+    Daily/weekly bars can't change intraday and stay untouched."""
+    try:
+        from screen.market_calendar import is_trading_day
+        if not is_trading_day():
+            return
+    except Exception:
+        pass
+    _run_oscillator_scan_safe(include_daily_weekly=False)
+
+
 def run_iv_snapshot_job():
     """Nightly ATM-IV / open-interest snapshot (5:35 PM ET) — grows
     Watchtower's own IV-rank history so option structure choices (spreads
@@ -1521,6 +1538,17 @@ def start_scheduler():
         run_midday_pattern_scan,
         CronTrigger(day_of_week="mon-fri", hour="12", minute="45", timezone=et),
         id="midday_pattern_scan",
+        replace_existing=True,
+    )
+
+    # Hourly 4h/1h oscillator refresh through the session — the intraday
+    # screens read stored rows, so the rows must track the tape, not the
+    # morning. (12:45's pattern chain covers the noon hour.)
+    scheduler.add_job(
+        run_hourly_oscillator_refresh,
+        CronTrigger(day_of_week="mon-fri", hour="10,11,13,14,15", minute="5",
+                    timezone=et),
+        id="hourly_oscillator_refresh",
         replace_existing=True,
     )
 
