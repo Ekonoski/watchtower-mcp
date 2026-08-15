@@ -1,12 +1,14 @@
 """The Williams-%R higher-low family — pctr_hl and base_turn, pinned.
 
 Calibrated 2026-08-15 against Eric's charts. CHWY is the archetype: two
-%R(28) floor troughs with real lift while price bases. NI is the
-refusal that defined the saturation rule — a 0.5-point "higher low"
-between two bars pinned at −99 is the indicator clamped at its bound,
-not absorption. MARA is the refusal that defined stabilization — its
-tape was still printing new 30-bar lows, so every wash metric was maxed
-by an ONGOING collapse. base_turn (the SNAP look) is the same structure
+%R(28) floor troughs rising while price bases. NI defined the
+saturation TAG — a 0.5-point "higher low" between two bars pinned at
+−99 is the indicator clamped at its bound, so the pair fires marked
+`shallow` and ranks last rather than being skipped (Eric: "sometimes
+those run like they did with CHWY"; flavors grade separately live).
+MARA is the refusal that defined stabilization — its tape was still
+printing new 30-bar lows, so every wash metric was maxed by an ONGOING
+collapse, and that guard stays hard. base_turn (the SNAP look) is the same structure
 with everything confirming: MACD histogram green under a still-negative
 line, waves crossed up and lifting, RSI mid-band, flow out of deep red,
 price above its 8-bar average.
@@ -74,17 +76,22 @@ def _frame(saturated=False, still_falling=False, spent=False, turned=False):
 
 
 def main():
-    # 1) The CHWY shape fires pctr_hl with an auditable payload.
+    # 1) The CHWY shape fires pctr_hl with an auditable payload, and a
+    # real-lift pair is NOT shallow.
     ev = evaluate_signals(_frame())
     ph = ev["signals"].get("pctr_hl")
     assert ph, ev["signals"]
     assert ph["low1"] == -92.0 and ph["low2"] == -78.0 and ph["lift"] == 14.0, ph
     assert ph["pctr"] <= -45 and ph["stable_bars"] >= 3, ph
+    assert ph["shallow"] is False, ph
 
-    # 2) The NI trap: a 0.5-point pair pinned at −99 is saturation — refused.
+    # 2) The NI look — a 0.5-point pair pinned at −99 — fires TAGGED
+    # shallow (Eric: small higher lows sometimes run; grade, don't skip).
+    # What actually separated NI from CHWY was its still-falling tape,
+    # and that guard is case 3.
     ev = evaluate_signals(_frame(saturated=True))
-    assert "pctr_hl" not in ev["signals"], ev["signals"]
-    assert "base_turn" not in ev["signals"], ev["signals"]
+    ph = ev["signals"].get("pctr_hl")
+    assert ph and ph["shallow"] is True, ev["signals"]
 
     # 3) The MARA trap: tape still printing new lows — refused.
     ev = evaluate_signals(_frame(still_falling=True))
@@ -110,10 +117,11 @@ def main():
     bare = {k: v for k, v in sig.items() if k not in ("pctr_hl", "base_turn")}
     assert _confluence(df, sig, None) == _confluence(df, bare, None)
 
-    print("ok — the CHWY shape fires with an auditable payload, the NI "
-          "saturation and MARA still-falling traps are refused, spent %R "
-          "drops the early flavor, the SNAP look fires base_turn, and "
-          "neither signal can touch the confluence score")
+    print("ok — the CHWY shape fires unshallow, the NI saturated pair "
+          "fires tagged shallow (graded, never skipped), the MARA "
+          "still-falling trap stays refused, spent %R drops the early "
+          "flavor, the SNAP look fires base_turn, and neither signal "
+          "can touch the confluence score")
 
 
 if __name__ == "__main__":
