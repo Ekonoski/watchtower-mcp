@@ -104,7 +104,31 @@ PERF_MIN_CONFLUENCE = 60
 #     (−8..−4 grades +0.054, −4..0 grades +0.085, both under the ≤ −8
 #     core's +0.105), so this threshold is LOOK calibration judged by
 #     forward returns, not a backtest claim.
-SIGNALS_VERSION = 9
+# v10: the Williams-%R higher-low family (Eric, 2026-08-15 calibration —
+#     CHWY the archetype, NI/MARA the refusals). pctr_hl = the earliest
+#     whisper: two confirmed %R(28) floor troughs with REAL lift (a
+#     saturated-floor pair like NI's −99.2 → −98.7 is measurement noise,
+#     not absorption), tape stabilized, still pre-breakout, %R ≤ −45.
+#     base_turn = the SNAP-look confirmation: same %R structure plus
+#     everything turning together — MACD hist green with the line still
+#     under water, waves crossed up and lifting, RSI mid-band, flow out
+#     of deep red, price back above its 8-bar average. At the episodes,
+#     %R floor troughs of either kind front-run 1R at 64-66% vs a 57%
+#     baseline; expectancy favors the flush (+0.26R) over the higher
+#     low (+0.03R) at breakout entries — stated where surfaced; the
+#     live claim ("higher lows lead big moves") grades via forward
+#     returns.
+SIGNALS_VERSION = 10
+
+# %R higher-low family legs.
+PHL_FLOOR = -70.0          # both troughs at/below this
+PHL_LIFT_MIN = 8.0         # near the floor, demand real lift...
+PHL_UNSATURATED = -88.0    # ...unless the second trough already left it
+PHL_SPACING = (4, 30)      # bars between the two troughs
+PHL_FRESH_BARS = 14        # second-trough recency
+PHL_UNSPENT_MAX = -45.0    # pctr_hl only: %R not yet spent
+PHL_STAB_BARS = 3          # most recent 30-bar closing low at least this old
+PHL_PIVOT_K = 2
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
 # red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
@@ -387,6 +411,47 @@ def _pivot_idx(vals: np.ndarray, k: int, kind: str) -> list:
     return out
 
 
+def _pctr_hl_pair(df: pd.DataFrame):
+    """Confirmed Williams-%R higher-low pair off the floor with the tape
+    stabilized — the structure pctr_hl and base_turn both stand on.
+    Pure; returns the pair payload or None.
+
+    Calibrated 2026-08-15 on Eric's charts: CHWY (the archetype) fires;
+    NI is refused because a 0.5-point 'higher low' between two bars
+    pinned at −99 is floor saturation, not absorption; MARA is refused
+    because its tape was still printing new lows — a wash metric maxed
+    by an ONGOING collapse is a knife, not a base."""
+    rp = df["pctr"].values[-60:]
+    cl = df["close"].values[-60:]
+    n = len(rp)
+    if n < 40 or np.isnan(rp[-1]):
+        return None
+    piv = [i for i in _pivot_idx(rp, PHL_PIVOT_K, "low")
+           if not np.isnan(rp[i]) and rp[i] <= PHL_FLOOR]
+    if len(piv) < 2:
+        return None
+    i1, i2 = piv[-2], piv[-1]
+    lift = float(rp[i2] - rp[i1])
+    if not (rp[i2] > rp[i1] and (lift >= PHL_LIFT_MIN or rp[i2] > PHL_UNSATURATED)):
+        return None                       # saturated-floor pair (the NI trap)
+    if not (PHL_SPACING[0] <= i2 - i1 <= PHL_SPACING[1]):
+        return None
+    if not (1 <= n - 1 - i2 <= PHL_FRESH_BARS):
+        return None
+    if rp[-1] <= rp[i2]:
+        return None                       # not lifting off the higher low
+    c30 = cl[-30:]
+    if cl[-1] > 0.99 * float(np.max(c30)):
+        return None                       # already broken out — different trade
+    low_age = (len(c30) - 1) - int(np.max(np.where(c30 == np.min(c30))))
+    if low_age < PHL_STAB_BARS:
+        return None                       # still printing new lows (the MARA trap)
+    return {"low1": round(float(rp[i1]), 1), "low2": round(float(rp[i2]), 1),
+            "lift": round(lift, 1), "low2_bars_ago": int(n - 1 - i2),
+            "price_div": bool(cl[i2] <= cl[i1] * 1.01),
+            "stable_bars": int(low_age), "pctr": round(float(rp[-1]), 1)}
+
+
 def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
     """Signals present AT the last confirmed bar. Returns
     {signals: {...}, confluence_score, direction} — deterministic, and by
@@ -642,6 +707,35 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                 "div_bull": int(dv.get("count") or 0) if dv.get("dir") == "bullish" else 0,
                 "full_stack": bool(macd_hl),
             }
+
+    # 9/10) The Williams-%R higher-low family (Eric, 2026-08-15) — one
+    # reversal, instrumented at two more ages beside cipher_reversal:
+    # pctr_hl is the earliest whisper (structure present, %R still washed);
+    # base_turn is the SNAP-look confirmation (same structure, everything
+    # turning together). Both bullish only; both structurally unable to
+    # touch the confluence score, same as cipher_reversal.
+    pair = _pctr_hl_pair(df)
+    if pair is not None:
+        if pair["pctr"] <= PHL_UNSPENT_MAX:
+            sig["pctr_hl"] = dict(pair, dir="up")
+        mh_last = float(c["macd_hist"]) if not np.isnan(c["macd_hist"]) else None
+        macd_last = float(c["macd"]) if not np.isnan(c["macd"]) else None
+        mf_last = float(df[MF_DEFAULT].values[-1]) \
+            if not np.isnan(df[MF_DEFAULT].values[-1]) else None
+        sma8 = float(np.mean(df["close"].values[-8:]))
+        if (rsi_last is not None and mh_last is not None
+                and macd_last is not None and mf_last is not None
+                and mh_last > 0 and macd_last <= 0        # green hist, line under water
+                and c["wt1"] > c["wt2"]
+                and -50 <= float(c["wt2"]) <= 15          # waves lifting, not extended
+                and 40 <= rsi_last <= 60                  # mid-band, room to run
+                and mf_last >= -10                        # flow out of the deep red
+                and float(c["close"]) >= sma8):           # price reclaimed the average
+            sig["base_turn"] = dict(pair, dir="up",
+                                    wt2=round(float(c["wt2"]), 1),
+                                    macd=round(macd_last, 2),
+                                    macd_hist=round(mh_last, 3),
+                                    rsi=round(rsi_last, 1))
 
     score, direction = _confluence(df, sig, pattern_ctx)
     return {"signals": sig, "confluence_score": score, "direction": direction}
@@ -903,7 +997,7 @@ def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
     x = sig.get("wt_cross")
     curl = sig.get("mf_curl") or {}
     qualifying = [k for k in ("loaded_spring", "divergence", "pctr_hook",
-                              "cipher_reversal") if k in sig]
+                              "cipher_reversal", "pctr_hl", "base_turn") if k in sig]
     if x and x["zone"] == "extreme":
         qualifying.append("wt_cross")
     if curl.get("volume_backed"):

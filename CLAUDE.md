@@ -268,6 +268,30 @@ Rendering doctrine, same spirit as the rest of this file:
   in the screen and the payload tags `rounded`; a jagged three-bar
   rise still qualifies but says so.
 
+- **The %R higher-low family: one reversal, three ages** (2026-08-15
+  weekend calibration — CHWY the archetype, NI/MARA the refusals, SNAP
+  the confirmation look). `pctr_hl` = the earliest whisper: two
+  confirmed Williams %R(28) floor troughs (≤ −70) with REAL lift (≥ 8
+  points, or the second already above −88 — a pair pinned at −99 is
+  the indicator saturated at its bound, not absorption), the tape no
+  longer printing 30-bar closing lows, still pre-breakout, %R ≤ −45.
+  `base_turn` = the same structure with everything confirming: MACD
+  hist green while the line is still under water, waves crossed up in
+  (−50, +15), RSI 40–60, flow ≥ −10, price above its 8-bar average.
+  With `cipher_reversal` between them the lifecycle reads pctr_hl →
+  cipher_reversal → base_turn; earliest = most room and most risk. At
+  the episodes, %R floor troughs of either flavor front-run 1R at
+  64–66% vs a 57% baseline, but expectancy at breakout entries favors
+  the fresh flush (+0.26R n=686) over the higher low (+0.03R n=1,430)
+  — stated where the numbers surface; the live claim ("higher lows
+  lead big moves") grades via alert-performance forward returns. Both
+  are confluence-blind by test (`tests/test_pctr_hl_family.py`). And
+  the MNDY lesson rides with them: every non-entry-grade screen row
+  now carries its best live chart pattern with **⚠ on bearish
+  structures** — MNDY topped the base_turn list while sitting on a
+  freshly REJECTED breakout (Friday −7.2% off the 94.40 trigger), and
+  a bullish panel at a rejected trigger must say so.
+
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
   inverse_hs while the same scanner held a weekly hs_top (forming) and a
