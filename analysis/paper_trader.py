@@ -825,6 +825,85 @@ def persist_closing_bars():
         conn.close()
 
 
+# The final RTH bar starts at 15:45 ET; anything earlier is not the close.
+SETTLE_FINAL_BAR_START = dt.time(15, 45)
+
+
+def swing_settle_decision(direction: str, stop: float, target: float, final_bar):
+    """Pure. Exit decision for a swing position on the TRUE daily close —
+    the completed 15:45–16:00 bar. Same rules and precedence as the live
+    loop's eod branch: stop accepts on the bar's CLOSE beyond the stop
+    (wick rule), target on a touch. Returns (exit_px, reason) or (None,
+    None).
+
+    Exists because the loop's window ends at 15:58, so its 'daily close'
+    was really the 15:30–15:45 bar — and on 2026-08-14 AGMB closed that
+    bar at 13.16 (0.9 cents ABOVE its 13.1507 stop) then printed the true
+    close at 13.03, and the stop never fired. A stop that breaks at 3:52
+    must count exactly like one that breaks at 3:44 — one rule for
+    winners and losers alike."""
+    ts, op_, close, hi, lo = final_bar
+    sign = 1 if direction == "long" else -1
+    if sign * (close - stop) < 0:
+        return close, "stop"
+    if (direction == "long" and hi >= target) or \
+            (direction == "short" and lo <= target):
+        return target, "target"
+    return None, None
+
+
+def run_swing_close_settle():
+    """Post-close settling pass (~16:20 ET, after the 16:07 closing-bar
+    persist): decide open swing positions on the day's RECORDED final RTH
+    bar. Reads paper_spec_bars only — never refetches (reconstruction is
+    not tape); a missing final bar is a logged hole, not a decision."""
+    now = dt.datetime.now(ET)
+    if now.weekday() >= 5 or now.time() < dt.time(16, 10):
+        return
+    today = now.date()
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as c:
+            c.execute("""SELECT s.ticker, s.direction, s.stop, s.target,
+                                t.id, t.entry_px, t.entered_at
+                         FROM paper_specs s JOIN paper_trades t ON t.spec_id=s.id
+                         WHERE s.book='swing' AND t.exited_at IS NULL""")
+            rows = c.fetchall()
+        for tk, direction, stop, tgt, tid, entry_px, entered_at in rows:
+            stop, tgt, entry_px = float(stop), float(tgt), float(entry_px)
+            with conn.cursor() as c:
+                c.execute("""SELECT ts, open, close, high, low FROM paper_spec_bars
+                             WHERE ticker=%s AND trade_date=%s
+                             ORDER BY ts DESC LIMIT 1""", (tk, today))
+                row = c.fetchone()
+            if row is None or row[0].astimezone(ET).time() < SETTLE_FINAL_BAR_START:
+                log.warning("[paper] settle: %s final bar not on record — "
+                            "hole, no decision", tk)
+                continue
+            final = (row[0], float(row[1]), float(row[2]),
+                     float(row[3]), float(row[4]))
+            # Entry-bar lookahead guard, same as the loop: the entry bar's
+            # range is pre-entry price action.
+            if entered_at is not None and \
+                    final[0] + dt.timedelta(minutes=15) <= entered_at:
+                continue
+            exit_px, reason = swing_settle_decision(direction, stop, tgt, final)
+            if exit_px is None:
+                continue
+            sign = 1 if direction == "long" else -1
+            r_dist = abs(entry_px - stop) or 0.01
+            r_mult = round(sign * (exit_px - entry_px) / r_dist, 2)
+            with conn.cursor() as c:
+                c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
+                             exit_reason=%s, r_multiple=%s WHERE id=%s""",
+                          (exit_px, reason, r_mult, tid))
+            conn.commit()
+            log.info("[paper] SETTLE-EXIT swing %s %s @ %.2f (%s, %+.2fR) — "
+                     "true daily close", tk, direction, exit_px, reason, r_mult)
+    finally:
+        conn.close()
+
+
 def run_trigger_loop():
     now = dt.datetime.now(ET)
     if now.weekday() >= 5 or not (dt.time(9, 35) <= now.time() <= dt.time(15, 58)):

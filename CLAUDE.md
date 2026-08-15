@@ -135,7 +135,17 @@ Rendering doctrine, same spirit as the rest of this file:
   class can ever clear; the 2026-08-11 admission fix had left the
   entry-side gate class-blind.
   One rule for winners and losers alike — any convention change renders in
-  the ledger the day it ships.
+  the ledger the day it ships. **The daily close means the TRUE close**
+  (2026-08-15, the AGMB 0.9-cent case): the loop's window ends 15:58, so
+  its "daily close" was the 15:30–15:45 bar — AGMB closed that bar 0.9
+  cents above its stop, printed the true close 12 cents through it, and
+  no exit fired. A 16:20 settling pass (`run_swing_close_settle`) now
+  decides open swing positions on the recorded final RTH bar (persisted
+  by the 16:07 closing-bar pass — never refetched; a missing bar is a
+  logged hole, not a decision). Eric ruled the convention retroactive to
+  its discovery: AGMB settled at 13.03 for −1.07R, the book's first
+  swing exit. `tests/test_swing_settle.py` pins the bars and, by
+  signature, the decision's inability to fetch.
 - **The swing book trades positive-prior classes only** (2026-08-08):
   `SWING_CLASSES` in `paper_trader.py` is the explicit (pattern, timeframe)
   allowlist with each class's backtest prior beside it. No flat
