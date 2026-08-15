@@ -1602,8 +1602,9 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
 
 
 _OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
-               "cipher_reversal", "wt_extreme_cross", "pctr_hook",
-               "divergence", "mf_round", "mf_curl", "any_signal")
+               "cipher_reversal", "pctr_hl", "base_turn",
+               "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
+               "mf_curl", "any_signal")
 
 
 def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
@@ -1684,6 +1685,8 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "high_confluence": "o.confluence_score >= 60",
             "loaded_spring": "o.signals ? 'loaded_spring'",
             "cipher_reversal": "o.signals ? 'cipher_reversal'",
+            "pctr_hl": "o.signals ? 'pctr_hl'",
+            "base_turn": "o.signals ? 'base_turn'",
             "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
@@ -1697,13 +1700,17 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "mf_curl": "o.signals->'mf_curl'->>'volume_backed' = 'true'",
             "any_signal": "o.signals != '{}'::jsonb",
         }[setup]
-        # Loaded spring and cipher reversal are bullish by construction, but
-        # the row's COMPUTED direction is usually bearish (the flow is deep
-        # red / pointing down — that's the setup) — filtering on it would
+        # Loaded spring, cipher reversal, and the %R higher-low family are
+        # bullish by construction, but the row's COMPUTED direction is
+        # usually bearish (the wash IS the setup) — filtering on it would
         # hide exactly the names these screens exist to find. Spring ranks
-        # by how firmly RSI is holding; cipher reversal ranks the full
-        # stack (MACD higher-low aligned) first, then the deepest wash.
-        dir_clause = ("" if setup in ("loaded_spring", "cipher_reversal") else
+        # by how firmly RSI is holding; cipher reversal ranks rounded
+        # arcs, then the full stack, then the deepest wash; pctr_hl ranks
+        # divergent pairs off the deepest first floor; base_turn ranks by
+        # relative strength (the SNAP look is a quality screen).
+        _BULL_BY_CONSTRUCTION = ("loaded_spring", "cipher_reversal",
+                                 "pctr_hl", "base_turn")
+        dir_clause = ("" if setup in _BULL_BY_CONSTRUCTION else
                       "AND (%(dir)s = 'all' OR o.direction = %(dir)s)")
         order_sql = {
             "loaded_spring": "(o.signals->'loaded_spring'->>'rsi')::float DESC",
@@ -1711,11 +1718,26 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                 "COALESCE((o.signals->'cipher_reversal'->>'rounded')::boolean, false) DESC, "
                 "(o.signals->'cipher_reversal'->>'full_stack')::boolean DESC, "
                 "(o.signals->'cipher_reversal'->>'mf_trough')::float ASC",
+            "pctr_hl":
+                "(o.signals->'pctr_hl'->>'price_div')::boolean DESC, "
+                "(o.signals->'pctr_hl'->>'low1')::float ASC",
+            "base_turn": "s.rs_pct DESC NULLS LAST",
         }.get(setup, "o.confluence_score DESC NULLS LAST")
+        # Structural context on every row (the MNDY lesson, 2026-08-15: a
+        # panel that looks bullish at a rejected trigger must say so) —
+        # best-scored live pattern in ANY direction, bearish ones flagged
+        # by the renderers.
         query = base_select + f"""
+             , p.pattern, p.timeframe, p.status, p.dist_to_trigger_pct,
+               p.direction
         FROM oscillator_scan o
         LEFT JOIN oscillator_scan w ON w.ticker = o.ticker AND w.timeframe = 'weekly'
         LEFT JOIN screener_snapshot s ON s.ticker = o.ticker
+        LEFT JOIN LATERAL (
+            SELECT pattern, timeframe, status, dist_to_trigger_pct, direction
+            FROM pattern_scan
+            WHERE ticker = o.ticker AND timeframe IN (o.timeframe, 'daily', 'weekly')
+            ORDER BY score DESC NULLS LAST LIMIT 1) p ON true
         WHERE o.timeframe = %(tf)s
           AND o.bar_ts > clock_timestamp() - make_interval(days => %(fresh)s)
           {dir_clause}
@@ -1782,6 +1804,13 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                 "pattern": r[20], "pattern_tf": r[21], "pattern_status": r[22],
                 "pattern_dist": _f(r[23]),
                 "entry_rank": round(_f(r[24]) or 0),
+            })
+        elif len(r) > 20:
+            # Structural context for every other setup (the MNDY lesson):
+            # best live pattern in ANY direction; bearish renders flagged.
+            row.update({
+                "pattern": r[20], "pattern_tf": r[21], "pattern_status": r[22],
+                "pattern_dist": _f(r[23]), "pattern_dir": r[24],
             })
         out.append(row)
     as_of_et = None

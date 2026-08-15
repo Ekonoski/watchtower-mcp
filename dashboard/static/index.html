@@ -814,7 +814,17 @@
       still ≤ 60, the StochRSI pair low and curling (d ≤ 50, k ≥ d),
       and %R rising off a pinned floor — always bullish, and the row's computed direction often
       reads bearish because the wash IS the setup (graded +0.105R vs a −0.012R daily baseline at
-      the 320k-episode record; the stoch, %R, and still-red-now legs grade live). <b>Washout watch</b> is
+      the 320k-episode record; the stoch, %R, and still-red-now legs grade live).
+      <b>%R higher low</b> and <b>Base turn</b> are the same reversal at two other ages:
+      %R higher low is the earliest whisper — two confirmed %R(28) floor troughs with real lift
+      (a pair pinned at −99 is saturation, not absorption), the tape no longer making new lows,
+      still pre-breakout, %R still ≤ −45; Base turn is the confirmation — the same %R structure
+      with everything turning together (MACD histogram green while the line is still under
+      water, waves crossed up and lifting, RSI mid-band, flow out of the deep red, price back
+      above its 8-bar average). At the episodes, %R floor troughs front-run 1R at 64–66% vs a
+      57% baseline; both new setups grade live via forward returns. Every non-entry-grade row
+      also shows its best live chart pattern — <b>⚠ marks a bearish structure</b>, because a
+      bullish panel at a rejected trigger must say so. <b>Washout watch</b> is
       the raw stretched-and-turning list: the most oversold names in the market, where turns
       <i>start</i> — stalk them until they build the higher low, don't buy the first green dot.
       Divergence stack counts (2/4, 3/4…) are context, not conviction — the replay shows stacking
@@ -841,6 +851,8 @@
           <option value="entry_grade" selected>Entry grade (quality-gated)</option>
           <option value="loaded_spring">Loaded spring (RSI holds 50, flow/%R dip)</option>
           <option value="cipher_reversal">Cipher reversal (washed out + turning)</option>
+          <option value="pctr_hl">%R higher low (earliest — floor basing)</option>
+          <option value="base_turn">Base turn (confirmed — the SNAP look)</option>
           <option value="high_confluence">Washout watch (raw confluence 60+)</option>
           <option value="wt_extreme_cross">Wave cross from extreme</option>
           <option value="divergence">Wave divergence</option>
@@ -1555,7 +1567,7 @@ function renderOscillator() {
     const wk = r.weekly_dir === "bullish" ? `<span class="pos">▲</span>`
       : (r.weekly_dir === "bearish" ? `<span class="neg">▼</span>` : "—");
     const pat = r.pattern
-      ? `${esc(PATTERN_LABELS[r.pattern] || r.pattern)} <span style="color:var(--muted)">${esc(r.pattern_tf === "weekly" ? "W" : (r.pattern_tf === "daily" ? "D" : r.pattern_tf))} ${esc(r.pattern_status || "")}${r.pattern_dist != null ? " " + (r.pattern_dist > 0 ? "+" : "") + r.pattern_dist.toFixed(1) + "%" : ""}</span>`
+      ? `${r.pattern_dir === "bearish" ? `<span class="neg" title="Live BEARISH structure — a bullish panel at a bearish trigger must say so">⚠ </span>` : ""}${esc(PATTERN_LABELS[r.pattern] || r.pattern)} <span style="color:var(--muted)">${esc(r.pattern_tf === "weekly" ? "W" : (r.pattern_tf === "daily" ? "D" : r.pattern_tf))} ${esc(r.pattern_status || "")}${r.pattern_dist != null ? " " + (r.pattern_dist > 0 ? "+" : "") + r.pattern_dist.toFixed(1) + "%" : ""}</span>`
       : "—";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
       <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> <b>${esc(r.ticker)}</b></td>

@@ -982,13 +982,28 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     first as full_stack but is not required; bullish only, direction arg
     ignored — the row's computed direction usually reads bearish because
     the wash IS the setup).
+    pctr_hl = the EARLIEST whisper of the same reversal: two confirmed
+    Williams %R(28) floor troughs with REAL lift (a pair pinned at −99
+    is saturation, not absorption), the tape no longer printing new
+    lows, still pre-breakout, %R still ≤ −45 (bullish only, direction
+    arg ignored). base_turn = the CONFIRMED stage (the SNAP look): the
+    same %R higher-low structure with everything turning together —
+    MACD histogram green while the line is still under water, waves
+    crossed up and lifting, RSI mid-band, flow out of the deep red,
+    price back above its 8-bar average (bullish only; ranks by relative
+    strength). Lifecycle: pctr_hl → cipher_reversal → base_turn are one
+    reversal at three ages; earliest = most room and most risk.
     high_confluence = the raw washout watchlist (most stretched names in
     the market — where turns START; stalk for the higher low, don't buy
     the first green dot). Bearish setups are warnings on longs, not short
     entries — every bearish oscillator cohort has positive forward returns.
+    Every non-entry-grade row carries its best live chart pattern; a
+    leading ⚠ marks a BEARISH structure (the MNDY lesson: a bullish
+    panel at a rejected trigger must say so).
 
     Args:
         setup: entry_grade | loaded_spring | cipher_reversal |
+               pctr_hl | base_turn |
                high_confluence | wt_extreme_cross | pctr_hook |
                divergence (price vs wave, confirmed pivots) |
                mf_round (smooth rounded money-flow turn — the arc, not a
@@ -1022,7 +1037,8 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
             pat = ""
             if r.get("pattern"):
                 d = r.get("pattern_dist")
-                pat = (f" · {r['pattern']} ({r.get('pattern_tf','')} "
+                warn = "⚠ " if r.get("pattern_dir") == "bearish" else ""
+                pat = (f" · {warn}{r['pattern']} ({r.get('pattern_tf','')} "
                        f"{r.get('pattern_status','')}"
                        + (f", {d:+.1f}% vs trigger" if d is not None else "") + ")")
             xst = ""
