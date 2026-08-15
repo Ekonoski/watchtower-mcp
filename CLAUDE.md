@@ -271,10 +271,14 @@ Rendering doctrine, same spirit as the rest of this file:
 - **The %R higher-low family: one reversal, three ages** (2026-08-15
   weekend calibration — CHWY the archetype, NI/MARA the refusals, SNAP
   the confirmation look). `pctr_hl` = the earliest whisper: two
-  confirmed Williams %R(28) floor troughs (≤ −70) with REAL lift (≥ 8
-  points, or the second already above −88 — a pair pinned at −99 is
-  the indicator saturated at its bound, not absorption), the tape no
+  confirmed Williams %R(28) floor troughs (≤ −70) rising, the tape no
   longer printing 30-bar closing lows, still pre-breakout, %R ≤ −45.
+  A saturated-floor pair (tiny lift, second trough still ≤ −88 — a
+  pair pinned at −99 is the indicator clamped at its bound) fires
+  TAGGED `shallow` and ranks LAST, never skipped — Eric's correction
+  the same day: "sometimes those run like they did with CHWY"; the
+  flavors grade separately via forward returns, and the NI/MARA
+  knife-guard is the stabilized-tape leg, which stays hard.
   `base_turn` = the same structure with everything confirming: MACD
   hist green while the line is still under water, waves crossed up in
   (−50, +15), RSI 40–60, flow ≥ −10, price above its 8-bar average.

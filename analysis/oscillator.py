@@ -118,7 +118,13 @@ PERF_MIN_CONFLUENCE = 60
 #     low (+0.03R) at breakout entries — stated where surfaced; the
 #     live claim ("higher lows lead big moves") grades via forward
 #     returns.
-SIGNALS_VERSION = 10
+# v11: shallow pairs are tagged, not skipped (Eric: "I don't want you to
+#     skip the small higher low as sometimes those run like they did
+#     with CHWY"). A saturated-floor pair now fires with shallow=true
+#     and ranks last instead of being refused; the NI/MARA knife-guard
+#     is the stabilized-tape leg, which stays hard. The two flavors
+#     grade separately via forward returns.
+SIGNALS_VERSION = 11
 
 # %R higher-low family legs.
 PHL_FLOOR = -70.0          # both troughs at/below this
@@ -417,10 +423,11 @@ def _pctr_hl_pair(df: pd.DataFrame):
     Pure; returns the pair payload or None.
 
     Calibrated 2026-08-15 on Eric's charts: CHWY (the archetype) fires;
-    NI is refused because a 0.5-point 'higher low' between two bars
-    pinned at −99 is floor saturation, not absorption; MARA is refused
-    because its tape was still printing new lows — a wash metric maxed
-    by an ONGOING collapse is a knife, not a base."""
+    an NI-style saturated pair (0.5-point 'higher low' between two bars
+    pinned at −99) fires TAGGED shallow and ranks last — small higher
+    lows sometimes run, so they're graded, never skipped; MARA is
+    refused because its tape was still printing new lows — a wash
+    metric maxed by an ONGOING collapse is a knife, not a base."""
     rp = df["pctr"].values[-60:]
     cl = df["close"].values[-60:]
     n = len(rp)
@@ -432,8 +439,16 @@ def _pctr_hl_pair(df: pd.DataFrame):
         return None
     i1, i2 = piv[-2], piv[-1]
     lift = float(rp[i2] - rp[i1])
-    if not (rp[i2] > rp[i1] and (lift >= PHL_LIFT_MIN or rp[i2] > PHL_UNSATURATED)):
-        return None                       # saturated-floor pair (the NI trap)
+    if rp[i2] <= rp[i1]:
+        return None
+    # A tiny lift with the second trough still pinned at the saturated
+    # floor (the NI look) is TAGGED shallow and ranked last, never
+    # skipped — Eric, 2026-08-15: "I don't want you to skip the small
+    # higher low as sometimes those run like they did with CHWY." The
+    # two flavors grade separately via forward returns; the knife-guard
+    # that actually separated NI/MARA from CHWY is the stabilized-tape
+    # leg below, and that one stays hard.
+    shallow = bool(lift < PHL_LIFT_MIN and rp[i2] <= PHL_UNSATURATED)
     if not (PHL_SPACING[0] <= i2 - i1 <= PHL_SPACING[1]):
         return None
     if not (1 <= n - 1 - i2 <= PHL_FRESH_BARS):
@@ -447,7 +462,8 @@ def _pctr_hl_pair(df: pd.DataFrame):
     if low_age < PHL_STAB_BARS:
         return None                       # still printing new lows (the MARA trap)
     return {"low1": round(float(rp[i1]), 1), "low2": round(float(rp[i2]), 1),
-            "lift": round(lift, 1), "low2_bars_ago": int(n - 1 - i2),
+            "lift": round(lift, 1), "shallow": shallow,
+            "low2_bars_ago": int(n - 1 - i2),
             "price_div": bool(cl[i2] <= cl[i1] * 1.01),
             "stable_bars": int(low_age), "pctr": round(float(rp[-1]), 1)}
 

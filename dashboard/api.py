@@ -1719,6 +1719,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                 "(o.signals->'cipher_reversal'->>'full_stack')::boolean DESC, "
                 "(o.signals->'cipher_reversal'->>'mf_trough')::float ASC",
             "pctr_hl":
+                "COALESCE((o.signals->'pctr_hl'->>'shallow')::boolean, false) ASC, "
                 "(o.signals->'pctr_hl'->>'price_div')::boolean DESC, "
                 "(o.signals->'pctr_hl'->>'low1')::float ASC",
             "base_turn": "s.rs_pct DESC NULLS LAST",

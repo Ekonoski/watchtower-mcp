@@ -983,10 +983,12 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     ignored — the row's computed direction usually reads bearish because
     the wash IS the setup).
     pctr_hl = the EARLIEST whisper of the same reversal: two confirmed
-    Williams %R(28) floor troughs with REAL lift (a pair pinned at −99
-    is saturation, not absorption), the tape no longer printing new
-    lows, still pre-breakout, %R still ≤ −45 (bullish only, direction
-    arg ignored). base_turn = the CONFIRMED stage (the SNAP look): the
+    Williams %R(28) floor troughs rising, the tape no longer printing
+    new lows, still pre-breakout, %R still ≤ −45 (bullish only,
+    direction arg ignored). Saturated-floor pairs — tiny lift with the
+    second trough still ≤ −88 — fire TAGGED 'shallow' and rank last
+    rather than being skipped: small higher lows sometimes run (CHWY),
+    and the flavors grade separately via forward returns. base_turn = the CONFIRMED stage (the SNAP look): the
     same %R higher-low structure with everything turning together —
     MACD histogram green while the line is still under water, waves
     crossed up and lifting, RSI mid-band, flow out of the deep red,
