@@ -1069,6 +1069,70 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 
 
 @mcp.tool()
+def watchtower_match_chart(ticker: str, timeframe: str = "weekly",
+                           lookback: int = 40, top_n: int = 10) -> str:
+    """
+    Find charts whose oscillator panels LOOK like a reference chart —
+    trajectory matching, not a snapshot fingerprint. Pass any ticker
+    whose chart you like; the live engine computes its component paths
+    (waves, money flow, RSI, %R, MACD normalized by price) over the
+    last `lookback` bars, and the fleet is ranked by mean path distance
+    in fixed component units, so panel auto-scaling can't lie. The wave
+    MOUND structure the eye keys on (how many troughs, whether the last
+    two rise) must agree before a candidate can rank — a numeric twin
+    with a different shape sorts below every structural match. Built
+    2026-08-15 after CEG matched SNAP's weekly numbers to the decimal
+    while the longer charts read differently: numbers at a bar are not
+    the picture; paths are.
+
+    Daily and weekly only (candidates come from recorded daily bars).
+    Results carry structural context — ⚠ marks a live bearish pattern.
+
+    Args:
+        ticker: the reference chart to clone
+        timeframe: daily | weekly (default weekly)
+        lookback: bars of shape to match (default 40)
+        top_n: matches to return (default 10)
+    """
+    try:
+        from analysis.shape_match import match_chart
+        res = match_chart(ticker, timeframe.lower().strip(),
+                          max(10, min(int(lookback), 60)),
+                          max(1, min(int(top_n), 25)))
+        if res.get("error"):
+            return res["error"]
+        ref = res["reference"]
+        st = ref["struct"]
+        lines = [f"**Charts shaped like {ref['ticker']} ({ref['timeframe']}, "
+                 f"last {ref['lookback']} bars through {ref['bar_ts']})** — "
+                 f"reference mound structure: {st['n_troughs']} wave trough(s) "
+                 f"{st['troughs']}, {'rising' if st['rising'] else 'not rising'}",
+                 ""]
+        for m in res["matches"]:
+            p = m.get("pattern")
+            pat = ""
+            if p:
+                warn = "⚠ " if p[1] == "bearish" else ""
+                pat = f" · {warn}{p[0]} {p[2]}"
+            ms = m["struct"]
+            shape = ("shape MATCH" if m["struct_ok"] else "shape differs")
+            lines.append(
+                f"- **{m['ticker']}** dist {m['dist']} ({shape}: "
+                f"{ms['n_troughs']} trough(s) {ms['troughs']}, "
+                f"{'rising' if ms['rising'] else 'not rising'})"
+                f" · per-component {m['per']}{pat}")
+        lines.append("")
+        lines.append(f"Pool {res['pool_size']} snapshot-similar candidates; "
+                     f"{res['holes']} skipped for missing history (holes, "
+                     "not zeros). Distance is mean |path difference| in "
+                     "fixed component units — lower is more alike; under "
+                     "~0.15 reads as a visual twin.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error matching chart shape: {e}"
+
+
+@mcp.tool()
 def watchtower_momentum(scanner: str = "gappers", top_n: int = 15) -> str:
     """
     Watchtower's day-trading momentum scanners on the latest full-market
