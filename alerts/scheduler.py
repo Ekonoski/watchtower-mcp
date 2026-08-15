@@ -1493,6 +1493,20 @@ def start_scheduler():
         id="paper_closing_bars", replace_existing=True,
     )
 
+    # Swing true-close settle (2026-08-15, the AGMB 0.9-cent case): the
+    # loop's 'daily close' was the 15:30–15:45 bar, so a stop broken only
+    # in the final 15 minutes never fired. Reads the recorded closing bar
+    # persisted at 16:07 — never refetches.
+    def _paper_swing_settle():
+        from analysis.paper_trader import run_swing_close_settle
+        run_swing_close_settle()
+
+    scheduler.add_job(
+        _paper_swing_settle,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="20", timezone=et),
+        id="paper_swing_settle", replace_existing=True,
+    )
+
     # FVG snapshot (2026-08-13): imbalance zones persisted every morning so
     # the gamma board — and any session without the live engine — reads
     # them from the record (fvg_runs / fvg_zones) like every other board
