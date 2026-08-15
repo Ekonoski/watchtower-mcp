@@ -59,6 +59,16 @@ def main():
     st1 = wave_trough_structure(one_grind)
     assert st1["n_troughs"] == 1 and st1["rising"] is False, st1
 
+    # The CHWY-vs-SNAP calibration (2026-08-15): near-equal twin mounds
+    # (−69 → −68.5, half a point) are NOT the rising-staircase look —
+    # material lift is required, and the lift is reported for audit.
+    twin_mounds = np.concatenate([
+        [-5.0], -5 - 64 * np.sin(x), [-5.0],
+        -5 - 63.5 * np.sin(x), [-5.0]])
+    st2 = wave_trough_structure(twin_mounds)
+    assert st2["n_troughs"] == 2 and st2["rising"] is False, st2
+    assert abs(st2["trough_lift"] - 0.5) < 0.2, st2
+
     # Short overlaps still score (over the shared tail), and an empty
     # candidate is infinite distance, never a silent zero.
     short = {"wt2": ref["wt2"][-12:]}

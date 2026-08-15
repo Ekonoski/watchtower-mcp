@@ -80,17 +80,27 @@ def path_distance(ref: dict, cand: dict) -> tuple:
     return round(total / n, 3), per
 
 
+# A wave "higher low" needs MATERIAL lift to count as the rising-mound
+# look (2026-08-15, the CHWY-vs-SNAP calibration): SNAP's mounds rise
+# −60.5 → −39.6 (21 points); CHWY's −69.0 → −68.5 half-point wiggle is
+# twin mounds, not a staircase — the %R saturation lesson, in the waves.
+WT_TROUGH_LIFT = 8.0
+
+
 def wave_trough_structure(wt2_path, floor: float = -25.0) -> dict:
     """The mound structure the eye keys on: confirmed wt2 pivot lows at
-    or below `floor` within the window, and whether the last two rise
-    (the visual higher low). Pure."""
+    or below `floor` within the window, whether the last two rise by a
+    MATERIAL amount (the visual higher low), and the lift itself so a
+    marginal pair is auditable. Pure."""
     from analysis.oscillator import _pivot_idx
     v = np.asarray(wt2_path, dtype=float)
     piv = [i for i in _pivot_idx(v, 2, "low")
            if not np.isnan(v[i]) and v[i] <= floor]
     out = {"n_troughs": len(piv),
            "troughs": [round(float(v[i]), 1) for i in piv[-3:]]}
-    out["rising"] = bool(len(piv) >= 2 and v[piv[-1]] > v[piv[-2]])
+    lift = float(v[piv[-1]] - v[piv[-2]]) if len(piv) >= 2 else None
+    out["trough_lift"] = round(lift, 1) if lift is not None else None
+    out["rising"] = bool(lift is not None and lift >= WT_TROUGH_LIFT)
     return out
 
 
