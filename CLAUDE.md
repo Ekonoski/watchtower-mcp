@@ -296,6 +296,20 @@ Rendering doctrine, same spirit as the rest of this file:
   freshly REJECTED breakout (Friday −7.2% off the 94.40 trigger), and
   a bullish panel at a rejected trigger must say so.
 
+- **Numbers at a bar are not the picture; paths are** (2026-08-15, the
+  CEG/SNAP lesson): a nine-component snapshot fingerprint found CEG as
+  SNAP's weekly twin — true to a tenth of a point at the bar and
+  parallel across twelve weeks — yet the charts READ differently,
+  because the eye matches months of SHAPE: mound count, whether the
+  second mound is shallower, the staircase. `watchtower_match_chart`
+  (analysis/shape_match.py) therefore matches TRAJECTORIES — each
+  component's path over the lookback in fixed component units, with
+  the wave-mound structure required to agree before a numeric twin can
+  rank — two-stage (loose snapshot pre-filter, engine paths on the
+  pool only), daily/weekly, holes reported as holes.
+  `tests/test_shape_match.py` pins the core, including the
+  state-twin-with-opposite-path case.
+
 - **A long armed against a live bearish structure says so** (2026-08-13,
   the CIFR case): the writer's bullish-only candidate query armed a daily
   inverse_hs while the same scanner held a weekly hs_top (forming) and a
