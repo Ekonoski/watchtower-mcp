@@ -1602,8 +1602,7 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
 
 
 _OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
-               "cipher_reversal", "pctr_hl", "base_turn", "red_to_green",
-               "bull_embed",
+               "cipher_reversal", "pctr_hl", "base_turn",
                "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
                "mf_curl", "any_signal")
 
@@ -1688,8 +1687,6 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "cipher_reversal": "o.signals ? 'cipher_reversal'",
             "pctr_hl": "o.signals ? 'pctr_hl'",
             "base_turn": "o.signals ? 'base_turn'",
-            "bull_embed": "o.signals ? 'bull_embed'",
-            "red_to_green": "o.signals ? 'red_to_green'",
             "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
@@ -1711,13 +1708,8 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         # arcs, then the full stack, then the deepest wash; pctr_hl ranks
         # divergent pairs off the deepest first floor; base_turn ranks by
         # relative strength (the SNAP look is a quality screen).
-        # bull_embed joins them from the OTHER side: the composite's
-        # bullish bucket rewards washed-out waves, so a full-embed chart
-        # (waves at the ceiling) often computes 'bearish' — same reason,
-        # mirrored.
         _BULL_BY_CONSTRUCTION = ("loaded_spring", "cipher_reversal",
-                                 "pctr_hl", "base_turn", "bull_embed",
-                                 "red_to_green")
+                                 "pctr_hl", "base_turn")
         dir_clause = ("" if setup in _BULL_BY_CONSTRUCTION else
                       "AND (%(dir)s = 'all' OR o.direction = %(dir)s)")
         order_sql = {
@@ -1731,14 +1723,6 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                 "(o.signals->'pctr_hl'->>'price_div')::boolean DESC, "
                 "(o.signals->'pctr_hl'->>'low1')::float ASC",
             "base_turn": "s.rs_pct DESC NULLS LAST",
-            # Strongest embed first: most sustained flow, then flow level.
-            "bull_embed":
-                "(o.signals->'bull_embed'->>'mf_pos10')::int DESC, "
-                "(o.signals->'bull_embed'->>'mf')::float DESC",
-            # Freshest flip first, deepest red beside it (depth = fuel).
-            "red_to_green":
-                "(o.signals->'red_to_green'->>'green_run')::int ASC, "
-                "(o.signals->'red_to_green'->>'red_depth')::float ASC",
         }.get(setup, "o.confluence_score DESC NULLS LAST")
         # Structural context on every row (the MNDY lesson, 2026-08-15: a
         # panel that looks bullish at a rejected trigger must say so) —

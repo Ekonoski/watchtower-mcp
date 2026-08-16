@@ -125,29 +125,20 @@ PERF_MIN_CONFLUENCE = 60
 #     is the stabilized-tape leg, which stays hard. The two flavors
 #     grade separately via forward returns.
 #
-# v12 (2026-08-16): bull_embed — the BW-3D archetype (Eric: "these create
-#     big moves quite often"), the FULL EMBED at the opposite end of the
-#     lifecycle from the washout family: sustained green flow, waves riding
-#     the upper band, RSI strong, MACD stacked positive, %R embedded,
-#     price stair-stepping above a rising 8-bar average near its highs.
-#     Plus the '3d' timeframe (busday-epoch buckets, repaint-proof) so the
-#     archetype's native chart is scanned, not approximated.
-#
-# v13 (2026-08-16, same evening): v12's 3d resample assumed a DatetimeIndex
-#     (.date) while the fleet fetch indexes with raw datetime.date objects
-#     — every ticker's 3d step raised, the per-ticker except swallowed it,
-#     and the weekly re-stamp behind it was skipped too. Zero 3d rows on a
-#     "successful" scan. Bumped so the seed re-runs on boot; the resample
-#     now normalizes both index types, pinned by test with BOTH.
-#
-# v14 (2026-08-16, Eric's same-evening correction of bull_embed: "No no
-#     no, the red into the green where the RSI's are green and start
-#     turning up"): red_to_green — the LAUNCH, not the cruise. A fresh
-#     green flow run out of real red (≤ −4), green-RSI pair curling and
-#     not spent, RSI rising with room, waves crossed up, MACD hist green
-#     and expanding, price above its 8-bar average. bull_embed stays as
-#     the later lifecycle stage it actually describes.
-SIGNALS_VERSION = 14
+# v12-v14 (2026-08-16): the BW-3D archetype experiment — bull_embed (the
+#     embedded cruise) then red_to_green (the launch flip), built and
+#     calibrated same-evening from the BW 3-day chart. Both RETIRED in
+#     v15 the same evening on Eric's chart check of the output ("this
+#     absolutely is not it. Remove this from our system"). The '3d'
+#     timeframe (busday-epoch buckets, repaint-proof — v13 fixed the
+#     date-object index) STAYS: it is neutral scan infrastructure and
+#     his archetype charts live on it. Episode grades kept for the
+#     record (outliers capped at 10R): embed core UNDERPERFORMED
+#     baseline both timeframes; daily just-green flip -0.398R median
+#     -1.00 (a trap); weekly flip +0.158R vs +0.117R. The lesson:
+#     chart-look composites wait for the labeled exemplar set
+#     (2026-08-15 plan) — the eye is not specified by adjectives.
+SIGNALS_VERSION = 15
 
 # %R higher-low family legs.
 PHL_FLOOR = -70.0          # both troughs at/below this
@@ -159,30 +150,6 @@ PHL_UNSPENT_MAX = -45.0    # pctr_hl only: %R not yet spent
 PHL_STAB_BARS = 3          # most recent 30-bar closing low at least this old
 PHL_PIVOT_K = 2
 
-# ── bull_embed: the full-embed momentum state (2026-08-16, BW-3D) ────────────
-# The mirror image of the washout thresholds: where cipher_reversal demands
-# flow ≤ -4 and %R pinned ≤ -80, the embed demands flow green and SUSTAINED
-# and %R riding the ceiling. First cut from the BW archetype; calibrated
-# from Eric's chart verdicts like the reversal family before it.
-BE_MF_GREEN = 4.0          # flow green NOW, not a sliver
-BE_MF_POS_BARS = 8         # ...and sustained: 8 of the last 10 bars positive
-BE_WT2_MIN = 20.0          # waves riding the upper band
-BE_RSI_MIN = 60.0          # strength — the mirror of the washout's ceiling
-BE_PCTR_MIN = -20.0        # %R embedded near the ceiling
-BE_NEAR_HIGH = 0.95        # close within 5% of its 30-bar closing high
-
-# ── red_to_green: the FLIP itself (2026-08-16, Eric's same-evening
-# correction of bull_embed: "No no no, the red into the green where the
-# RSI's are green and start turning up"). The launch moment on the BW-3D
-# chart — flow crossing from REAL red into green with momentum turning —
-# not the embedded cruise that follows it.
-RG_RED_MIN = -4.0          # the red it emerged from was real (COLM/GOOS
-                           # still-red lesson, mirrored: a sliver isn't red)
-RG_RED_LOOKBACK = 15       # ...and recent
-RG_FLIP_BARS = 6           # green run at the end no longer than this (fresh)
-RG_MF_MIN = 1.0            # green now, not a zero-hover
-RG_RSI_MAX = 70.0          # turning, not already ridden
-RG_STOCH_D_MAX = 60.0      # the green-RSI pair not spent (the AGO lesson)
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
 # red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
@@ -843,105 +810,6 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                                     macd_hist=round(mh_last, 3),
                                     rsi=round(rsi_last, 1))
 
-    # 11) bull_embed (Eric, 2026-08-16, the BW-3D archetype: "these create
-    # big moves quite often") — the FULL EMBED, the opposite end of the
-    # lifecycle from the washout family: money flow green and SUSTAINED,
-    # waves riding the upper band, RSI strong, MACD stacked positive, %R
-    # embedded near the ceiling, price stair-stepping above a rising
-    # 8-bar average within reach of its highs. Bullish only; a named
-    # screen, never a gate; structurally unable to touch the confluence
-    # score (asserted by tests/test_bull_embed.py). Caveat, stated where
-    # the numbers surface: embedded-overbought entries graded NEGATIVE at
-    # daily breakouts in the cipher-tag study (wt2>=53 = -0.18R) — this
-    # screen exists to test Eric's claim on ITS OWN forward returns, at
-    # the 3d/weekly horizons the archetype lives on, not to presume it.
-    mfv_e = df[MF_DEFAULT].values
-    rv_e = df["pctr"].values
-    cl_e = df["close"].values
-    if (len(cl_e) >= 40 and rsi_last is not None
-            and not np.isnan(mfv_e[-1]) and not np.isnan(rv_e[-1])
-            and not np.isnan(c["macd"]) and not np.isnan(c["macd_hist"])
-            and not np.isnan(c["wt2"])):
-        mf_pos10 = int(np.sum(mfv_e[-10:] > 0))
-        sma8_e = float(np.mean(cl_e[-8:]))
-        sma8_prev = float(np.mean(cl_e[-12:-4]))
-        hi30 = float(np.max(cl_e[-30:]))
-        if (float(mfv_e[-1]) >= BE_MF_GREEN and mf_pos10 >= BE_MF_POS_BARS
-                and float(c["wt2"]) >= BE_WT2_MIN
-                and rsi_last >= BE_RSI_MIN
-                and float(c["macd"]) > 0 and float(c["macd_hist"]) > 0
-                and float(rv_e[-1]) >= BE_PCTR_MIN
-                and float(c["close"]) >= sma8_e and sma8_e > sma8_prev
-                and float(c["close"]) >= BE_NEAR_HIGH * hi30):
-            sig["bull_embed"] = {
-                "dir": "up",
-                "mf": round(float(mfv_e[-1]), 2),
-                "mf_pos10": mf_pos10,
-                "wt1": round(float(c["wt1"]), 1),
-                "wt2": round(float(c["wt2"]), 1),
-                "rsi": round(rsi_last, 1),
-                "macd": round(float(c["macd"]), 3),
-                "macd_hist": round(float(c["macd_hist"]), 3),
-                "pctr": round(float(rv_e[-1]), 1),
-                "off_high_pct": round((float(c["close"]) / hi30 - 1) * 100, 2),
-                "ext_pct": round((float(c["close"]) / sma8_e - 1) * 100, 2),
-            }
-
-    # 12) red_to_green (Eric, 2026-08-16, correcting bull_embed the same
-    # evening: "No no no, the red into the green where the RSI's are
-    # green and start turning up") — the LAUNCH moment on the BW-3D
-    # chart: money flow crossing from REAL red into green (a fresh green
-    # run out of a red that hit ≤ −4 — a sliver was never red), the
-    # green-RSI pair curling up and not spent (k ≥ d, d ≤ 60, k rising —
-    # the AGO/UNH lesson), RSI itself rising with room (≤ 70), waves
-    # crossed up, MACD histogram green and EXPANDING, price back above
-    # its 8-bar average. Lifecycle position: after base_turn (flow was
-    # merely ≥ −10 there), before bull_embed (flow sustained-green
-    # there). Bullish only; a named screen, never a gate;
-    # confluence-blind; freshest flip ranks first, deepest red beside it
-    # (the depth IS the fuel — the wash-depth gradient was monotone).
-    if (len(cl_e) >= 40 and rsi_last is not None
-            and not np.isnan(mfv_e[-1])
-            and not np.isnan(c["macd_hist"]) and not np.isnan(c["stoch_k"])
-            and not np.isnan(c["stoch_d"]) and len(df) >= RG_RED_LOOKBACK):
-        mf_now = float(mfv_e[-1])
-        green_run = 0
-        for v in mfv_e[::-1]:
-            if np.isnan(v) or v <= 0:
-                break
-            green_run += 1
-        red_win = mfv_e[-RG_RED_LOOKBACK:]
-        red_depth = float(np.nanmin(red_win))
-        rsi_prev = float(df["rsi"].values[-2])
-        rsi_back3 = float(df["rsi"].values[-4])
-        sk_ = float(c["stoch_k"])
-        sd_ = float(c["stoch_d"])
-        sk_prev = float(df["stoch_k"].values[-2])
-        mh_now = float(c["macd_hist"])
-        mh_back3 = float(df["macd_hist"].values[-4])
-        sma8_r = float(np.mean(cl_e[-8:]))
-        if (mf_now >= RG_MF_MIN and 1 <= green_run <= RG_FLIP_BARS
-                and red_depth <= RG_RED_MIN
-                and rsi_last <= RG_RSI_MAX
-                and rsi_last > rsi_prev and rsi_last > rsi_back3
-                and sk_ >= sd_ and sd_ <= RG_STOCH_D_MAX and sk_ > sk_prev
-                and float(c["wt1"]) > float(c["wt2"])
-                and mh_now > 0 and mh_now > mh_back3
-                and float(c["close"]) >= sma8_r):
-            sig["red_to_green"] = {
-                "dir": "up",
-                "mf": round(mf_now, 2),
-                "green_run": int(green_run),
-                "red_depth": round(red_depth, 2),
-                "rsi": round(rsi_last, 1),
-                "stoch_k": round(sk_, 1),
-                "stoch_d": round(sd_, 1),
-                "wt1": round(float(c["wt1"]), 1),
-                "wt2": round(float(c["wt2"]), 1),
-                "macd_hist": round(mh_now, 3),
-                "pctr": round(float(rv_e[-1]), 1) if not np.isnan(rv_e[-1]) else None,
-            }
-
     score, direction = _confluence(df, sig, pattern_ctx)
     return {"signals": sig, "confluence_score": score, "direction": direction}
 
@@ -1200,34 +1068,20 @@ def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
     sig = ev["signals"]
     if not sig:
         return None
-    # bull_embed and red_to_green bypass the confluence/direction gate on
-    # purpose: the blended score's bullish bucket rewards WASHED-OUT
-    # waves, so a green-flow state would systematically fail a bar it was
-    # never shaped for — the sign-flip lesson, applied to perf logging.
-    # Both are bullish by construction and grade on their own flags.
-    _ungated = [k for k in ("bull_embed", "red_to_green") if k in sig]
-    if not _ungated and (ev["direction"] is None
-            or ev["confluence_score"] < PERF_MIN_CONFLUENCE):
+    if ev["direction"] is None \
+            or ev["confluence_score"] < PERF_MIN_CONFLUENCE:
         return None
     x = sig.get("wt_cross")
     curl = sig.get("mf_curl") or {}
     qualifying = [k for k in ("loaded_spring", "divergence", "pctr_hook",
-                              "cipher_reversal", "pctr_hl", "base_turn",
-                              "bull_embed", "red_to_green") if k in sig]
+                              "cipher_reversal", "pctr_hl", "base_turn") if k in sig]
     if x and x["zone"] == "extreme":
         qualifying.append("wt_cross")
     if curl.get("volume_backed"):
         qualifying.append("mf_curl")
     if not qualifying:
         return None
-    # A row qualified ONLY by the ungated green-flow screens grades as the
-    # bullish claim it is — the composite's direction read is decoration
-    # here (it can even come out bearish on such charts, because its
-    # bullish bucket wants washed waves).
-    direction = ("bullish"
-                 if qualifying and all(k in ("bull_embed", "red_to_green")
-                                       for k in qualifying)
-                 else ev["direction"])
+    direction = ev["direction"]
     return {
         "ticker": ticker,
         "price": float(df["close"].iloc[-1]),

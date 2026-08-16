@@ -345,53 +345,32 @@ Rendering doctrine, same spirit as the rest of this file:
   freshly REJECTED breakout (Friday −7.2% off the 94.40 trigger), and
   a bullish panel at a rejected trigger must say so.
 
-- **bull_embed rides the OTHER end of the lifecycle, and the record votes
-  against the easy version of it** (2026-08-16, the BW-3D chart — Eric:
-  "these create big moves quite often"). The full-embed state: flow ≥ +4
-  AND positive 8 of the last 10 bars, wt2 ≥ 20, RSI ≥ 60, MACD line and
-  hist positive, %R ≥ −20, close above a RISING 8-bar average within 5%
-  of its 30-bar high. Bullish-only named screen, confluence-blind, and
-  it BYPASSES the perf-logging confluence gate (the composite's bullish
-  bucket rewards washed waves, so embed rows would systematically fail a
-  bar they were never shaped for — the sign-flip lesson applied to perf
-  logging; embed-only rows grade as the bullish claim they are). Graded
-  where the record can express it: the core (mf/wt2/RSI/hist) at
-  breakout-close entries UNDERPERFORMS baseline — daily +0.036R
-  (n=6,679) vs +0.063R, weekly +0.243R (n=1,584) vs +0.486R — while
-  touching +1R more often (30.3% vs 27.7%): mature moves pay the first
-  R reliably, the tail worse. The sustained-flow/%R/near-high/rising-avg
-  legs and the 3d timeframe aren't in the record, so the claim grades
-  live via forward returns, stated wherever the numbers surface. Shipped
-  WITH the '3d' scan timeframe (its native chart): `resample_sessions`
-  buckets by busday ordinal from a fixed epoch — end-anchored k-day
-  grouping re-buckets the whole series every session, a repaint machine
-  that would poison stored rows and forward grading —
-  `tests/test_resample_3d.py` pins the no-repaint property, and the
-  on-demand 2d/3d chat reads use the same buckets so chat and screen
-  can never disagree bar-for-bar. `tests/test_bull_embed.py` pins the
-  legs, the blindness, and the perf bypass.
-
-- **red_to_green is the launch; bull_embed is the cruise — and the record
-  splits them by timeframe** (2026-08-16, Eric correcting bull_embed the
-  same evening: "No no no, the red into the green where the RSI's are
-  green and start turning up"). The flip: flow in a fresh 1-6-bar green
-  run out of REAL red (15-bar trough ≤ −4 — the still-red lesson,
-  mirrored), green-RSI pair curling and not spent (k ≥ d, d ≤ 60, k
-  rising), RSI rising with room (≤ 70), waves crossed up, MACD hist
-  green and EXPANDING, close above the 8-bar average. Graded with
-  outliers CAPPED at 10R — one 2,260R print was inflating the raw weekly
-  average 9× (+1.46R "raw" vs +0.158R capped; outlier hygiene belongs in
-  every grade): weekly flip +0.158R (n=2,399) vs +0.117R baseline with
-  3R+ moves 5.1% vs 4.1% — directionally Eric's "big moves" claim — but
-  the DAILY flip is a trap at breakout entries: −0.398R (n=8,594),
-  median −1.00, the typical daily just-green flip stops out. The same
-  weekly-selector/daily-veto asymmetry as the cipher tag, and the 3d
-  chart the archetype lives on sits between the graded horizons,
-  ungraded — forward returns arbitrate. Both screens bypass the
-  perf-logging confluence gate (the composite's bullish bucket wants
-  washed waves; green-flow states would systematically fail a bar they
-  were never shaped for) and grade as the bullish claims they are.
-  `tests/test_red_to_green.py` pins the legs, the blindness, the bypass.
+- **The BW-3D archetype experiment: built, graded, and retired in one
+  evening** (2026-08-16). Eric asked for "similar charts on the 3 day
+  mimicking all of the bullish indications" off the BW 3D chart. Two
+  composites shipped and died on his chart checks: bull_embed (the
+  embedded cruise — "No no no, the red into the green…") and
+  red_to_green (the flip — "this absolutely is not it. Remove this from
+  our system"). Both are OUT of evaluate_signals, the screens, and the
+  perf pipeline (v15 restamp scrubbed stored payloads). What SURVIVES:
+  the '3d' scan timeframe (neutral infrastructure; his archetype charts
+  live on it; `resample_sessions` buckets by busday ordinal from a
+  fixed epoch because end-anchored k-day bars repaint —
+  `tests/test_resample_3d.py` pins it, including the v13 lesson that
+  the fleet fetch indexes with raw date objects while test fixtures
+  build DatetimeIndex, and a per-ticker except swallowed the difference
+  as zero rows on a "successful" scan); and the episode grades, kept as
+  reference with OUTLIERS CAPPED AT 10R (one 2,260R print inflated a
+  raw weekly average 9× — outlier hygiene belongs in every grade):
+  embed core UNDERPERFORMED baseline on both graded timeframes; daily
+  just-green flip −0.398R median −1.00 n=8,594 (a trap); weekly flip
+  +0.158R vs +0.117R with 3R+ moves 5.1% vs 4.1%. The lessons: an
+  adjective list is not a chart-look — composites chasing Eric's eye
+  WAIT for the labeled exemplar set (the 2026-08-15 plan) instead of
+  same-evening definition roulette; and verify the TICKER before
+  verdicting a chart — the removal call was made on TradingView's ENR
+  (Siemens Energy AG, EUR) while the system's ENR is Energizer
+  Holdings (US) — stated, not relitigated: the removal stands.
 
 - **Numbers at a bar are not the picture; paths are** (2026-08-15, the
   CEG/SNAP lesson): a nine-component snapshot fingerprint found CEG as
