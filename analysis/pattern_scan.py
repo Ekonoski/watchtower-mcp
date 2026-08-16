@@ -1439,6 +1439,28 @@ def _det_range_break(ctx):
             points["_anchor_price"] = lo
             return _mk(ctx, "range_breakdown", "bearish", "breakout", lo,
                        lo - (hi - lo), mid, start, start, points, quality)
+        # Throwback (2026-08-16 lifecycle audit): a recent close through an
+        # edge with price now back inside the box is a RETEST of that edge
+        # — the entry the desk buys. The original branches could only say
+        # 'breakout' (while beyond the edge) or 'forming' (inside), so
+        # retest was unreachable by construction on every timeframe — the
+        # bull_flag disease in a milder strain. Spent breaks (measured
+        # move reached) fall through to the old inside-the-box reading.
+        rec = range(max(start, n - 1 - cfg["break_recent"]), n - 1)
+        broke_up = [i for i in rec if closes[i] is not None and closes[i] >= hi]
+        if broke_up and last < hi:
+            hs_since = [x for x in ctx["highs"][broke_up[0]:] if x is not None]
+            if not (hs_since and max(hs_since) >= hi + (hi - lo)):
+                points["_anchor_price"] = hi
+                return _mk(ctx, "range_breakout", "bullish", "retest", hi,
+                           hi + (hi - lo), mid, start, start, points, quality)
+        broke_dn = [i for i in rec if closes[i] is not None and closes[i] <= lo]
+        if broke_dn and last > lo:
+            ls_since = [x for x in ctx["lows"][broke_dn[0]:] if x is not None]
+            if not (ls_since and min(ls_since) <= lo - (hi - lo)):
+                points["_anchor_price"] = lo
+                return _mk(ctx, "range_breakdown", "bearish", "retest", lo,
+                           lo - (hi - lo), mid, start, start, points, quality)
         if last > hi - (hi - lo) * 0.25:
             points["_anchor_price"] = hi
             return _mk(ctx, "range_breakout", "bullish", "forming", hi,
@@ -1493,11 +1515,29 @@ def _det_wma_touch(ctx):
     trigger = sum(completed[-200:]) / 200.0
     if trigger <= 0:
         return None
+    invalid_frac = 0.97               # the study's -3% close-through failure
     # Qualifier walk, newest completed week backwards: week j must close
     # above the 200w SMA of the 200 weeks BEFORE it (prior-week line,
     # exactly as the study graded it). Counted to 120 for scoring.
+    #
+    # Touch grace (2026-08-16 lifecycle audit): the study's event is a
+    # 40-week-QUALIFIED touch — the qualification precedes the touch. But
+    # this walk started at the newest completed week, so the touch week
+    # itself (closing at/below the line) zeroed the run and the event
+    # erased its own detection: 'retest' could only exist intra-week, and
+    # the board had never once shown it. Up to 3 trailing completed weeks
+    # may now sit at/below the line (each above the -3% invalid, else the
+    # verdict already came in) before the 40-week run is demanded.
     up_run, j = 0, n_c - 1
     win = sum(completed[j - 200:j])
+    grace = 0
+    while grace < 3 and j >= 200 and completed[j] <= win / 200.0:
+        if completed[j] < invalid_frac * (win / 200.0):
+            return None                   # closed through the failure line
+        grace += 1
+        j -= 1
+        if j >= 200:
+            win += completed[j - 200] - completed[j]
     while up_run < 120 and j >= 200:
         if completed[j] <= win / 200.0:
             break
@@ -1516,7 +1556,7 @@ def _det_wma_touch(ctx):
     # 2021 DOWNTREND high — the amplitude must belong to this trend.)
     if max(completed[-min(up_run, 240):]) < trigger * 1.15:
         return None
-    invalid = trigger * 0.97
+    invalid = trigger * invalid_frac
     target = trigger * 1.10
     last = ctx["last"]
     if last < invalid:
