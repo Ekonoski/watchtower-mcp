@@ -215,6 +215,26 @@ Rendering doctrine, same spirit as the rest of this file:
   reads both as a broken pole in throwback and a marginally higher
   "fresh flag," the ACTIONABLE reading wins. `tests/test_flag_lifecycle.py`
   pins forming → breakout → retest, the wick refusal, and the spent drop.
+  Same day, the full-catalog audit (Eric: "All patterns not just bull
+  flags") — a per-class × per-timeframe status census of the live board
+  is the cheap test for this whole disease family, and it convicted two
+  more: **range_breakout/range_breakdown** could only say breakout
+  (still beyond the edge) or forming (inside the box), so the throwback
+  retest — the entry the desk buys — was unreachable by construction on
+  every timeframe; and **wma_touch**'s 40-week qualifier walk started at
+  the newest completed week, so the touch week itself (closing at/below
+  the line) zeroed the run and the event erased its own detection —
+  'retest' existed in code and had never once existed on the board. Up
+  to 3 trailing touch weeks now get grace (each above the −3% failure
+  line; grace never excuses a mid-run break — the qualification
+  precedes the touch, per the study's own definition).
+  `tests/test_range_wma_lifecycle.py` pins both. Cleared by the same
+  census: necklines, higher_low/lower_high, triangles, wedges, cup,
+  ema classes all show all three states; diamonds/desc_triangle route
+  through `_status()` and are small-n, not structural. The audit rule
+  going forward: a class's status census belongs beside its detection
+  count — a pattern that detects hundreds and never reaches its
+  actionable state is a `_social_block`, not a quiet market.
 
 - **The cost of confirmation is measured, not argued** (decided 2026-08-08:
   the swing book keeps resting-limit fills at the trigger). Every touch fill
