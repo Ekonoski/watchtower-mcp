@@ -995,43 +995,13 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     price back above its 8-bar average (bullish only; ranks by relative
     strength). Lifecycle: pctr_hl → cipher_reversal → base_turn are one
     reversal at three ages; earliest = most room and most risk.
-    red_to_green = THE LAUNCH (Eric, 2026-08-16, correcting bull_embed
-    the same evening: "the red into the green where the RSI's are green
-    and start turning up" — the moment on the BW-3D chart where the big
-    move STARTED): money flow in a fresh green run (1-6 bars) out of
-    REAL red (its 15-bar low ≤ −4 — a sliver was never red), the
-    green-RSI StochRSI pair curling and not spent (k ≥ d, d ≤ 60, k
-    rising), RSI itself rising with room (≤ 70), waves crossed up, MACD
-    histogram green and EXPANDING, price back above its 8-bar average.
-    Bullish only; freshest flip ranks first with the deepest red beside
-    it (depth is fuel — the wash-depth gradient was monotone at the
-    episodes). Lifecycle: base_turn → red_to_green → bull_embed.
-    Graded where the record can express it (outliers capped at 10R —
-    one 2,260R print was inflating the raw average): the flip analog on
-    the WEEKLY beats baseline modestly (+0.158R n=2,399 vs +0.117R;
-    3R+ moves 5.1% vs 4.1%) but on the DAILY it is a trap at
-    breakout-close entries (−0.398R n=8,594, MEDIAN −1.00 — the typical
-    daily just-green flip stops out). The 3d chart the archetype lives
-    on sits between the graded horizons and isn't in the record; the
-    fresh-run/real-red/stoch legs aren't either — live forward returns
-    arbitrate, and the daily rows carry this warning on their numbers.
-    bull_embed = the LATE stage of the same lifecycle (the embedded
-    cruise, kept for contrast): the FULL EMBED riding a made move — money flow green
-    (≥ +4) and sustained (positive 8 of the last 10 bars), waves in the
-    upper band (wt2 ≥ 20), RSI ≥ 60, MACD line AND histogram positive,
-    Williams %R embedded (≥ −20), price above a RISING 8-bar average
-    within 5% of its 30-bar high (bullish only; ranks most-sustained
-    flow first). Native timeframe is the 3d chart the archetype came
-    from; also fires on daily/weekly. Caveats stated where the numbers
-    surface: at the 320k v6 episodes the expressible core (mf ≥ 4, wt2
-    ≥ 20, RSI ≥ 60, MACD hist green) UNDERPERFORMS baseline expectancy
-    at breakout-close entries — daily +0.036R (n=6,679) vs +0.063R,
-    weekly +0.243R (n=1,584) vs +0.486R — while touching +1R MORE
-    often (30.3% vs 27.7% daily): mature moves pay the first R
-    reliably and the tail worse. The record can't express the
-    sustained-flow, %R-embed, near-high, or rising-average legs, and
-    has no 3d bars at all — so the screen tests Eric's "big moves"
-    claim on its own 7/30/90-day forward returns; it presumes nothing.
+    (bull_embed and red_to_green — the 2026-08-16 BW-3D archetype
+    experiment — were REMOVED the same evening on Eric's chart check of
+    their output; the '3d' timeframe they rode in on stays. Their
+    episode grades live in the repo notes: the embedded cruise
+    underperformed baseline on both graded timeframes, and the daily
+    just-green flip was a trap — −0.398R, median −1.00, n=8,594.
+    Chart-look composites now wait for the labeled exemplar set.)
     high_confluence = the raw washout watchlist (most stretched names in
     the market — where turns START; stalk for the higher low, don't buy
     the first green dot). Bearish setups are warnings on longs, not short
@@ -1042,7 +1012,7 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 
     Args:
         setup: entry_grade | loaded_spring | cipher_reversal |
-               pctr_hl | base_turn | red_to_green | bull_embed |
+               pctr_hl | base_turn |
                high_confluence | wt_extreme_cross | pctr_hook |
                divergence (price vs wave, confirmed pivots) |
                mf_round (smooth rounded money-flow turn — the arc, not a
