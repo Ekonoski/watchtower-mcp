@@ -687,76 +687,131 @@ def _det_lower_high(ctx):
 # the row once it's no longer a live flag.
 
 def _det_bull_flag(ctx):
+    # Status lifecycle (2026-08-16): the original detector hardcoded
+    # 'forming' AND sought the pole among ALL window bars — so the breakout
+    # bar became its own pole-high, flag_bars fell under 3, and the
+    # detection DISSOLVED at the exact moment it became tradable. 443 live
+    # flags, zero ever breakout/retest; the class could never arm (the
+    # _social_block family, in a detector). The pole is now sought only
+    # among bars with >= 3 bars after them, the flag region ends at the
+    # first close THROUGH the pole (the wick rule: a poke isn't a break),
+    # and _status() decides forming/breakout/retest like every other class.
+    # Every window bar with >= 3 bars after it is a candidate pole; each
+    # builds its full structure (run, flag ending at the first close
+    # THROUGH the pole — the wick rule — retrace band) and takes its
+    # lifecycle from _status(). When one tape supports two readings — the
+    # broken pole in throwback AND a marginally higher "fresh flag"
+    # re-anchored on the breakout bar — the ACTIONABLE reading wins:
+    # non-forming beats forming, then the higher pole. Relabeling a
+    # throwback as a 3-bar forming flag erases the entry the desk buys.
     cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
     min_run = 0.18 * s
     fm, rl = cfg["flag_max"], cfg["run_len"]
     lo = max(0, n - 1 - fm - rl)
-    seg = ctx["highs"][lo:]
-    vals = [(i + lo, v) for i, v in enumerate(seg) if v is not None]
-    if not vals:
+    closes = ctx["closes"]
+    best = None
+    for i in range(max(lo, 3), n - 3):
+        v = ctx["highs"][i]
+        if v is None:
+            continue
+        # A pole is the HIGH of its own run — a flag bar under a taller
+        # neighbor is consolidation, not a pole.
+        if any(h is not None and h > v for h in ctx["highs"][max(0, i - rl):i]):
+            continue
+        cross = next((j for j in range(i + 1, n)
+                      if closes[j] is not None and closes[j] > v), None)
+        flag_end = cross if cross is not None else n
+        flag_bars = (flag_end - 1) - i
+        if not (3 <= flag_bars <= fm):
+            continue
+        run_lows = [x for x in ctx["lows"][max(0, i - rl):i + 1] if x is not None]
+        if not run_lows:
+            continue
+        run_low = min(run_lows)
+        if run_low <= 0:
+            continue
+        run = (v - run_low) / run_low
+        if run < min_run:
+            continue
+        flag_lows = [x for x in ctx["lows"][i + 1:flag_end] if x is not None]
+        if not flag_lows:
+            continue
+        flag_low = min(flag_lows)
+        retrace = (v - flag_low) / (v - run_low)
+        if retrace > 0.5 or ctx["last"] <= flag_low:
+            continue
+        target = flag_low + (v - run_low)
+        status = _status(ctx, i, v, "bullish", target=target)
+        if status is None:
+            continue
+        rank = (status != "forming", v)
+        if best is None or rank > best[0]:
+            best = (rank, (i, v, run_low, run, flag_low, retrace, target, status))
+    if best is None:
         return None
-    h_idx, pole_high = max(vals, key=lambda t: t[1])
-    flag_bars = (n - 1) - h_idx
-    if not (3 <= flag_bars <= fm) or h_idx < 3:
-        return None
-    run_lows = [x for x in ctx["lows"][max(0, h_idx - rl):h_idx + 1] if x is not None]
-    if not run_lows:
-        return None
-    run_low = min(run_lows)
-    if run_low <= 0:
-        return None
-    run = (pole_high - run_low) / run_low
-    if run < min_run:
-        return None
-    flag_lows = [x for x in ctx["lows"][h_idx + 1:] if x is not None]
-    if not flag_lows:
-        return None
-    flag_low = min(flag_lows)
-    retrace = (pole_high - flag_low) / (pole_high - run_low)
-    if retrace > 0.5 or ctx["last"] <= flag_low:
-        return None
+    h_idx, pole_high, run_low, run, flag_low, retrace, target, status = best[1]
     quality = min(12.0, 6.0 * run / min_run) + 16.0 * max(0.0, 0.5 - retrace)
     points = {"pole_low": round(run_low, 4), "pole_high": _pt(ctx, h_idx, pole_high),
               "flag_low": round(flag_low, 4), "run_pct": round(run * 100, 2),
               "retrace_pct": round(retrace * 100, 1), "_anchor_price": pole_high}
-    return _mk(ctx, "bull_flag", "bullish", "forming", pole_high,
-               flag_low + (pole_high - run_low), flag_low, h_idx,
+    return _mk(ctx, "bull_flag", "bullish", status, pole_high,
+               target, flag_low, h_idx,
                max(0, h_idx - rl), points, quality)
 
 
 def _det_bear_flag(ctx):
+    # Mirror of _det_bull_flag, same 2026-08-16 lifecycle fix. Bearish
+    # detections are warnings on held longs, never entries (shorts are
+    # retired) — but a bear flag that vanished at its own breakdown was
+    # blind exactly when the warning mattered most.
     cfg, n, s = ctx["cfg"], ctx["n"], ctx["cfg"]["scale"]
     min_run = 0.18 * s
     fm, rl = cfg["flag_max"], cfg["run_len"]
     lo = max(0, n - 1 - fm - rl)
-    seg = ctx["lows"][lo:]
-    vals = [(i + lo, v) for i, v in enumerate(seg) if v is not None]
-    if not vals:
+    closes = ctx["closes"]
+    best = None
+    for i in range(max(lo, 3), n - 3):
+        v = ctx["lows"][i]
+        if v is None or v <= 0:
+            continue
+        if any(x is not None and x < v for x in ctx["lows"][max(0, i - rl):i]):
+            continue
+        cross = next((j for j in range(i + 1, n)
+                      if closes[j] is not None and closes[j] < v), None)
+        flag_end = cross if cross is not None else n
+        flag_bars = (flag_end - 1) - i
+        if not (3 <= flag_bars <= fm):
+            continue
+        run_highs = [x for x in ctx["highs"][max(0, i - rl):i + 1] if x is not None]
+        if not run_highs:
+            continue
+        run_high = max(run_highs)
+        run = (run_high - v) / v
+        if run < min_run:
+            continue
+        flag_highs = [x for x in ctx["highs"][i + 1:flag_end] if x is not None]
+        if not flag_highs:
+            continue
+        flag_high = max(flag_highs)
+        retrace = (flag_high - v) / (run_high - v)
+        if retrace > 0.5 or ctx["last"] >= flag_high:
+            continue
+        target = flag_high - (run_high - v)
+        status = _status(ctx, i, v, "bearish", target=target)
+        if status is None:
+            continue
+        rank = (status != "forming", -v)     # deeper pole is the stronger read
+        if best is None or rank > best[0]:
+            best = (rank, (i, v, run_high, run, flag_high, retrace, target, status))
+    if best is None:
         return None
-    l_idx, pole_low = min(vals, key=lambda t: t[1])
-    flag_bars = (n - 1) - l_idx
-    if not (3 <= flag_bars <= fm) or l_idx < 3 or pole_low <= 0:
-        return None
-    run_highs = [x for x in ctx["highs"][max(0, l_idx - rl):l_idx + 1] if x is not None]
-    if not run_highs:
-        return None
-    run_high = max(run_highs)
-    run = (run_high - pole_low) / pole_low
-    if run < min_run:
-        return None
-    flag_highs = [x for x in ctx["highs"][l_idx + 1:] if x is not None]
-    if not flag_highs:
-        return None
-    flag_high = max(flag_highs)
-    retrace = (flag_high - pole_low) / (run_high - pole_low)
-    if retrace > 0.5 or ctx["last"] >= flag_high:
-        return None
+    l_idx, pole_low, run_high, run, flag_high, retrace, target, status = best[1]
     quality = min(12.0, 6.0 * run / min_run) + 16.0 * max(0.0, 0.5 - retrace)
     points = {"pole_high": round(run_high, 4), "pole_low": _pt(ctx, l_idx, pole_low),
               "flag_high": round(flag_high, 4), "run_pct": round(run * 100, 2),
               "retrace_pct": round(retrace * 100, 1), "_anchor_price": pole_low}
-    return _mk(ctx, "bear_flag", "bearish", "forming", pole_low,
-               flag_high - (run_high - pole_low), flag_high, l_idx,
+    return _mk(ctx, "bear_flag", "bearish", status, pole_low,
+               target, flag_high, l_idx,
                max(0, l_idx - rl), points, quality)
 
 

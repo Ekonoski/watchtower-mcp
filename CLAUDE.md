@@ -187,6 +187,35 @@ Rendering doctrine, same spirit as the rest of this file:
   family as `_social_block`: zero fills from armed specs is the market
   declining — zero specs ever armed is the system declining, and only the
   first kind was being watched.
+- **A flat score bar is a class gate in disguise, and a flat top-N is a
+  class cap in disguise** (2026-08-16, Eric: "we need to get these active
+  so that we have real data… right now we are not working with a real
+  system"). Week one's book was 100% higher_low/neckline not because the
+  scanner found nothing else but because the writer's flat `score >= 70`
+  sat above cup_handle's best live row (67.9) and falling_wedge's (61.0)
+  — detector quality scales differ, so one bar across classes is the flat
+  1.5:1 geometry mistake wearing a different number — and the flat top-15
+  by score let ~260 higher_low/neckline candidates flood every slot
+  ema_bounce (24 candidates, all passing geometry) might have taken. The
+  allowlisted experiments simply weren't running, and only the ledger's
+  class-mix line could have said so. Now: every class present gets ONE
+  guaranteed slot (its best candidate, admitted at `SWING_SCORE_FLOOR`
+  55); the remaining slots keep the old open-competition bar
+  (`SWING_SCORE_OPEN` 70); the writer logs the floor grants and the armed
+  class mix every morning. A floor is one slot, never a flood —
+  `tests/test_paper_intraday.py` pins that five queued wedges still yield
+  exactly one wedge. Same day, the deeper cousin: **bull_flag could never
+  fire at all** — the detector hardcoded `forming` AND sought its pole
+  among all window bars, so the breakout bar became its own pole and the
+  detection dissolved at the exact moment it became tradable (443 live
+  flags, zero ever breakout/retest — the `_social_block` family, in a
+  detector). Flags now run the same `_status()` lifecycle as every other
+  class, the pole must be the high of its own run, the flag region ends
+  at the first CLOSE through the pole (wick rule), and when one tape
+  reads both as a broken pole in throwback and a marginally higher
+  "fresh flag," the ACTIONABLE reading wins. `tests/test_flag_lifecycle.py`
+  pins forming → breakout → retest, the wick refusal, and the spent drop.
+
 - **The cost of confirmation is measured, not argued** (decided 2026-08-08:
   the swing book keeps resting-limit fills at the trigger). Every touch fill
   also records its confirmation shadow — the completed-15m-close entry a

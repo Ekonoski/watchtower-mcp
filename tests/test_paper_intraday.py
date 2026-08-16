@@ -89,9 +89,46 @@ def test_curate_swing_dedupes_and_caps():
             ("AAA", "weekly", "higher_low", "long", 10, 16, 9, 72),   # weekly beats daily
             ("BBB", "daily", "double_bottom", "long", 20, 30, 18, 95),
             ("CCC", "daily", "higher_low", "long", 5, 8, 4.5, 71)]
-    kept, dropped = curate_swing(rows, cap=2)
+    kept, dropped, floors = curate_swing(rows, cap=2)
     assert [(r[0], r[1]) for r in kept] == [("BBB", "daily"), ("AAA", "weekly")]
     assert dropped == 2
+    assert floors == {("double_bottom", "daily"): "BBB",
+                      ("higher_low", "weekly"): "AAA"}
+
+
+def test_curate_swing_class_floors():
+    """The week-one monoculture (2026-08-16): ~260 higher_low/neckline
+    candidates monopolized every slot, so cup_handle/falling_wedge/
+    ema_bounce — allowlisted Aug 10 with candidates passing geometry —
+    armed ZERO specs in the book's whole first week. Each class present
+    now gets its best row as a guaranteed slot; open competition still
+    demands SWING_SCORE_OPEN, so a floor is one slot, never a flood."""
+    from analysis.paper_trader import SWING_SCORE_OPEN, curate_swing
+    rows = [(f"HL{i:02d}", "daily", "higher_low", "long", 10, 15, 9, 70 + i * 0.5)
+            for i in range(20)]                                    # 70.0 .. 79.5
+    rows += [("CUP", "weekly", "cup_handle", "long", 30, 40, 25, 60.0),
+             ("WDG", "weekly", "falling_wedge", "long", 8, 12, 7, 58.0),
+             ("EMA", "weekly", "ema_bounce", "long", 50, 70, 45, 66.0),
+             # Below the open bar and NOT its class's best — must never
+             # ride in on the floor's coattails.
+             ("HLX", "daily", "higher_low", "long", 9, 14, 8, 61.0)]
+    kept, dropped, floors = curate_swing(rows, cap=15)
+    tks = {r[0] for r in kept}
+    assert {"CUP", "WDG", "EMA"} <= tks, tks                # every class arms
+    assert "HLX" not in tks                                 # no coattails
+    assert ("cup_handle", "weekly") in floors
+    assert ("falling_wedge", "weekly") in floors
+    assert len(kept) == 15
+    # The open-competition picks all clear the old bar — the floor grants
+    # are the ONLY sub-70 admissions.
+    sub_open = [r for r in kept if r[7] < SWING_SCORE_OPEN]
+    assert {r[0] for r in sub_open} == {"CUP", "WDG", "EMA"}, sub_open
+    # And the floor never floods: exactly one wedge no matter how many
+    # wedge candidates queue behind the best one.
+    rows += [(f"WD{i}", "weekly", "falling_wedge", "long", 8, 12, 7, 57 - i)
+             for i in range(5)]
+    kept2, _, _ = curate_swing(rows, cap=15)
+    assert sum(1 for r in kept2 if r[2] == "falling_wedge") == 1
 
 
 if __name__ == "__main__":
