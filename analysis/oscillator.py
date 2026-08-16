@@ -43,7 +43,7 @@ WT_OUTER = 60.0
 # stored; validation against the TradingView fill picks which one leads.
 MF_DEFAULT = "mf_candle"
 
-TIMEFRAMES = ("daily", "weekly", "4h", "1h")    # scanned + stored
+TIMEFRAMES = ("daily", "3d", "weekly", "4h", "1h")    # scanned + stored
 RESAMPLE_TFS = ("2d", "3d")                     # on-demand, single-ticker reads
 ON_DEMAND_TFS = ("daily", "weekly", "monthly", "2d", "3d", "4h", "1h", "5m")
 
@@ -124,7 +124,15 @@ PERF_MIN_CONFLUENCE = 60
 #     and ranks last instead of being refused; the NI/MARA knife-guard
 #     is the stabilized-tape leg, which stays hard. The two flavors
 #     grade separately via forward returns.
-SIGNALS_VERSION = 11
+#
+# v12 (2026-08-16): bull_embed — the BW-3D archetype (Eric: "these create
+#     big moves quite often"), the FULL EMBED at the opposite end of the
+#     lifecycle from the washout family: sustained green flow, waves riding
+#     the upper band, RSI strong, MACD stacked positive, %R embedded,
+#     price stair-stepping above a rising 8-bar average near its highs.
+#     Plus the '3d' timeframe (busday-epoch buckets, repaint-proof) so the
+#     archetype's native chart is scanned, not approximated.
+SIGNALS_VERSION = 12
 
 # %R higher-low family legs.
 PHL_FLOOR = -70.0          # both troughs at/below this
@@ -135,6 +143,18 @@ PHL_FRESH_BARS = 14        # second-trough recency
 PHL_UNSPENT_MAX = -45.0    # pctr_hl only: %R not yet spent
 PHL_STAB_BARS = 3          # most recent 30-bar closing low at least this old
 PHL_PIVOT_K = 2
+
+# ── bull_embed: the full-embed momentum state (2026-08-16, BW-3D) ────────────
+# The mirror image of the washout thresholds: where cipher_reversal demands
+# flow ≤ -4 and %R pinned ≤ -80, the embed demands flow green and SUSTAINED
+# and %R riding the ceiling. First cut from the BW archetype; calibrated
+# from Eric's chart verdicts like the reversal family before it.
+BE_MF_GREEN = 4.0          # flow green NOW, not a sliver
+BE_MF_POS_BARS = 8         # ...and sustained: 8 of the last 10 bars positive
+BE_WT2_MIN = 20.0          # waves riding the upper band
+BE_RSI_MIN = 60.0          # strength — the mirror of the washout's ceiling
+BE_PCTR_MIN = -20.0        # %R embedded near the ceiling
+BE_NEAR_HIGH = 0.95        # close within 5% of its 30-bar closing high
 
 # cipher_reversal legs: the money-flow trough that counts as "deep in the
 # red" (mf_candle scale, typical range ±15), how fresh the wave cross-up
@@ -260,6 +280,42 @@ def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFr
         if same_week and today.weekday() < 5:
             agg = agg.iloc[:-1]
     return agg
+
+
+def resample_sessions(daily: pd.DataFrame, k: int,
+                      drop_partial: bool = True) -> pd.DataFrame:
+    """k-session bars bucketed by BUSINESS-day ordinal since a fixed epoch
+    (2000-01-03, a Monday) so the bars are STABLE as the fetch window
+    slides — an end-anchored grouping re-buckets the entire history every
+    session, a repaint machine, which is fatal for STORED rows and
+    forward-return grading (and TradingView anchors from series start, so
+    stable buckets are also what the chart shows). A holiday inside a
+    bucket simply leaves a shorter bar, the same way a holiday shortens a
+    week. The current bucket is dropped while genuinely in progress and
+    kept once the calendar is past its final business day (weekly's
+    partial-bar rule, including its weekend fix)."""
+    from datetime import date as _date
+    epoch = np.datetime64("2000-01-03")
+    d64 = np.array(daily.index.date, dtype="datetime64[D]")
+    bucket = np.busday_count(epoch, d64) // k
+    agg = daily.groupby(bucket).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"),
+        close=("close", "last"), volume=("volume", "sum"))
+    last_dates = daily.index.to_series().groupby(bucket).max()
+    agg.index = pd.Index(last_dates.values)
+    agg = agg.sort_index()
+    if drop_partial and len(agg):
+        last_bar = np.datetime64(pd.Timestamp(agg.index[-1]).date())
+        last_bucket = int(np.busday_count(epoch, last_bar) // k)
+        bucket_end = np.busday_offset(epoch, last_bucket * k + (k - 1))
+        if np.datetime64(_date.today()) <= bucket_end:
+            agg = agg.iloc[:-1]
+    return agg
+
+
+def resample_3d(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
+    """The scanned '3d' timeframe (2026-08-16, the BW-3D archetype)."""
+    return resample_sessions(daily, 3, drop_partial)
 
 
 def resample_monthly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
@@ -753,6 +809,50 @@ def evaluate_signals(df: pd.DataFrame, pattern_ctx: dict = None) -> dict:
                                     macd_hist=round(mh_last, 3),
                                     rsi=round(rsi_last, 1))
 
+    # 11) bull_embed (Eric, 2026-08-16, the BW-3D archetype: "these create
+    # big moves quite often") — the FULL EMBED, the opposite end of the
+    # lifecycle from the washout family: money flow green and SUSTAINED,
+    # waves riding the upper band, RSI strong, MACD stacked positive, %R
+    # embedded near the ceiling, price stair-stepping above a rising
+    # 8-bar average within reach of its highs. Bullish only; a named
+    # screen, never a gate; structurally unable to touch the confluence
+    # score (asserted by tests/test_bull_embed.py). Caveat, stated where
+    # the numbers surface: embedded-overbought entries graded NEGATIVE at
+    # daily breakouts in the cipher-tag study (wt2>=53 = -0.18R) — this
+    # screen exists to test Eric's claim on ITS OWN forward returns, at
+    # the 3d/weekly horizons the archetype lives on, not to presume it.
+    mfv_e = df[MF_DEFAULT].values
+    rv_e = df["pctr"].values
+    cl_e = df["close"].values
+    if (len(cl_e) >= 40 and rsi_last is not None
+            and not np.isnan(mfv_e[-1]) and not np.isnan(rv_e[-1])
+            and not np.isnan(c["macd"]) and not np.isnan(c["macd_hist"])
+            and not np.isnan(c["wt2"])):
+        mf_pos10 = int(np.sum(mfv_e[-10:] > 0))
+        sma8_e = float(np.mean(cl_e[-8:]))
+        sma8_prev = float(np.mean(cl_e[-12:-4]))
+        hi30 = float(np.max(cl_e[-30:]))
+        if (float(mfv_e[-1]) >= BE_MF_GREEN and mf_pos10 >= BE_MF_POS_BARS
+                and float(c["wt2"]) >= BE_WT2_MIN
+                and rsi_last >= BE_RSI_MIN
+                and float(c["macd"]) > 0 and float(c["macd_hist"]) > 0
+                and float(rv_e[-1]) >= BE_PCTR_MIN
+                and float(c["close"]) >= sma8_e and sma8_e > sma8_prev
+                and float(c["close"]) >= BE_NEAR_HIGH * hi30):
+            sig["bull_embed"] = {
+                "dir": "up",
+                "mf": round(float(mfv_e[-1]), 2),
+                "mf_pos10": mf_pos10,
+                "wt1": round(float(c["wt1"]), 1),
+                "wt2": round(float(c["wt2"]), 1),
+                "rsi": round(rsi_last, 1),
+                "macd": round(float(c["macd"]), 3),
+                "macd_hist": round(float(c["macd_hist"]), 3),
+                "pctr": round(float(rv_e[-1]), 1),
+                "off_high_pct": round((float(c["close"]) / hi30 - 1) * 100, 2),
+                "ext_pct": round((float(c["close"]) / sma8_e - 1) * 100, 2),
+            }
+
     score, direction = _confluence(df, sig, pattern_ctx)
     return {"signals": sig, "confluence_score": score, "direction": direction}
 
@@ -861,7 +961,9 @@ def compute_for_ticker(ticker: str, timeframe: str = "daily",
         elif timeframe == "weekly":
             df = resample_weekly(daily)
         else:
-            df = resample_days(daily, int(timeframe[0]))
+            # Epoch-anchored so the chat read matches the STORED 3d screen
+            # bar-for-bar (resample_days is end-anchored and repaints).
+            df = resample_sessions(daily, int(timeframe[0]))
         pctx_tf = timeframe if timeframe in ("daily", "weekly") else None
     if len(df) < 70:
         return {}
@@ -1007,27 +1109,40 @@ def _perf_entry(ticker: str, timeframe: str, df: pd.DataFrame, ev: dict):
     backed curl) qualify on their own. The coil no longer qualifies — the
     replay showed no excess edge, so it doesn't earn perf tracking."""
     sig = ev["signals"]
-    if not sig or ev["direction"] is None \
-            or ev["confluence_score"] < PERF_MIN_CONFLUENCE:
+    if not sig:
+        return None
+    # bull_embed bypasses the confluence/direction gate on purpose: the
+    # blended score's bullish bucket rewards WASHED-OUT waves, so an embed
+    # state (waves at the ceiling) would systematically fail a bar it was
+    # never shaped for — the sign-flip lesson, applied to perf logging.
+    # The embed is bullish by construction and grades on its own flag.
+    if ("bull_embed" not in sig) and (ev["direction"] is None
+            or ev["confluence_score"] < PERF_MIN_CONFLUENCE):
         return None
     x = sig.get("wt_cross")
     curl = sig.get("mf_curl") or {}
     qualifying = [k for k in ("loaded_spring", "divergence", "pctr_hook",
-                              "cipher_reversal", "pctr_hl", "base_turn") if k in sig]
+                              "cipher_reversal", "pctr_hl", "base_turn",
+                              "bull_embed") if k in sig]
     if x and x["zone"] == "extreme":
         qualifying.append("wt_cross")
     if curl.get("volume_backed"):
         qualifying.append("mf_curl")
     if not qualifying:
         return None
+    # An embed-only row grades as the bullish claim it is — the composite's
+    # direction read is decoration here (it can even come out bearish on an
+    # embed chart, because its bullish bucket wants washed waves).
+    direction = ("bullish" if qualifying == ["bull_embed"]
+                 else ev["direction"])
     return {
         "ticker": ticker,
         "price": float(df["close"].iloc[-1]),
         "score": ev["confluence_score"],
         "signal_type": f"{timeframe}:{'+'.join(sorted(qualifying))}"
-                       f":{ev['direction']}",
+                       f":{direction}",
         "timeframe": timeframe,
-        "direction": ev["direction"],
+        "direction": direction,
         "confluence": ev["confluence_score"],
     }
 
@@ -1055,7 +1170,7 @@ def run_oscillator_scan(include_4h: bool = True,
     change intraday, only the 4h/1h reads can."""
     from screen.reversal_screen import _conn
     conn = _conn()
-    counts = {"daily": 0, "weekly": 0, "4h": 0, "1h": 0}
+    counts = {"daily": 0, "3d": 0, "weekly": 0, "4h": 0, "1h": 0}
     perf_rows: list = []
     try:
         try:
@@ -1089,6 +1204,16 @@ def run_oscillator_scan(include_4h: bool = True,
                         pe = _perf_entry(t, "daily", dfd, ev)
                         if pe:
                             perf_rows.append(pe)
+                        d3 = resample_3d(daily)
+                        if len(d3) >= 70:
+                            df3 = compute_oscillator(d3)
+                            # no pattern_scan rows exist for 3d — no ctx
+                            ev3 = evaluate_signals(df3, None)
+                            _store(conn, t, "3d", df3, ev3)
+                            counts["3d"] += 1
+                            p3 = _perf_entry(t, "3d", df3, ev3)
+                            if p3:
+                                perf_rows.append(p3)
                         wk = resample_weekly(daily)
                         if len(wk) >= 70:
                             dfw = compute_oscillator(wk)
@@ -1101,8 +1226,8 @@ def run_oscillator_scan(include_4h: bool = True,
                     except Exception as e:
                         log.debug(f"[oscillator] {t} failed: {e}")
                 conn.commit()
-            log.info(f"[oscillator] daily {counts['daily']} / weekly "
-                     f"{counts['weekly']} in {time.time() - t0:.0f}s")
+            log.info(f"[oscillator] daily {counts['daily']} / 3d {counts['3d']} "
+                     f"/ weekly {counts['weekly']} in {time.time() - t0:.0f}s")
         if include_4h:
             for tf in ("4h", "1h"):
                 counts[tf] = _scan_intraday(conn, pctx, tf, perf_rows)

@@ -345,6 +345,32 @@ Rendering doctrine, same spirit as the rest of this file:
   freshly REJECTED breakout (Friday −7.2% off the 94.40 trigger), and
   a bullish panel at a rejected trigger must say so.
 
+- **bull_embed rides the OTHER end of the lifecycle, and the record votes
+  against the easy version of it** (2026-08-16, the BW-3D chart — Eric:
+  "these create big moves quite often"). The full-embed state: flow ≥ +4
+  AND positive 8 of the last 10 bars, wt2 ≥ 20, RSI ≥ 60, MACD line and
+  hist positive, %R ≥ −20, close above a RISING 8-bar average within 5%
+  of its 30-bar high. Bullish-only named screen, confluence-blind, and
+  it BYPASSES the perf-logging confluence gate (the composite's bullish
+  bucket rewards washed waves, so embed rows would systematically fail a
+  bar they were never shaped for — the sign-flip lesson applied to perf
+  logging; embed-only rows grade as the bullish claim they are). Graded
+  where the record can express it: the core (mf/wt2/RSI/hist) at
+  breakout-close entries UNDERPERFORMS baseline — daily +0.036R
+  (n=6,679) vs +0.063R, weekly +0.243R (n=1,584) vs +0.486R — while
+  touching +1R more often (30.3% vs 27.7%): mature moves pay the first
+  R reliably, the tail worse. The sustained-flow/%R/near-high/rising-avg
+  legs and the 3d timeframe aren't in the record, so the claim grades
+  live via forward returns, stated wherever the numbers surface. Shipped
+  WITH the '3d' scan timeframe (its native chart): `resample_sessions`
+  buckets by busday ordinal from a fixed epoch — end-anchored k-day
+  grouping re-buckets the whole series every session, a repaint machine
+  that would poison stored rows and forward grading —
+  `tests/test_resample_3d.py` pins the no-repaint property, and the
+  on-demand 2d/3d chat reads use the same buckets so chat and screen
+  can never disagree bar-for-bar. `tests/test_bull_embed.py` pins the
+  legs, the blindness, and the perf bypass.
+
 - **Numbers at a bar are not the picture; paths are** (2026-08-15, the
   CEG/SNAP lesson): a nine-component snapshot fingerprint found CEG as
   SNAP's weekly twin — true to a tenth of a point at the bar and

@@ -995,6 +995,23 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
     price back above its 8-bar average (bullish only; ranks by relative
     strength). Lifecycle: pctr_hl → cipher_reversal → base_turn are one
     reversal at three ages; earliest = most room and most risk.
+    bull_embed = the OPPOSITE end of the lifecycle (the BW-3D look,
+    2026-08-16): the FULL EMBED riding a made move — money flow green
+    (≥ +4) and sustained (positive 8 of the last 10 bars), waves in the
+    upper band (wt2 ≥ 20), RSI ≥ 60, MACD line AND histogram positive,
+    Williams %R embedded (≥ −20), price above a RISING 8-bar average
+    within 5% of its 30-bar high (bullish only; ranks most-sustained
+    flow first). Native timeframe is the 3d chart the archetype came
+    from; also fires on daily/weekly. Caveats stated where the numbers
+    surface: at the 320k v6 episodes the expressible core (mf ≥ 4, wt2
+    ≥ 20, RSI ≥ 60, MACD hist green) UNDERPERFORMS baseline expectancy
+    at breakout-close entries — daily +0.036R (n=6,679) vs +0.063R,
+    weekly +0.243R (n=1,584) vs +0.486R — while touching +1R MORE
+    often (30.3% vs 27.7% daily): mature moves pay the first R
+    reliably and the tail worse. The record can't express the
+    sustained-flow, %R-embed, near-high, or rising-average legs, and
+    has no 3d bars at all — so the screen tests Eric's "big moves"
+    claim on its own 7/30/90-day forward returns; it presumes nothing.
     high_confluence = the raw washout watchlist (most stretched names in
     the market — where turns START; stalk for the higher low, don't buy
     the first green dot). Bearish setups are warnings on longs, not short
@@ -1005,12 +1022,12 @@ def watchtower_screen_oscillator(setup: str = "entry_grade",
 
     Args:
         setup: entry_grade | loaded_spring | cipher_reversal |
-               pctr_hl | base_turn |
+               pctr_hl | base_turn | bull_embed |
                high_confluence | wt_extreme_cross | pctr_hook |
                divergence (price vs wave, confirmed pivots) |
                mf_round (smooth rounded money-flow turn — the arc, not a
                one-bar curl) | mf_curl | any_signal
-        timeframe: daily | weekly | 4h | 1h
+        timeframe: daily | 3d | weekly | 4h | 1h
         direction: bullish | bearish | all   (default bullish)
         top_n: max rows (default 15)
     """

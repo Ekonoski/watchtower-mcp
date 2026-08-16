@@ -1602,7 +1602,7 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
 
 
 _OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
-               "cipher_reversal", "pctr_hl", "base_turn",
+               "cipher_reversal", "pctr_hl", "base_turn", "bull_embed",
                "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
                "mf_curl", "any_signal")
 
@@ -1687,6 +1687,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "cipher_reversal": "o.signals ? 'cipher_reversal'",
             "pctr_hl": "o.signals ? 'pctr_hl'",
             "base_turn": "o.signals ? 'base_turn'",
+            "bull_embed": "o.signals ? 'bull_embed'",
             "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
@@ -1708,8 +1709,12 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         # arcs, then the full stack, then the deepest wash; pctr_hl ranks
         # divergent pairs off the deepest first floor; base_turn ranks by
         # relative strength (the SNAP look is a quality screen).
+        # bull_embed joins them from the OTHER side: the composite's
+        # bullish bucket rewards washed-out waves, so a full-embed chart
+        # (waves at the ceiling) often computes 'bearish' — same reason,
+        # mirrored.
         _BULL_BY_CONSTRUCTION = ("loaded_spring", "cipher_reversal",
-                                 "pctr_hl", "base_turn")
+                                 "pctr_hl", "base_turn", "bull_embed")
         dir_clause = ("" if setup in _BULL_BY_CONSTRUCTION else
                       "AND (%(dir)s = 'all' OR o.direction = %(dir)s)")
         order_sql = {
@@ -1723,6 +1728,10 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
                 "(o.signals->'pctr_hl'->>'price_div')::boolean DESC, "
                 "(o.signals->'pctr_hl'->>'low1')::float ASC",
             "base_turn": "s.rs_pct DESC NULLS LAST",
+            # Strongest embed first: most sustained flow, then flow level.
+            "bull_embed":
+                "(o.signals->'bull_embed'->>'mf_pos10')::int DESC, "
+                "(o.signals->'bull_embed'->>'mf')::float DESC",
         }.get(setup, "o.confluence_score DESC NULLS LAST")
         # Structural context on every row (the MNDY lesson, 2026-08-15: a
         # panel that looks bullish at a rejected trigger must say so) —
@@ -1756,7 +1765,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             # never surface as a current pick. An hourly reversal state has
             # a shelf life of hours — the 2026-08-14 lesson was ADT's
             # Tuesday 1h bar rendering as Friday's state under a 4-day gate.
-            fresh_days = {"1h": 1, "4h": 2}.get(tf, 30)
+            fresh_days = {"1h": 1, "4h": 2, "3d": 8}.get(tf, 30)
             cur.execute(query, {"tf": tf, "dir": direction, "fresh": fresh_days})
             rows = cur.fetchall()
             cur.execute("SELECT max(scanned_at) FROM oscillator_scan "
