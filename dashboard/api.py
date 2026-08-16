@@ -1602,7 +1602,8 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
 
 
 _OSC_SETUPS = ("entry_grade", "high_confluence", "loaded_spring",
-               "cipher_reversal", "pctr_hl", "base_turn", "bull_embed",
+               "cipher_reversal", "pctr_hl", "base_turn", "red_to_green",
+               "bull_embed",
                "wt_extreme_cross", "pctr_hook", "divergence", "mf_round",
                "mf_curl", "any_signal")
 
@@ -1688,6 +1689,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "pctr_hl": "o.signals ? 'pctr_hl'",
             "base_turn": "o.signals ? 'base_turn'",
             "bull_embed": "o.signals ? 'bull_embed'",
+            "red_to_green": "o.signals ? 'red_to_green'",
             "wt_extreme_cross": "o.signals->'wt_cross'->>'zone' = 'extreme'"
                                 + ("" if direction == "all" else
                                    f" AND o.signals->'wt_cross'->>'dir' = '{sig_dir}'"),
@@ -1714,7 +1716,8 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
         # (waves at the ceiling) often computes 'bearish' — same reason,
         # mirrored.
         _BULL_BY_CONSTRUCTION = ("loaded_spring", "cipher_reversal",
-                                 "pctr_hl", "base_turn", "bull_embed")
+                                 "pctr_hl", "base_turn", "bull_embed",
+                                 "red_to_green")
         dir_clause = ("" if setup in _BULL_BY_CONSTRUCTION else
                       "AND (%(dir)s = 'all' OR o.direction = %(dir)s)")
         order_sql = {
@@ -1732,6 +1735,10 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             "bull_embed":
                 "(o.signals->'bull_embed'->>'mf_pos10')::int DESC, "
                 "(o.signals->'bull_embed'->>'mf')::float DESC",
+            # Freshest flip first, deepest red beside it (depth = fuel).
+            "red_to_green":
+                "(o.signals->'red_to_green'->>'green_run')::int ASC, "
+                "(o.signals->'red_to_green'->>'red_depth')::float ASC",
         }.get(setup, "o.confluence_score DESC NULLS LAST")
         # Structural context on every row (the MNDY lesson, 2026-08-15: a
         # panel that looks bullish at a rejected trigger must say so) —
