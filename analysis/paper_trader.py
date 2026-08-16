@@ -116,6 +116,15 @@ SWING_PATTERNS = tuple(dict.fromkeys(p for p, _tf in SWING_CLASSES))
 # 2026-08-07 the uncurated query armed 151 blind limits on an NFP morning.
 SWING_TIMEFRAMES = ("weekly", "daily")
 SWING_MAX = 15
+# A flat score bar is a class gate in disguise (2026-08-16, same family as
+# the flat 1.5:1 geometry): detector quality scales differ, so the old
+# flat `score >= 70` was trivial for higher_low and mathematically out of
+# reach for a wedge (falling_wedge quality caps near 20 -> ~78 ceiling
+# only at breakout+volume perfection; its best live row scored 61 while
+# higher_low printed 78s). Floor picks (one guaranteed slot per class)
+# admit at SWING_SCORE_FLOOR; open-competition slots keep the old bar.
+SWING_SCORE_OPEN = 70.0
+SWING_SCORE_FLOOR = 55.0
 
 
 # Neckline classes target the measured move: target−trigger EQUALS
@@ -279,16 +288,46 @@ def fresh_swing_rows(rows, today):
 def curate_swing(rows, cap=SWING_MAX):
     """Pure. rows: (ticker, timeframe, pattern, direction, trigger, target,
     invalid, score) already geometry-filtered. One spec per ticker (weekly
-    beats daily, then higher score), top `cap` by score.
-    Returns (kept, dropped_count)."""
+    beats daily, then higher score); then CLASS-FLOOR curation
+    (2026-08-16, Eric: "we need to get these active so we have real
+    data"): a flat top-N by score let the two highest-volume classes
+    monopolize every slot for the book's whole first week — ~260
+    higher_low/neckline candidates against cup_handle's best 67.9 meant
+    cup & handle, falling wedge, ema_bounce et al. NEVER armed a spec,
+    so their live-vs-prior experiments simply weren't running. Every
+    class present in `rows` now gets ONE guaranteed slot (its
+    best-scoring candidate — floor picks answer to SWING_SCORE_FLOOR,
+    enforced upstream in the candidate query); remaining slots run open
+    competition at SWING_SCORE_OPEN+, exactly the old rule.
+    Returns (kept, dropped_count, floor_picks) where floor_picks maps
+    (pattern, timeframe) -> ticker for the slots the floor granted —
+    the writer logs it, and the ledger's "armed today" class mix
+    renders the change the day it ships."""
     best = {}
     for r in rows:
         tk, tf, score = r[0], r[1], r[7]
         rank = (tf == "weekly", score)
         if tk not in best or rank > (best[tk][1] == "weekly", best[tk][7]):
             best[tk] = r
-    kept = sorted(best.values(), key=lambda r: -r[7])[:cap]
-    return kept, len(rows) - len(kept)
+    pool = sorted(best.values(), key=lambda r: -r[7])
+    by_class = {}
+    for r in pool:
+        key = (r[2], r[1])
+        if key not in by_class:          # pool is score-sorted: first wins
+            by_class[key] = r
+    floor = sorted(by_class.values(), key=lambda r: -r[7])[:cap]
+    kept = list(floor)
+    used = {r[0] for r in kept}
+    for r in pool:
+        if len(kept) >= cap:
+            break
+        if r[0] in used or r[7] < SWING_SCORE_OPEN:
+            continue
+        kept.append(r)
+        used.add(r[0])
+    kept.sort(key=lambda r: -r[7])
+    floor_picks = {(r[2], r[1]): r[0] for r in floor}
+    return kept, len(rows) - len(kept), floor_picks
 
 
 def _touch(level, px):
@@ -406,10 +445,11 @@ def write_morning_specs():
                                 target, invalid_level, score,
                                 (scanned_at AT TIME ZONE 'America/New_York')::date
                          FROM pattern_scan
-                         WHERE pattern = ANY(%s) AND status='breakout' AND score >= 70
+                         WHERE pattern = ANY(%s) AND status='breakout' AND score >= %s
                            AND direction='bullish' AND timeframe = ANY(%s)
                            AND dist_to_trigger_pct BETWEEN 0 AND 4""",
-                      (list(SWING_PATTERNS), list(SWING_TIMEFRAMES)))
+                      (list(SWING_PATTERNS), SWING_SCORE_FLOOR,
+                       list(SWING_TIMEFRAMES)))
             rows, n_stale, stale_latest = fresh_swing_rows(c.fetchall(), today)
             if n_stale:
                 log.warning("[paper] swing: %d candidate row(s) EXCLUDED as "
@@ -445,10 +485,20 @@ def write_morning_specs():
                 log.warning("[paper] class(es) with candidates but ZERO "
                             "eligible: %s — if this persists, a gate is "
                             "structurally excluding them", ", ".join(zero_admit))
-            kept, dropped = curate_swing(candidates)
+            kept, dropped, floor_picks = curate_swing(candidates)
             if dropped:
                 log.info("[paper] swing: %d qualified, curated to %d (dropped %d)",
                          len(candidates), len(kept), dropped)
+            # The class-floor grants and the resulting mix, every morning —
+            # a monoculture must render as a question, never as "what the
+            # scanner found".
+            log.info("[paper] swing class floors: %s",
+                     ", ".join(f"{p}/{tf}:{tk}"
+                               for (p, tf), tk in sorted(floor_picks.items()))
+                     or "none")
+            mix = Counter(f"{k[2]}/{k[1]}" for k in kept)
+            log.info("[paper] swing armed class mix: %s",
+                     ", ".join(f"{k} {v}" for k, v in sorted(mix.items())) or "none")
             # Bearish-structure warning (2026-08-13, CIFR): the bullish-only
             # candidate query can't see the scanner's OTHER opinion of the
             # same ticker. Stamp it, never gate on it.
