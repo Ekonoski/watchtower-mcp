@@ -68,6 +68,18 @@ def main():
     r_dp = resample_sessions(df, 3, drop_partial=True)
     assert r_dp.index[-1] == r_full.index[-1]
 
+    # 5) The v13 lesson: the fleet fetch indexes frames with raw
+    # datetime.date objects, not a DatetimeIndex — v12's .date call raised
+    # on every ticker and the scan's per-ticker except swallowed it (zero
+    # 3d rows, weekly skipped behind it). Both index types must bucket
+    # IDENTICALLY.
+    df_dates = df.copy()
+    df_dates.index = pd.Index([ts.date() for ts in df.index])
+    r_obj = resample_sessions(df_dates, 3, drop_partial=False)
+    assert len(r_obj) == len(r_full)
+    assert [pd.Timestamp(x) for x in r_obj.index] == list(r_full.index)
+    assert np.allclose(r_obj["close"].values, r_full["close"].values)
+
     print("ok — epoch-anchored buckets are stable under window slides "
           "(no repaint), holidays leave honest 2-session bars, and "
           "long-completed final buckets survive drop_partial")
