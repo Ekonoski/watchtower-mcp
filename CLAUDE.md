@@ -371,6 +371,28 @@ Rendering doctrine, same spirit as the rest of this file:
   can never disagree bar-for-bar. `tests/test_bull_embed.py` pins the
   legs, the blindness, and the perf bypass.
 
+- **red_to_green is the launch; bull_embed is the cruise — and the record
+  splits them by timeframe** (2026-08-16, Eric correcting bull_embed the
+  same evening: "No no no, the red into the green where the RSI's are
+  green and start turning up"). The flip: flow in a fresh 1-6-bar green
+  run out of REAL red (15-bar trough ≤ −4 — the still-red lesson,
+  mirrored), green-RSI pair curling and not spent (k ≥ d, d ≤ 60, k
+  rising), RSI rising with room (≤ 70), waves crossed up, MACD hist
+  green and EXPANDING, close above the 8-bar average. Graded with
+  outliers CAPPED at 10R — one 2,260R print was inflating the raw weekly
+  average 9× (+1.46R "raw" vs +0.158R capped; outlier hygiene belongs in
+  every grade): weekly flip +0.158R (n=2,399) vs +0.117R baseline with
+  3R+ moves 5.1% vs 4.1% — directionally Eric's "big moves" claim — but
+  the DAILY flip is a trap at breakout entries: −0.398R (n=8,594),
+  median −1.00, the typical daily just-green flip stops out. The same
+  weekly-selector/daily-veto asymmetry as the cipher tag, and the 3d
+  chart the archetype lives on sits between the graded horizons,
+  ungraded — forward returns arbitrate. Both screens bypass the
+  perf-logging confluence gate (the composite's bullish bucket wants
+  washed waves; green-flow states would systematically fail a bar they
+  were never shaped for) and grade as the bullish claims they are.
+  `tests/test_red_to_green.py` pins the legs, the blindness, the bypass.
+
 - **Numbers at a bar are not the picture; paths are** (2026-08-15, the
   CEG/SNAP lesson): a nine-component snapshot fingerprint found CEG as
   SNAP's weekly twin — true to a tenth of a point at the bar and
