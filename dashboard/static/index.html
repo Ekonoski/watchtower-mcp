@@ -838,7 +838,6 @@
     <div class="controls">
       <div class="seg" id="osc-tf">
         <button data-tf="daily" class="on">Daily</button>
-        <button data-tf="3d">3D</button>
         <button data-tf="weekly">Weekly</button>
         <button data-tf="4h">4H</button>
         <button data-tf="1h">1H</button>
@@ -1453,7 +1452,7 @@ function renderPatterns() {
   const body = $("pat-body");
   $("pat-empty").style.display = rows.length ? "none" : "";
   $("pat-count").textContent = rows.length ? `${rows.length} setups` : "";
-  const tfLabel = { weekly: "W", daily: "D", "3d": "3D", "4h": "4H" };
+  const tfLabel = { weekly: "W", daily: "D", "4h": "4H" };
   body.innerHTML = rows.map(r => {
     const bull = r.direction === "bullish";
     const name = PATTERN_LABELS[r.pattern] || r.pattern;

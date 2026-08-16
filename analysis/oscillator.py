@@ -43,7 +43,7 @@ WT_OUTER = 60.0
 # stored; validation against the TradingView fill picks which one leads.
 MF_DEFAULT = "mf_candle"
 
-TIMEFRAMES = ("daily", "3d", "weekly", "4h", "1h")    # scanned + stored
+TIMEFRAMES = ("daily", "weekly", "4h", "1h")    # scanned + stored
 RESAMPLE_TFS = ("2d", "3d")                     # on-demand, single-ticker reads
 ON_DEMAND_TFS = ("daily", "weekly", "monthly", "2d", "3d", "4h", "1h", "5m")
 
@@ -125,20 +125,20 @@ PERF_MIN_CONFLUENCE = 60
 #     is the stabilized-tape leg, which stays hard. The two flavors
 #     grade separately via forward returns.
 #
-# v12-v14 (2026-08-16): the BW-3D archetype experiment — bull_embed (the
-#     embedded cruise) then red_to_green (the launch flip), built and
-#     calibrated same-evening from the BW 3-day chart. Both RETIRED in
-#     v15 the same evening on Eric's chart check of the output ("this
-#     absolutely is not it. Remove this from our system"). The '3d'
-#     timeframe (busday-epoch buckets, repaint-proof — v13 fixed the
-#     date-object index) STAYS: it is neutral scan infrastructure and
-#     his archetype charts live on it. Episode grades kept for the
-#     record (outliers capped at 10R): embed core UNDERPERFORMED
-#     baseline both timeframes; daily just-green flip -0.398R median
-#     -1.00 (a trap); weekly flip +0.158R vs +0.117R. The lesson:
-#     chart-look composites wait for the labeled exemplar set
-#     (2026-08-15 plan) — the eye is not specified by adjectives.
-SIGNALS_VERSION = 15
+# v12-v16 (2026-08-16, one evening): the BW-3D archetype experiment —
+#     bull_embed, red_to_green, and a scanned '3d' timeframe — built,
+#     graded at the episodes, calibrated twice, and FULLY REVERTED on
+#     Eric's verdicts ("this absolutely is not it. Remove this from our
+#     system" … "Remove that part from our build"). Nothing of it
+#     remains in the scan; the on-demand 2d/3d single-ticker reads are
+#     as they were before (end-anchored resample_days). Reference
+#     grades kept in CLAUDE.md, outliers capped at 10R: the daily
+#     just-green flip was a trap (-0.398R, median -1.00, n=8,594); the
+#     embed core underperformed baseline on both graded timeframes; a
+#     2,260R outlier print inflated a raw weekly average 9x. The
+#     standing rule hardened: chart-look composites wait for the
+#     labeled exemplar set.
+SIGNALS_VERSION = 16
 
 # %R higher-low family legs.
 PHL_FLOOR = -70.0          # both troughs at/below this
@@ -275,48 +275,6 @@ def resample_weekly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFr
         if same_week and today.weekday() < 5:
             agg = agg.iloc[:-1]
     return agg
-
-
-def resample_sessions(daily: pd.DataFrame, k: int,
-                      drop_partial: bool = True) -> pd.DataFrame:
-    """k-session bars bucketed by BUSINESS-day ordinal since a fixed epoch
-    (2000-01-03, a Monday) so the bars are STABLE as the fetch window
-    slides — an end-anchored grouping re-buckets the entire history every
-    session, a repaint machine, which is fatal for STORED rows and
-    forward-return grading (and TradingView anchors from series start, so
-    stable buckets are also what the chart shows). A holiday inside a
-    bucket simply leaves a shorter bar, the same way a holiday shortens a
-    week. The current bucket is dropped while genuinely in progress and
-    kept once the calendar is past its final business day (weekly's
-    partial-bar rule, including its weekend fix)."""
-    from datetime import date as _date
-    epoch = np.datetime64("2000-01-03")
-    # The fleet fetch indexes frames with raw datetime.date objects while
-    # tests build DatetimeIndex — .date exists only on the latter, and the
-    # scan's per-ticker except swallowed the difference silently (zero 3d
-    # rows, weekly skipped behind it, found 2026-08-16 within the hour).
-    # Normalize per element so both worlds bucket identically.
-    d64 = np.array([np.datetime64(pd.Timestamp(x).date()) for x in daily.index],
-                   dtype="datetime64[D]")
-    bucket = np.busday_count(epoch, d64) // k
-    agg = daily.groupby(bucket).agg(
-        open=("open", "first"), high=("high", "max"), low=("low", "min"),
-        close=("close", "last"), volume=("volume", "sum"))
-    last_dates = daily.index.to_series().groupby(bucket).max()
-    agg.index = pd.Index(last_dates.values)
-    agg = agg.sort_index()
-    if drop_partial and len(agg):
-        last_bar = np.datetime64(pd.Timestamp(agg.index[-1]).date())
-        last_bucket = int(np.busday_count(epoch, last_bar) // k)
-        bucket_end = np.busday_offset(epoch, last_bucket * k + (k - 1))
-        if np.datetime64(_date.today()) <= bucket_end:
-            agg = agg.iloc[:-1]
-    return agg
-
-
-def resample_3d(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
-    """The scanned '3d' timeframe (2026-08-16, the BW-3D archetype)."""
-    return resample_sessions(daily, 3, drop_partial)
 
 
 def resample_monthly(daily: pd.DataFrame, drop_partial: bool = True) -> pd.DataFrame:
@@ -918,9 +876,7 @@ def compute_for_ticker(ticker: str, timeframe: str = "daily",
         elif timeframe == "weekly":
             df = resample_weekly(daily)
         else:
-            # Epoch-anchored so the chat read matches the STORED 3d screen
-            # bar-for-bar (resample_days is end-anchored and repaints).
-            df = resample_sessions(daily, int(timeframe[0]))
+            df = resample_days(daily, int(timeframe[0]))
         pctx_tf = timeframe if timeframe in ("daily", "weekly") else None
     if len(df) < 70:
         return {}
@@ -1117,7 +1073,7 @@ def run_oscillator_scan(include_4h: bool = True,
     change intraday, only the 4h/1h reads can."""
     from screen.reversal_screen import _conn
     conn = _conn()
-    counts = {"daily": 0, "3d": 0, "weekly": 0, "4h": 0, "1h": 0}
+    counts = {"daily": 0, "weekly": 0, "4h": 0, "1h": 0}
     perf_rows: list = []
     try:
         try:
@@ -1151,16 +1107,6 @@ def run_oscillator_scan(include_4h: bool = True,
                         pe = _perf_entry(t, "daily", dfd, ev)
                         if pe:
                             perf_rows.append(pe)
-                        d3 = resample_3d(daily)
-                        if len(d3) >= 70:
-                            df3 = compute_oscillator(d3)
-                            # no pattern_scan rows exist for 3d — no ctx
-                            ev3 = evaluate_signals(df3, None)
-                            _store(conn, t, "3d", df3, ev3)
-                            counts["3d"] += 1
-                            p3 = _perf_entry(t, "3d", df3, ev3)
-                            if p3:
-                                perf_rows.append(p3)
                         wk = resample_weekly(daily)
                         if len(wk) >= 70:
                             dfw = compute_oscillator(wk)
@@ -1173,8 +1119,8 @@ def run_oscillator_scan(include_4h: bool = True,
                     except Exception as e:
                         log.debug(f"[oscillator] {t} failed: {e}")
                 conn.commit()
-            log.info(f"[oscillator] daily {counts['daily']} / 3d {counts['3d']} "
-                     f"/ weekly {counts['weekly']} in {time.time() - t0:.0f}s")
+            log.info(f"[oscillator] daily {counts['daily']} / weekly "
+                     f"{counts['weekly']} in {time.time() - t0:.0f}s")
         if include_4h:
             for tf in ("4h", "1h"):
                 counts[tf] = _scan_intraday(conn, pctx, tf, perf_rows)

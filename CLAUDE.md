@@ -345,32 +345,33 @@ Rendering doctrine, same spirit as the rest of this file:
   freshly REJECTED breakout (Friday −7.2% off the 94.40 trigger), and
   a bullish panel at a rejected trigger must say so.
 
-- **The BW-3D archetype experiment: built, graded, and retired in one
-  evening** (2026-08-16). Eric asked for "similar charts on the 3 day
-  mimicking all of the bullish indications" off the BW 3D chart. Two
-  composites shipped and died on his chart checks: bull_embed (the
-  embedded cruise — "No no no, the red into the green…") and
-  red_to_green (the flip — "this absolutely is not it. Remove this from
-  our system"). Both are OUT of evaluate_signals, the screens, and the
-  perf pipeline (v15 restamp scrubbed stored payloads). What SURVIVES:
-  the '3d' scan timeframe (neutral infrastructure; his archetype charts
-  live on it; `resample_sessions` buckets by busday ordinal from a
-  fixed epoch because end-anchored k-day bars repaint —
-  `tests/test_resample_3d.py` pins it, including the v13 lesson that
-  the fleet fetch indexes with raw date objects while test fixtures
-  build DatetimeIndex, and a per-ticker except swallowed the difference
-  as zero rows on a "successful" scan); and the episode grades, kept as
-  reference with OUTLIERS CAPPED AT 10R (one 2,260R print inflated a
-  raw weekly average 9× — outlier hygiene belongs in every grade):
-  embed core UNDERPERFORMED baseline on both graded timeframes; daily
-  just-green flip −0.398R median −1.00 n=8,594 (a trap); weekly flip
-  +0.158R vs +0.117R with 3R+ moves 5.1% vs 4.1%. The lessons: an
-  adjective list is not a chart-look — composites chasing Eric's eye
-  WAIT for the labeled exemplar set (the 2026-08-15 plan) instead of
-  same-evening definition roulette; and verify the TICKER before
-  verdicting a chart — the removal call was made on TradingView's ENR
-  (Siemens Energy AG, EUR) while the system's ENR is Energizer
-  Holdings (US) — stated, not relitigated: the removal stands.
+- **The BW-3D archetype experiment: built, graded, and fully reverted in
+  one evening** (2026-08-16). Eric asked for "similar charts on the 3
+  day mimicking all of the bullish indications" off the BW 3D chart.
+  Two composites shipped and died on his chart checks — bull_embed (the
+  embedded cruise: "No no no, the red into the green…") and
+  red_to_green (the flip: "this absolutely is not it. Remove this from
+  our system") — and the scanned '3d' timeframe they rode on was
+  removed at his follow-up ("Remove that part from our build"). Nothing
+  of the experiment remains in the scan, screens, UI, or perf pipeline;
+  the on-demand 2d/3d single-ticker chat reads are exactly as they were
+  before. What the evening left behind is knowledge, kept here: (1) the
+  episode grades, outliers CAPPED at 10R — the daily just-green
+  money-flow flip is a TRAP at breakout entries (−0.398R, median −1.00,
+  n=8,594), the full-embed core underperformed baseline on both graded
+  timeframes, the weekly flip beat baseline only modestly (+0.158R vs
+  +0.117R); (2) one 2,260R outlier print inflated a raw weekly average
+  9× before capping — outlier hygiene belongs in every grade; (3) an
+  end-anchored k-day resample repaints every session and must never
+  feed stored rows, and test fixtures built on DatetimeIndex miss that
+  the fleet fetch indexes with raw date objects (a per-ticker except
+  swallowed exactly that as zero rows on a "successful" scan); (4)
+  verify the TICKER before verdicting a chart — the removal call was
+  made on TradingView's ENR (Siemens Energy AG) while the system's ENR
+  is Energizer Holdings (stated for the record; the removal stands).
+  The standing rule, hardened: chart-look composites WAIT for the
+  labeled exemplar set (the 2026-08-15 plan) — the eye is not specified
+  by adjectives, and two same-evening attempts proved it.
 
 - **Numbers at a bar are not the picture; paths are** (2026-08-15, the
   CEG/SNAP lesson): a nine-component snapshot fingerprint found CEG as
