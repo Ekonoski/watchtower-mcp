@@ -132,7 +132,14 @@ PERF_MIN_CONFLUENCE = 60
 #     price stair-stepping above a rising 8-bar average near its highs.
 #     Plus the '3d' timeframe (busday-epoch buckets, repaint-proof) so the
 #     archetype's native chart is scanned, not approximated.
-SIGNALS_VERSION = 12
+#
+# v13 (2026-08-16, same evening): v12's 3d resample assumed a DatetimeIndex
+#     (.date) while the fleet fetch indexes with raw datetime.date objects
+#     — every ticker's 3d step raised, the per-ticker except swallowed it,
+#     and the weekly re-stamp behind it was skipped too. Zero 3d rows on a
+#     "successful" scan. Bumped so the seed re-runs on boot; the resample
+#     now normalizes both index types, pinned by test with BOTH.
+SIGNALS_VERSION = 13
 
 # %R higher-low family legs.
 PHL_FLOOR = -70.0          # both troughs at/below this
@@ -296,7 +303,13 @@ def resample_sessions(daily: pd.DataFrame, k: int,
     partial-bar rule, including its weekend fix)."""
     from datetime import date as _date
     epoch = np.datetime64("2000-01-03")
-    d64 = np.array(daily.index.date, dtype="datetime64[D]")
+    # The fleet fetch indexes frames with raw datetime.date objects while
+    # tests build DatetimeIndex — .date exists only on the latter, and the
+    # scan's per-ticker except swallowed the difference silently (zero 3d
+    # rows, weekly skipped behind it, found 2026-08-16 within the hour).
+    # Normalize per element so both worlds bucket identically.
+    d64 = np.array([np.datetime64(pd.Timestamp(x).date()) for x in daily.index],
+                   dtype="datetime64[D]")
     bucket = np.busday_count(epoch, d64) // k
     agg = daily.groupby(bucket).agg(
         open=("open", "first"), high=("high", "max"), low=("low", "min"),
