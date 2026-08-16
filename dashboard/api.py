@@ -1756,7 +1756,7 @@ def _oscillator_rows(tf: str = "daily", direction: str = "bullish",
             # never surface as a current pick. An hourly reversal state has
             # a shelf life of hours — the 2026-08-14 lesson was ADT's
             # Tuesday 1h bar rendering as Friday's state under a 4-day gate.
-            fresh_days = {"1h": 1, "4h": 2, "3d": 8}.get(tf, 30)
+            fresh_days = {"1h": 1, "4h": 2}.get(tf, 30)
             cur.execute(query, {"tf": tf, "dir": direction, "fresh": fresh_days})
             rows = cur.fetchall()
             cur.execute("SELECT max(scanned_at) FROM oscillator_scan "
