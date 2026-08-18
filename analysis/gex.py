@@ -318,11 +318,15 @@ def run_gex_intraday() -> dict:
     Also upserts today's gex_levels row so the pulse chips and drawer
     show the live reading instead of last night's.
 
-    OI can't move intraday (it settles overnight, for every vendor), so
-    the walls barely change within a session — what this captures is net
-    GEX draining or building as spot travels, regime flips, and IV-driven
-    flip drift. Single names stay nightly + on-demand; re-pricing them
-    every 15 minutes buys nothing."""
+    OI can't move intraday (it settles overnight, for every vendor), but
+    the re-pricing moves the levels anyway: gamma concentrates at
+    different strikes as spot/vol travel, so the max-gamma wall migrates
+    and the flip walks within a session (2026-08-18, read straight off
+    this table's own day-paths — the CPI-day 775→780 wall walk, QQQ's
+    flip 724.72→723.21). This captures net GEX draining/building, regime
+    flips, and those re-marks (alerts/gamma_drift.py turns them into
+    Discord pings). Single names stay nightly + on-demand; re-pricing
+    them every 15 minutes buys nothing."""
     import json
     from datetime import datetime
     from zoneinfo import ZoneInfo

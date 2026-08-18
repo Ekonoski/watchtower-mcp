@@ -930,8 +930,12 @@ def _seed_vix_if_missing():
 def run_gex_intraday_job():
     """Every 15 min during market hours: re-price the four index chains
     at current spot — live net GEX / regime on the dashboard plus the
-    day-path history in gex_intraday. Walls can't move intraday (OI is
-    overnight-only); this tracks the ball, not the furniture."""
+    day-path history in gex_intraday. OI is fixed overnight, but the
+    re-pricing moves the FURNITURE too: the max-gamma strike migrates
+    and the flip walks as spot/vol travel (2026-08-18, proven on our
+    own recorded day-paths — the CPI-day 775→780 wall walk, QQQ's flip
+    walking 724.72→723.21). The drift check below turns those re-marks
+    into Discord alerts formatted as Tape Bot slot values."""
     try:
         from screen.market_calendar import is_trading_day
         if not is_trading_day():
@@ -944,6 +948,13 @@ def run_gex_intraday_job():
         log.info(f"[gex] intraday tick: {res}")
     except Exception as e:
         log.error(f"[gex] intraday error: {e}")
+    try:
+        from alerts.gamma_drift import run_gamma_drift_check
+        res = run_gamma_drift_check()
+        if res and not res.get("off"):
+            log.info(f"[drift] {res}")
+    except Exception as e:
+        log.warning(f"[drift] check failed (non-fatal): {e}")
     try:
         from analysis.vix import run_vix_update
         run_vix_update(intraday=True)
@@ -1554,6 +1565,45 @@ def start_scheduler():
         CronTrigger(day_of_week="mon-fri", hour="16", minute="5", timezone=et),
         id="gex_intraday_close",
         replace_existing=True,
+    )
+
+    # Gamma drift baseline — 9:20 ET, before the 9:35 intraday upsert
+    # overwrites gex_levels: capture the morning-board marks (the numbers
+    # in Eric's TradingView slots) into gamma_drift_state. The drift
+    # check itself rides every gex_intraday tick above.
+    def _drift_baseline():
+        from alerts.gamma_drift import seed_baseline
+        seed_baseline()
+
+    scheduler.add_job(
+        _drift_baseline,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="20", timezone=et),
+        id="gamma_drift_baseline", replace_existing=True,
+    )
+
+    # Desk event stream — the paper desk narrating fills/exits to Discord
+    # (#desk). Polls the record on the trigger-loop cadence plus one pass
+    # at 16:25 to catch the 16:20 settle verdicts. At-most-once per trade
+    # event via discord_notify_log claims; no-ops when the webhook is
+    # unset.
+    def _desk_events():
+        from alerts.desk_events import run_desk_event_notify
+        run_desk_event_notify()
+
+    scheduler.add_job(
+        _desk_events,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="38,48,58", timezone=et),
+        id="desk_events_open", replace_existing=True,
+    )
+    scheduler.add_job(
+        _desk_events,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="3,13,23,33,43,53", timezone=et),
+        id="desk_events_market", replace_existing=True,
+    )
+    scheduler.add_job(
+        _desk_events,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="25", timezone=et),
+        id="desk_events_settle", replace_existing=True,
     )
 
     # FINRA short volume + short interest — 6:20 PM ET, Mon-Fri
