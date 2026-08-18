@@ -40,6 +40,12 @@ from datetime import date, timedelta
 log = logging.getLogger(__name__)
 
 INDEXES = ("SPY", "QQQ", "IWM", "DIA")
+# The scanner's single-name watch set (2026-08-19, Eric: "add the mega
+# caps to the drift alerts"): these ride the 15-minute intraday re-price
+# beside the indexes, so gamma drift alerts cover the seven charts the
+# TradingView scanner watches. Same thresholds, same rate limits.
+MEGACAPS = ("META", "MSFT", "AMZN", "TSLA", "GOOGL", "AAPL", "NVDA")
+DRIFT_TICKERS = INDEXES + MEGACAPS
 EXP_WINDOW_DAYS = 120     # gamma beyond ~4 months is noise at this grain
 MAX_CONTRACTS = 6000      # safety cap per underlying
 MIN_CONTRACTS = 50        # below this the chain is too thin to map
@@ -325,15 +331,16 @@ def run_gex_intraday() -> dict:
     this table's own day-paths — the CPI-day 775→780 wall walk, QQQ's
     flip 724.72→723.21). This captures net GEX draining/building, regime
     flips, and those re-marks (alerts/gamma_drift.py turns them into
-    Discord pings). Single names stay nightly + on-demand; re-pricing
-    them every 15 minutes buys nothing."""
+    Discord pings). The mega-cap watch set rides along (2026-08-19) so
+    drift alerts cover the scanner's seven charts; the rest of the
+    single-name universe stays nightly + on-demand."""
     import json
     from datetime import datetime
     from zoneinfo import ZoneInfo
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from screen.reversal_screen import _conn
     t0 = time.time()
-    names = list(INDEXES)
+    names = list(DRIFT_TICKERS)
     spots = {}
     try:
         from analysis.news_scanner import _fetch_snapshot_map

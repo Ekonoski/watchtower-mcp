@@ -116,7 +116,7 @@ def seed_baseline() -> dict:
     """9:20 ET: capture the morning-board marks into gamma_drift_state
     before the 9:35 intraday upsert overwrites gex_levels. These are the
     numbers the morning gamma board printed — the ones in the slots."""
-    from analysis.gex import INDEXES
+    from analysis.gex import DRIFT_TICKERS
     from screen.reversal_screen import _conn
     conn = _conn()
     seeded = 0
@@ -133,7 +133,7 @@ def seed_baseline() -> dict:
                 WHERE as_of = CURRENT_DATE AND ticker = ANY(%s)
                 ON CONFLICT (ticker, trade_date) DO NOTHING
                 """,
-                (list(INDEXES),),
+                (list(DRIFT_TICKERS),),
             )
             seeded = cur.rowcount
         conn.commit()
@@ -148,7 +148,7 @@ def run_gamma_drift_check() -> dict:
     the held marks; alert material changes (rate-limited), log every
     evaluation, advance the marks to what was sent."""
     from alerts.discord_notify import claim_and_send, is_configured
-    from analysis.gex import INDEXES
+    from analysis.gex import DRIFT_TICKERS
     from screen.reversal_screen import _conn
     from zoneinfo import ZoneInfo
 
@@ -160,7 +160,7 @@ def run_gamma_drift_check() -> dict:
     sent = suppressed = quiet = 0
     conn = _conn()
     try:
-        for ticker in INDEXES:
+        for ticker in DRIFT_TICKERS:
             with conn.cursor() as cur:
                 cur.execute(
                     """
