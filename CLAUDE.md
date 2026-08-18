@@ -476,6 +476,35 @@ Rendering doctrine, same spirit as the rest of this file:
   ORDER BY r.ticker, z.age_bars;
   ```
 
+- **The walls move intraday, and the phone hears about it** (2026-08-18,
+  Eric: "no, they change throughout the day. we have proven that" — he
+  was right and the docstrings were wrong: OI is overnight-fixed, but
+  re-pricing migrates the max-gamma strike and walks the flip; the
+  recorded day-paths show it, and the first live alert caught QQQ's
+  CW 730→700 / flip 723.83→721.67 at 2:15 PM). TradingView cannot
+  ingest data (Pine sandbox), so the slot-update loop is Watchtower →
+  Discord → the Tape Bot inputs: `alerts/discord_notify.py` (webhook
+  pipe, configured-off is a clean no-op, at-most-once via
+  `discord_notify_log` claims, failed posts visible as
+  delivered=false), `alerts/gamma_drift.py` (baseline = the marks Eric
+  holds, seeded 9:20 from the morning board before the intraday upsert
+  overwrites gex_levels; material = wall on a different strike / flip
+  ≥0.30% of spot / regime change; rate limit 40 min & 6/day per
+  ticker; EVERY evaluation logged sent-or-suppressed-with-reason so
+  `gamma_drift_alerts` measures how much the board actually walks),
+  and `alerts/desk_events.py` (fills/exits/settle verdicts to #desk,
+  reading the record only, worst R first, today's-events-only launch
+  guard). The mega-caps (META/MSFT/AMZN/TSLA/GOOGL/AAPL/NVDA —
+  `DRIFT_TICKERS`) ride the 15-minute re-price beside the indexes
+  (2026-08-19: NVDA traded through its put wall while its freshest
+  board was the 7:30 sweep); the rest of the single-name universe
+  stays nightly + on-demand. A put wall ABOVE spot / call wall BELOW
+  spot inverts the walls' meaning (stranded protection overhead;
+  positive-gamma stabilizer underneath) — the doctrine read, now live
+  on alerts. `tests/test_discord_alerts.py` pins thresholds,
+  rate-limit reasons, slot-value formatting, configured-off, and the
+  mega-cap set membership.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
