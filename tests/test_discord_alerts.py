@@ -130,6 +130,22 @@ def test_desk_event_text():
     assert "R n/a" in m
 
 
+def test_megacaps_ride_the_drift_stream():
+    # 2026-08-19, Eric: "add the mega caps to the drift alerts." The
+    # scanner's seven charts must be in the intraday re-price + drift
+    # set — a watch set the alerts don't cover is a _social_block.
+    from analysis.gex import DRIFT_TICKERS, INDEXES, MEGACAPS
+    assert set(MEGACAPS) == {"META", "MSFT", "AMZN", "TSLA", "GOOGL",
+                             "AAPL", "NVDA"}
+    assert set(INDEXES) | set(MEGACAPS) == set(DRIFT_TICKERS)
+    # And the drift module iterates the combined set, not INDEXES.
+    import inspect
+    from alerts import gamma_drift
+    src = inspect.getsource(gamma_drift)
+    assert "DRIFT_TICKERS" in src
+    assert "import INDEXES" not in src
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
