@@ -147,7 +147,8 @@ def run_gamma_drift_check() -> dict:
     """Ride the 15-minute snapshot: latest gex_intraday row per venue vs
     the held marks; alert material changes (rate-limited), log every
     evaluation, advance the marks to what was sent."""
-    from alerts.discord_notify import claim_and_send, is_configured
+    from alerts.discord_notify import (POST_SPACING_S, claim_and_send,
+                                       is_configured)
     from analysis.gex import DRIFT_TICKERS
     from screen.reversal_screen import _conn
     from zoneinfo import ZoneInfo
@@ -240,6 +241,9 @@ def run_gamma_drift_check() -> dict:
             msg = format_alert(ticker, ts.astimezone(et).strftime("%H:%M"),
                                changes, snap)
             ref = f"{ticker}:{ts.isoformat()}"
+            if sent or suppressed:
+                import time as _time
+                _time.sleep(POST_SPACING_S)  # burst pacing (429 lesson)
             outcome = claim_and_send("gamma_drift", ref, "gamma", msg,
                                      conn=conn)
             if outcome == "sent":

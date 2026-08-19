@@ -49,7 +49,10 @@ def format_exit(ticker, direction, setup, entry_px, exit_px, reason,
 
 def run_desk_event_notify() -> dict:
     """Poll today's trade events and post the unsent ones."""
-    from alerts.discord_notify import claim_and_send, is_configured
+    import time as _time
+
+    from alerts.discord_notify import (POST_SPACING_S, claim_and_send,
+                                       is_configured)
     from screen.reversal_screen import _conn
 
     if not is_configured("desk"):
@@ -84,6 +87,8 @@ def run_desk_event_notify() -> dict:
                 msg = format_fill(
                     ticker, direction, setup, entry_px, trigger, stop,
                     entered_at.astimezone(ET).strftime("%H:%M"))
+                if fills or exits:
+                    _time.sleep(POST_SPACING_S)  # burst pacing (429 lesson)
                 if claim_and_send("paper_fill", str(tid), "desk", msg,
                                   conn=conn) == "sent":
                     fills += 1
@@ -93,6 +98,8 @@ def run_desk_event_notify() -> dict:
                     ticker, direction, setup, entry_px, exit_px,
                     exit_reason, r_mult,
                     exited_at.astimezone(ET).strftime("%H:%M"))
+                if fills or exits:
+                    _time.sleep(POST_SPACING_S)
                 if claim_and_send("paper_exit", str(tid), "desk", msg,
                                   conn=conn) == "sent":
                     exits += 1
