@@ -130,6 +130,34 @@ def test_desk_event_text():
     assert "R n/a" in m
 
 
+def test_429_retry_wait_parsing():
+    # 2026-08-19, the morning-burst lesson: the 9:35 open fired 5-7
+    # alerts in two seconds, Discord 429'd the overflow, and two real
+    # fills went unannounced. Retries honor Discord's own wait.
+    from alerts.discord_notify import POST_SPACING_S, retry_after_seconds
+    assert retry_after_seconds(429, {"Retry-After": "1.3"}, None) == 1.3
+    assert retry_after_seconds(429, {}, {"retry_after": 0.9}) == 0.9
+    # A 429 with no wait info still backs off a beat, never zero.
+    assert retry_after_seconds(429, {}, None) == 0.5
+    # Capped: a scheduler slot is never stalled longer than 10s.
+    assert retry_after_seconds(429, {"Retry-After": "120"}, None) == 10.0
+    # Non-429s are not retryable rate limits.
+    assert retry_after_seconds(404, {"Retry-After": "5"}, None) == 0.0
+    # And senders pace bursts under Discord's ~5/2s webhook bucket.
+    assert POST_SPACING_S >= 0.4
+
+
+def test_failed_rows_are_retried_not_tombstoned():
+    # A delivered=false row must be re-claimable — by source, the
+    # claim path contains the atomic retry UPDATE guarded on
+    # delivered=false (two containers race-safe).
+    import inspect
+
+    from alerts import discord_notify
+    src = inspect.getsource(discord_notify.claim_and_send)
+    assert "delivered = false" in src and "RETURNING" in src
+
+
 def test_megacaps_ride_the_drift_stream():
     # 2026-08-19, Eric: "add the mega caps to the drift alerts." The
     # scanner's seven charts must be in the intraday re-price + drift
