@@ -1289,7 +1289,11 @@ def _seed_defense_study_if_missing():
             log.info(f"[defense-study] needed but market hours — holding "
                      f"{_hold/3600:.1f}h until after the close")
             _time.sleep(_hold)
-        for _attempt in range(4):
+        # 2026-08-21, first run: the eligible pool was 22k episodes, not
+        # the 1.2k the sample cap imagined — four passes stranded 17.5k.
+        # Run until the pool is dry or ~6 hours pass; resume next boot.
+        _t0 = _time.time()
+        while _time.time() - _t0 < 6 * 3600:
             if run():
                 break
     except Exception as e:
