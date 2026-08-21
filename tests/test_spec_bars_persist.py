@@ -25,11 +25,12 @@ def main():
     # A bar where every field differs — any mis-mapping changes the row.
     # (ts, open, close, high, low) per _last_closed_15m.
     rows = _spec_bar_rows("TNDM", d, [(ts, 17.85, 18.60, 18.75, 17.80)])
-    assert rows == [("TNDM", ts, 17.85, 18.75, 17.80, 18.60, d)], rows
+    # 2026-08-21: rows carry volume before trade_date (None = legacy hole)
+    assert rows == [("TNDM", ts, 17.85, 18.75, 17.80, 18.60, None, d)], rows
 
     # high must be the max and low the min of the stored row's prices —
     # a swapped mapping fails this even on bars with plausible shapes.
-    _tk, _ts, o, h, l, c, _d = rows[0]
+    _tk, _ts, o, h, l, c, _v, _d = rows[0]
     assert h == max(o, h, l, c) and l == min(o, h, l, c), rows
 
     assert _spec_bar_rows("X", d, []) == []

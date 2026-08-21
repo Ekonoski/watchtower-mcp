@@ -640,8 +640,10 @@ def _last_closed_15m(tk):
         if t and t + dt.timedelta(minutes=15) <= now:   # completed only
             te = t.astimezone(ET)
             if te.date() == dt.datetime.now(ET).date():
+                vol = b.get("volume")
                 out.append((te, float(b["open"]), float(b["close"]),
-                            float(b["high"]), float(b["low"])))
+                            float(b["high"]), float(b["low"]),
+                            float(vol) if vol is not None else None))
     return out
 
 
@@ -687,7 +689,7 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     """
     sign = 1 if direction == "long" else -1
     lost = False
-    for _, bop, bc2, bhi, blo in live_bars:
+    for _, bop, bc2, bhi, blo, *_xv in live_bars:
         opened_beyond = (bop < trig) if direction == "long" else (bop > trig)
         if not lost and not opened_beyond:
             # Price is on the retest side: a limit at trig fills on a touch.
@@ -752,7 +754,7 @@ def _confirm_shadow(direction: str, trig: float, live_bars: list):
     """
     sign = 1 if direction == "long" else -1
     touched = False
-    for ts, _bop, bc2, bhi, blo in live_bars:
+    for ts, _bop, bc2, bhi, blo, *_xv in live_bars:
         if not touched:
             touched = (blo <= trig) if direction == "long" else (bhi >= trig)
             if not touched:
@@ -768,8 +770,12 @@ def _spec_bar_rows(tk: str, trade_date, bars: list) -> list:
     Pure and pinned by test — the (close, high, low) reordering across this
     seam is exactly the kind of silent field-swap that killed the trigger
     loop on day one."""
-    return [(tk, ts, op, hi, lo, cl, trade_date)
-            for ts, op, cl, hi, lo in bars]
+    out = []
+    for b in bars:
+        ts, op, cl, hi, lo = b[0], b[1], b[2], b[3], b[4]
+        vol = b[5] if len(b) > 5 else None
+        out.append((tk, ts, op, hi, lo, cl, vol, trade_date))
+    return out
 
 
 def _persist_spec_bars(conn, tk, trade_date, bars):
@@ -781,8 +787,9 @@ def _persist_spec_bars(conn, tk, trade_date, bars):
         return
     with conn.cursor() as c:
         c.executemany("""INSERT INTO paper_spec_bars
-                         (ticker, ts, open, high, low, close, trade_date)
-                         VALUES (%s,%s,%s,%s,%s,%s,%s)
+                         (ticker, ts, open, high, low, close, volume,
+                          trade_date)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                          ON CONFLICT (ticker, ts) DO NOTHING""", rows)
     conn.commit()
 
@@ -1039,7 +1046,7 @@ def run_trigger_loop():
                     entered, entry_fill = (verdict == "fill"), px
                 else:
                     touched = any((lo2 <= trig <= hi2) or _touch(trig, c2)
-                                  for _, _, c2, hi2, lo2 in live_bars)
+                                  for _, _, c2, hi2, lo2, *_xv in live_bars)
                     entered = touched and (sign * (close - trig) > 0)  # 15m close back through
                     entry_fill, kind = close, "close_through"
                 if entered and kind == "reclaim":
@@ -1220,7 +1227,7 @@ def shadow_outcome(direction, trig, stop, tgt, bars):
            "exit_px": None, "exit_reason": None, "r_multiple": None}
     touched = False
     last_decidable = None
-    for ts, _bop, bc, bhi, blo in bars:
+    for ts, _bop, bc, bhi, blo, *_xv in bars:
         bar_end = ts + dt.timedelta(minutes=15)
         if bar_end.time() > dt.time(15, 45) or ts.time() > dt.time(15, 30):
             continue                       # the live loop never decides here
