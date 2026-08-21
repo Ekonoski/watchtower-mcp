@@ -60,8 +60,11 @@ def main():
     assert bars, ("_last_closed_15m returned no bars from correctly-shaped "
                   "input — the fetch/parse contract is broken again")
     assert len(bars) == 3, f"expected 3 completed bars (open bar filtered), got {len(bars)}"
-    ts, op, close, hi, lo = bars[-1]
+    ts, op, close, hi, lo, vol = bars[-1]
     assert (op, close, hi, lo) == (10.0, 10.2, 10.5, 9.8), f"bar fields mis-mapped: {bars[-1]}"
+    # 2026-08-21: bars carry volume (6th field) for the defense shadow —
+    # mapped straight from the fetch payload, holes stay None.
+    assert vol == 1000.0, f"volume mis-mapped: {vol!r}"
     print(f"ok — {len(bars)} completed bars parsed, open bar filtered, fields mapped")
 
 

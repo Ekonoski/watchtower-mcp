@@ -1260,6 +1260,42 @@ def _seed_cipher_study_if_missing():
         log.warning(f"[scheduler] cipher study seed skipped: {e}")
 
 
+def _seed_defense_study_if_missing():
+    """Boot-time runner for the 15m defense study (Eric, 2026-08-21):
+    the defended-entry signature graded at historical retest episodes
+    (pattern_backtest.retest_bar + Polygon 15m history). Same shape as
+    the cipher study seeder: outside market hours only, resumes by
+    episode across boots, no-ops forever once the marker exists. Keep
+    beside the cipher seeder at the END of _seed_all."""
+    try:
+        import datetime as _dt
+        import time as _time
+        import zoneinfo as _zi
+        from analysis.defense_study import COMPLETE_MARKER, run
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s LIMIT 1",
+                            (COMPLETE_MARKER,))
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        _now = _dt.datetime.now(_zi.ZoneInfo("America/New_York"))
+        if _now.weekday() < 5 and _now.time() <= _dt.time(16, 15):
+            _hold = (_now.replace(hour=16, minute=15, second=0, microsecond=0)
+                     - _now).total_seconds()
+            log.info(f"[defense-study] needed but market hours — holding "
+                     f"{_hold/3600:.1f}h until after the close")
+            _time.sleep(_hold)
+        for _attempt in range(4):
+            if run():
+                break
+    except Exception as e:
+        log.warning(f"[scheduler] defense study seed skipped: {e}")
+
+
 def _run_missed_daily_pattern_scan():
     """Boot-time catch-up for a dead 6:45 scan (2026-08-10): the scan claimed
     its slot, died in the database brownout, and nothing retried — the 7:40
@@ -1606,6 +1642,25 @@ def start_scheduler():
         id="desk_events_settle", replace_existing=True,
     )
 
+    # Defended-entry shadow (2026-08-21): rides today's touch fills off
+    # RECORDED bars — measurement only, never touches the live book.
+    # Evaluates on the quarter-hours (after bars persist) plus a 16:30
+    # pass so settle-day exits get their shadow_r graded same evening.
+    def _defense_shadows():
+        from analysis.defense_shadow import evaluate_defense_shadows
+        evaluate_defense_shadows()
+
+    scheduler.add_job(
+        _defense_shadows,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="6,21,36,51", timezone=et),
+        id="defense_shadow_market", replace_existing=True,
+    )
+    scheduler.add_job(
+        _defense_shadows,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="30", timezone=et),
+        id="defense_shadow_settle", replace_existing=True,
+    )
+
     # FINRA short volume + short interest — 6:20 PM ET, Mon-Fri
     scheduler.add_job(
         run_short_side_job,
@@ -1782,6 +1837,7 @@ def start_scheduler():
         _seed_spec_bars_aug7_if_missing()
         _seed_pattern_backtest_if_empty()
         _seed_cipher_study_if_missing()
+        _seed_defense_study_if_missing()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 

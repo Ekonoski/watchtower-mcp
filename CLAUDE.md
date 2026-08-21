@@ -505,6 +505,34 @@ Rendering doctrine, same spirit as the rest of this file:
   rate-limit reasons, slot-value formatting, configured-off, and the
   mega-cap set membership.
 
+- **The defended-entry shadow: the eye's retest discipline, measured**
+  (2026-08-21, Eric: wait for a lower-timeframe bounce with volume
+  showing buyers DEFENDING the level — contracting red volume into the
+  touch, a green uptick off it, one or two bars, RELATIVE to the
+  pullback, never a spike requirement because spikes are late). The
+  live book stays untouched (his own framing: human interference is
+  the failing factor; this is an ADDITIONAL test, not a change). The
+  existing confirm-shadow record already leans his way: resolved
+  no-confirm touches −1.17R (n=4) vs confirmed −0.36R (n=3), and the
+  two best positions ever held (CTNM +4.5R, ASTE +1.5R) were
+  close-confirmed reclaim entries. Build: `paper_spec_bars.volume`
+  (nullable — legacy rows are holes, shadows on them render
+  'unavailable'), `analysis/defense_shadow.py` (pure `find_defense`,
+  two variants recorded side by side — v1 one confirming bar over the
+  pullback's red average, v2 two rising green bars — so the data picks
+  the eye's definition; outcomes defended / knife_skipped / missed /
+  no_defense; wick rule holds — only a CLOSE through the stop is a
+  knife; the shadow rides the live trade's own exit, shadow_r beside
+  live_r), and `analysis/defense_study.py` — the SAME detector graded
+  at historical retest episodes (pattern_backtest.retest_bar + Polygon
+  15m history; research backtests are legitimate — reconstruction-is-
+  not-tape governs LIVE grading only), 1,200-episode sample, cipher-
+  study-style boot seeder with resume + completion marker
+  (`defense_study_v1`). Promotion gate ~30 resolved live comparisons,
+  with the study prior stated beside them. tests/test_defense_shadow.py
+  pins the defended/knife/missed/hole cases and, by signature, the
+  module's inability to touch paper_trades/paper_specs.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
