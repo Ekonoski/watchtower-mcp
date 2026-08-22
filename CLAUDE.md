@@ -589,6 +589,25 @@ Rendering doctrine, same spirit as the rest of this file:
   rows exist, then applies to the detector definition as a graded
   change — not mid-test by feel.
 
+- **The measurement harness matches what the idea changes** (ratified
+  by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
+  it"). Three harnesses, no more: a FULL SHADOW only for ideas that
+  would produce a different trade (defense entry, confirmation, the
+  binary skip) — counterfactual simulation earns its complexity only
+  when the entry/skip itself is the question; a TAG for ideas that
+  would merely filter or rank the same trades (cipher, sector) —
+  stamped after curation, graded on the book's own resolutions, zero
+  added machinery; FORWARD RETURNS for screens (cipher_reversal, the
+  %R family) via alert-performance. Do not promote a tag to a shadow
+  book for rigor's sake — five shadow books are not five times the
+  science, they are five times the phantom-fill surface area. QUEUED
+  behind two gates: a small dedicated paper book auditioning
+  cipher_reversal as an ENTRY strategy (~5 slots, own rules, same
+  fill honesty) — opens only once (a) its alert-performance forward
+  returns keep confirming and (b) the swing book has its ~30 clean
+  resolutions. One clean answer at a time; week one showed what
+  happens when experiments share a book.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
