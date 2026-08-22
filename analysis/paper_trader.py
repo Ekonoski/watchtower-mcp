@@ -411,6 +411,8 @@ def write_morning_specs():
             # Cipher-tag column (2026-08-11): idempotent ensure, committed
             # on its own so an early return can't roll the DDL back.
             c.execute("ALTER TABLE paper_specs ADD COLUMN IF NOT EXISTS osc_state jsonb")
+            # Sector-rotation tag column (2026-08-22): same doctrine.
+            c.execute("ALTER TABLE paper_specs ADD COLUMN IF NOT EXISTS sector_state jsonb")
         conn.commit()
         with conn.cursor() as c:
             # book-scoped so a restart after the open doesn't mistake the
@@ -435,8 +437,9 @@ def write_morning_specs():
             for tk, why_skip in skips:
                 log.info("[paper] %s: no gamma spec — %s", tk, why_skip)
             # The cipher was studied on structure breakouts, not gamma
-            # mechanics — gamma specs carry no tag, deliberately.
-            specs = [s + (None,) for s in gamma_specs]
+            # mechanics — gamma specs carry no cipher or sector tag,
+            # deliberately (index/mega-cap venues aren't sector trades).
+            specs = [s + (None, None) for s in gamma_specs]
 
             # Swing book: breakout-retest limits (blind by design — control group).
             # Each row carries its own scan date so the freshness gate can
@@ -518,7 +521,19 @@ def write_morning_specs():
             # computed AFTER curation so it cannot influence which specs
             # arm, even accidentally). ~15 history reads at 7:40; the same
             # per-ticker cost the episode study paid.
+            # Sector-rotation tag (2026-08-22): same contract as the
+            # cipher tag — computed AFTER curation so arming stays blind,
+            # holes carry reasons, freshness stamped per row. The cache
+            # self-heals here (recorded closes only) so no cron is owed.
+            try:
+                from analysis.sector_rs import ensure_recent, sector_state_for
+                ensure_recent(conn)
+            except Exception as e:
+                log.warning("[paper] sector RS cache upkeep failed — tags "
+                            "will render holes: %s", e)
+                sector_state_for = None
             tag_mix = {}
+            sec_mix = {}
             for tk, tf, pat, _dir, trig, tgt, inv, score in kept:
                 c.execute("""SELECT trade_date, COALESCE(open, close),
                                     COALESCE(high, close), COALESCE(low, close),
@@ -531,9 +546,19 @@ def write_morning_specs():
                              f"trigger per retest doctrine; stop=pattern invalid {inv:g}")
                 if tk in warns:
                     rationale += f" | ⚠ bearish structure live: {warns[tk]}"
+                if sector_state_for is not None:
+                    try:
+                        stag = sector_state_for(conn, tk)
+                    except Exception as e:
+                        stag = {"sector": None,
+                                "reason": f"tag_error: {str(e)[:300]}"}
+                else:
+                    stag = {"sector": None, "reason": "rs_cache_unavailable"}
+                sec_mix[tk] = (f"{stag['sector']}#{stag['rank_1m']}"
+                               if "rank_1m" in stag else "unavailable")
                 specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
                               trig, inv, tgt, "armed", rationale,
-                              json.dumps(tag)))
+                              json.dumps(tag), json.dumps(stag)))
             if tag_mix:
                 from collections import Counter as _Counter
                 mix = _Counter(tag_mix.values())
@@ -541,12 +566,19 @@ def write_morning_specs():
                          "gate): %s [%s]",
                          ", ".join(f"{k} {v}" for k, v in sorted(mix.items())),
                          ", ".join(f"{tk}:{lbl}" for tk, lbl in sorted(tag_mix.items())))
+            if sec_mix:
+                # Sector mix, every morning — a book concentrated in an
+                # outflow sector must render as a question, same family
+                # as the armed-class-mix line.
+                log.info("[paper] swing sector tags (measurement only, "
+                         "never a gate): %s",
+                         ", ".join(f"{tk}:{s}" for tk, s in sorted(sec_mix.items())))
 
         with conn.cursor() as c:
             c.executemany("""INSERT INTO paper_specs
                 (trade_date, book, ticker, direction, setup, entry_trigger, stop,
-                 target, status, rationale, osc_state)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", specs)
+                 target, status, rationale, osc_state, sector_state)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", specs)
         conn.commit()
         log.info("[paper] %d specs written for %s (binary_day=%s: %s)",
                  len(specs), today, binary_day, ", ".join(highs) or "none")
