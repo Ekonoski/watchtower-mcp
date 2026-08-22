@@ -30,6 +30,15 @@ def test_skips_are_zero_and_holes_are_none():
     assert _shadow_r("defended", 96.0, 97.0, 99.0) is None    # bad geometry
 
 
+def test_grade_at_exits_touches_only_defense_retro():
+    # The carry-forward grader updates defense_retro rows at live exits
+    # and nothing else — reads the paper tables, writes only its own.
+    from analysis import defense_retro
+    src = inspect.getsource(defense_retro.grade_at_exits)
+    assert "UPDATE defense_retro" in src
+    assert "UPDATE paper" not in src and "INSERT INTO paper" not in src
+
+
 def test_research_only_by_signature():
     from analysis import defense_retro
     src = inspect.getsource(defense_retro)

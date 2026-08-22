@@ -532,6 +532,33 @@ Rendering doctrine, same spirit as the rest of this file:
   with the study prior stated beside them. tests/test_defense_shadow.py
   pins the defended/knife/missed/hole cases and, by signature, the
   module's inability to touch paper_trades/paper_specs.
+  The retro read (2026-08-22, Eric: "see if any of our previously
+  entered trades would fit our criteria"): a one-shot research job
+  (`analysis/defense_retro.py`, marker `defense_retro_v1`) graded all
+  45 pre-Monday touch fills from Polygon 15m history — verdicts in
+  their own `defense_retro` table so reconstruction can never
+  masquerade as the live record. Of 6 gradeable resolved trades the
+  live book took −4.66R, the shadow −0.10R: four of five losers (CAE
+  −1.51R the worst) never printed defense on entry day, AGMB bounced
+  on sub-baseline volume (the filter called it fake; it was), BTGO's
+  winner was kept at a 0.08R premium, UNTY defended and lost anyway.
+  ASTE (+1.5R open) is the cost side: ripped off its level without
+  the signature — a missed winner. Eric's carry-forward ruling: the
+  retro cohort MOVES WITH THE BOOK — `grade_at_exits()` rides the
+  shadow poller so the ~38 then-open trades grade at their real exits
+  — and the running comparison prints BOTH cohorts labeled (retro =
+  reconstructed 15m tape, n beside it; live = recorded bars,
+  Monday-forward), never silently merged. Five `no_touch` rows
+  (Polygon's 15m low never printed our recorded trigger; SYF −1.11R
+  among them) render as holes for both variants. QUEUED, decided
+  2026-08-22 but not yet shipped: a **defense premium cap** — v1
+  "defended" FLXS at a 4.79% premium because a big first bar
+  qualifies no matter how far it has run (every other defended
+  premium: 0.04–1.5%); Eric: "eventually we will want a premium cap
+  ... it runs too far away from the target entry." The cap's value
+  gets picked from the recorded premium_pct distribution once enough
+  rows exist, then applies to the detector definition as a graded
+  change — not mid-test by feel.
 
 ## Numbers on one line must reconcile with each other
 
