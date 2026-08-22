@@ -236,6 +236,35 @@ Rendering doctrine, same spirit as the rest of this file:
   count — a pattern that detects hundreds and never reaches its
   actionable state is a `_social_block`, not a quiet market.
 
+- **Sector rotation: measured, and the aggregate thesis didn't survive
+  contact** (2026-08-22, Eric: "you can pick a great stock but be in
+  the wrong sector while money rotation is flowing out"). Built per
+  doctrine — breadth-style sector RS cache (`sector_rs_daily`, median
+  stock vs market median, one definition in `analysis/sector_rs.py`),
+  a 24-month study over 24,113 graded daily bullish episodes
+  (`sector_study`, marker `sector_study_v1`), and a measurement-only
+  `sector_state` tag on swing specs (osc_state pattern; arming blind
+  by pinned signature; gamma specs untagged). The read, outliers
+  capped at 10R: FLAT in aggregate — outflow-sector breakouts (rank
+  9-11) graded 61.3%/−0.02R vs inflow 60.5%/−0.07R vs a −0.07R pool;
+  no monotone RS-quintile gradient. The one live cell: sector washed
+  out on the month but TURNING UP on the week — 63.0% win, +0.073R
+  (n=2,261), the only positive state, the sector-level echo of the
+  washout-reversal read; chronic-outflow-still-falling was merely
+  average, and NEUTRAL sectors were worst (58.4%, −0.113, n=10,383).
+  Likely reason the poison didn't show: a breakout-retest pattern
+  already demands the stock carved its own base — the structure
+  embodies the turn before the sector does. Per-pattern cuts flip
+  sign wildly (falling_wedge loves inflow +1.14 vs −0.77; ema_bounce
+  daily the reverse) — one more proof a flat sector rule would be the
+  flat-score-bar mistake again. Verdict: NO GATE EARNED. The tag
+  stamps every swing spec from Monday 2026-08-24 and grades on the
+  desk's own resolved trades; the washout-turn cell is a candidate
+  SELECTOR to re-examine at sample size, never a chase signal, and
+  any promotion is asymmetric like the cipher's. Caveats where the
+  numbers surface: breakout-close entries (conditioning read), RS is
+  market-relative, and the desk buys retests.
+
 - **The cost of confirmation is measured, not argued** (decided 2026-08-08:
   the swing book keeps resting-limit fills at the trigger). Every touch fill
   also records its confirmation shadow — the completed-15m-close entry a
