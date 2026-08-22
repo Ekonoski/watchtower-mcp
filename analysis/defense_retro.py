@@ -34,6 +34,49 @@ def _shadow_r(status, defense_px, stop, exit_px):
     return None
 
 
+def grade_at_exits() -> int:
+    """The carry-forward (Eric, 2026-08-22: "include these findings in
+    our system so we are basically moving forward with what has
+    happened"): 38 of the 45 retro-graded trades were still open at
+    grading time. As each live trade exits, its retro verdict grades at
+    the SAME exit — defended re-priced from the defense entry, skips 0,
+    holes stay holes — so the retro cohort accrues resolved comparisons
+    beside the Monday-forward live shadow instead of freezing as a
+    one-day report. The cohorts stay labeled: retro rows live here,
+    never in paper_defense_shadow."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    graded = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT d.trade_id, d.variant, d.status, d.defense_px,
+                       s.stop, t.exit_px, t.r_multiple
+                FROM defense_retro d
+                JOIN paper_trades t ON t.id = d.trade_id
+                JOIN paper_specs s ON s.id = t.spec_id
+                WHERE d.live_r IS NULL AND t.exited_at IS NOT NULL
+                """
+            )
+            rows = cur.fetchall()
+        with conn.cursor() as cur:
+            for tid, variant, status, dpx, stop, exit_px, live_r in rows:
+                sr = _shadow_r(status, dpx, stop, exit_px)
+                cur.execute(
+                    "UPDATE defense_retro SET shadow_r=%s, live_r=%s "
+                    "WHERE trade_id=%s AND variant=%s",
+                    (sr, live_r, tid, variant),
+                )
+                graded += 1
+        conn.commit()
+    finally:
+        conn.close()
+    if graded:
+        log.info(f"[defense-retro] graded {graded} rows at live exits.")
+    return graded
+
+
 def run() -> bool:
     """Grade every past swing touch fill lacking a retro row; write the
     marker when none remain. Reads paper tables, never writes them."""

@@ -1678,6 +1678,13 @@ def start_scheduler():
     def _defense_shadows():
         from analysis.defense_shadow import evaluate_defense_shadows
         evaluate_defense_shadows()
+        # The retro cohort accrues at the same exits (Eric, 2026-08-22:
+        # the pre-Monday touch fills carry forward as labeled data).
+        try:
+            from analysis.defense_retro import grade_at_exits
+            grade_at_exits()
+        except Exception as e:
+            log.warning(f"[defense-retro] exit grading skipped: {e}")
 
     scheduler.add_job(
         _defense_shadows,
