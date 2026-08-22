@@ -1300,6 +1300,42 @@ def _seed_defense_study_if_missing():
         log.warning(f"[scheduler] defense study seed skipped: {e}")
 
 
+def _seed_sector_study_if_missing():
+    """Boot-time runner for the sector-rotation study (Eric, 2026-08-22):
+    every graded daily bullish episode joined to its sector's breadth
+    read on its own breakout date — entirely from recorded tables, no
+    external fetches. Defense-study shape: after-hours hold, resumes by
+    month/episode across boots, marker retires it."""
+    try:
+        import datetime as _dt
+        import time as _time
+        import zoneinfo as _zi
+        from analysis.sector_study import COMPLETE_MARKER, run
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s LIMIT 1",
+                            (COMPLETE_MARKER,))
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        _now = _dt.datetime.now(_zi.ZoneInfo("America/New_York"))
+        if _now.weekday() < 5 and _now.time() <= _dt.time(16, 15):
+            _hold = (_now.replace(hour=16, minute=15, second=0, microsecond=0)
+                     - _now).total_seconds()
+            log.info(f"[sector-study] needed but market hours — holding "
+                     f"{_hold/3600:.1f}h until after the close (DB-heavy)")
+            _time.sleep(_hold)
+        _t0 = _time.time()
+        while _time.time() - _t0 < 4 * 3600:
+            if run():
+                break
+    except Exception as e:
+        log.warning(f"[scheduler] sector study seed skipped: {e}")
+
+
 def _seed_defense_retro_if_missing():
     """One-shot retro defense read (Eric, 2026-08-22): the desk's own
     past touch fills graded against the defense signature — research,
@@ -1875,6 +1911,7 @@ def start_scheduler():
         _seed_cipher_study_if_missing()
         _seed_defense_study_if_missing()
         _seed_defense_retro_if_missing()
+        _seed_sector_study_if_missing()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
