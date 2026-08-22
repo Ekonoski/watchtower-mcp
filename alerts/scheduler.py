@@ -1300,6 +1300,31 @@ def _seed_defense_study_if_missing():
         log.warning(f"[scheduler] defense study seed skipped: {e}")
 
 
+def _seed_defense_retro_if_missing():
+    """One-shot retro defense read (Eric, 2026-08-22): the desk's own
+    past touch fills graded against the defense signature — research,
+    not ledger (its verdicts live in defense_retro, never in
+    paper_defense_shadow). ~45 trades, a couple of Polygon calls each;
+    small enough to run at any boot hour. Marker retires it forever."""
+    try:
+        from analysis.defense_retro import COMPLETE_MARKER, run
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s LIMIT 1",
+                            (COMPLETE_MARKER,))
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        for _attempt in range(3):   # tiny pool; a retry pass covers blips
+            if run():
+                break
+    except Exception as e:
+        log.warning(f"[scheduler] defense retro seed skipped: {e}")
+
+
 def _run_missed_daily_pattern_scan():
     """Boot-time catch-up for a dead 6:45 scan (2026-08-10): the scan claimed
     its slot, died in the database brownout, and nothing retried — the 7:40
@@ -1842,6 +1867,7 @@ def start_scheduler():
         _seed_pattern_backtest_if_empty()
         _seed_cipher_study_if_missing()
         _seed_defense_study_if_missing()
+        _seed_defense_retro_if_missing()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
