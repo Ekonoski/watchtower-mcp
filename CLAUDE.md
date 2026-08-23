@@ -666,6 +666,21 @@ Rendering doctrine, same spirit as the rest of this file:
   or chasing levels. Do not re-litigate this by feel — a new short
   mechanism needs a new study that clears era-stability AND
   replication, the same bar the long side cleared.
+  The audition book is LIVE (2026-08-23, `analysis/day_bias.py`, book
+  `day_bias`, first trading day 2026-08-24): one spec/day, SPY only,
+  trading EXACTLY the graded definition — arm only if the 9:30 bar
+  OPENS above PDH ('skipped_bias' recorded otherwise; the stand-aside
+  is a decision), resting limit at PDH live only from 10:30 (an
+  earlier touch CANCELS the day — the graded chop bucket is not
+  traded), exit at the TRUE daily close, fills/cancels/stops decided
+  on recorded 15m bars only. One declared deviation from the graded
+  trade: a 0.75% disaster stop on 15m CLOSES (wick rule) guards the
+  tail the EOD-only backtest rode through. Scoreboard in underlying
+  bps beside R; promotion gate ~30 resolved days, and the 0-2 DTE
+  options expression stays a separate graded layer per the
+  ledger-grades-the-signal rule. tests/test_day_bias.py pins the
+  decision core (early-touch cancel, late fill at PDH, wick-excused
+  disaster stop, stand-aside) and book isolation by signature.
 
 - **FMP news cuts are a budget, not a policy** (2026-08-23, after the
   90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to

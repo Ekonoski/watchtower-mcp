@@ -1759,6 +1759,28 @@ def start_scheduler():
         id="defense_shadow_settle", replace_existing=True,
     )
 
+    # Day-bias audition book (2026-08-23): SPY late-retest play, one
+    # spec/day, measurement only. 5-min pass arms/fills/cancels on
+    # recorded bars; 16:42 settle exits at the true close.
+    def _daybias_loop():
+        from analysis.day_bias import run_daybias_loop
+        run_daybias_loop()
+
+    def _daybias_settle():
+        from analysis.day_bias import run_daybias_settle
+        run_daybias_settle()
+
+    scheduler.add_job(
+        _daybias_loop,
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5", timezone=et),
+        id="daybias_loop", replace_existing=True,
+    )
+    scheduler.add_job(
+        _daybias_settle,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="42", timezone=et),
+        id="daybias_settle", replace_existing=True,
+    )
+
     # FINRA short volume + short interest — 6:20 PM ET, Mon-Fri
     scheduler.add_job(
         run_short_side_job,
