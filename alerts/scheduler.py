@@ -1336,6 +1336,26 @@ def _seed_sector_study_if_missing():
         log.warning(f"[scheduler] sector study seed skipped: {e}")
 
 
+def _seed_structure_screen_if_empty():
+    """First-deploy fill for the structure screen (Eric, 2026-08-23) —
+    DB-only work, safe at any boot hour. After the seed, the nightly
+    23:05 job owns it."""
+    try:
+        from analysis.structure_screen import run_structure_screen
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM structure_screen LIMIT 1")
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        run_structure_screen()
+    except Exception as e:
+        log.warning(f"[scheduler] structure screen seed skipped: {e}")
+
+
 def _seed_daybias_bars_if_missing():
     """Boot-time backfill of SPY/QQQ/IWM 15m history for the day-bias
     study (Eric, 2026-08-23). ~33 Polygon calls total, resumable by
@@ -1781,6 +1801,18 @@ def start_scheduler():
         id="daybias_settle", replace_existing=True,
     )
 
+    # Structure screen — 11:05 PM ET, after the nightly price settle,
+    # so the shelves read from settled closes.
+    def _structure_screen_job():
+        from analysis.structure_screen import run_structure_screen
+        run_structure_screen()
+
+    scheduler.add_job(
+        _structure_screen_job,
+        CronTrigger(day_of_week="mon-fri", hour="23", minute="5", timezone=et),
+        id="structure_screen_nightly", replace_existing=True,
+    )
+
     # FINRA short volume + short interest — 6:20 PM ET, Mon-Fri
     scheduler.add_job(
         run_short_side_job,
@@ -1961,6 +1993,7 @@ def start_scheduler():
         _seed_defense_retro_if_missing()
         _seed_sector_study_if_missing()
         _seed_daybias_bars_if_missing()
+        _seed_structure_screen_if_empty()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
