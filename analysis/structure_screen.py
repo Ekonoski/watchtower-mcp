@@ -38,6 +38,11 @@ BREAK_WINDOW = 12         # trading days scanned for the break/retest
 RETEST_BAND = 0.015
 MIN_PRICE = 3.0
 MIN_DOLLAR_VOL = 3e6      # 20d avg close*volume
+# First run (2026-08-23): the touch ranking crowned T-bill/bond ETFs —
+# a cash fund drifting in a 20-cent range for two years is a 150-touch
+# "shelf" to a touch counter. A level only means something if the
+# instrument MOVES around it; the flat-score-bar lesson, again.
+MIN_RANGE_PCT = 0.015     # 30d avg (high-low)/close
 BUDGET_S = 25 * 60
 
 
@@ -105,13 +110,16 @@ def run_structure_screen() -> dict:
                 SELECT ticker FROM (
                     SELECT ticker,
                            avg(close * COALESCE(volume, 0)) AS dv,
+                           avg((high - low) / NULLIF(close, 0)) AS rng,
                            max(trade_date) AS last_d, max(close) AS px
                     FROM daily_prices
                     WHERE trade_date > CURRENT_DATE - INTERVAL '30 days'
+                      AND high IS NOT NULL AND low IS NOT NULL
                     GROUP BY ticker) u
-                WHERE dv >= %s AND px >= %s
+                WHERE dv >= %s AND px >= %s AND rng >= %s
                   AND last_d > CURRENT_DATE - INTERVAL '6 days'
-                ORDER BY ticker""", (MIN_DOLLAR_VOL, MIN_PRICE))
+                ORDER BY ticker""",
+                (MIN_DOLLAR_VOL, MIN_PRICE, MIN_RANGE_PCT))
             universe = [r[0] for r in cur.fetchall()]
         today = dt.date.today()
         rows_out = []
