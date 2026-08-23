@@ -608,6 +608,40 @@ Rendering doctrine, same spirit as the rest of this file:
   resolutions. One clean answer at a time; week one showed what
   happens when experiments share a book.
 
+- **The day-bias study: bias is knowable, timing is the edge, the
+  short mirror fails** (2026-08-23, Eric: "figure out the best possible
+  way to figure out the daily bias... and then the best entries").
+  Data: 5,443 SPY days (daily_prices) + 141k SPY 15m RTH bars
+  2005→present (`index_intraday_bars`, backfilled via
+  analysis/daybias_bars.py, marker daybias_bars_v1; QQQ full from
+  2011, IWM intraday HOLEY on the vendor side — recorded, excluded;
+  the first backfill "completed" with 7 bars/day because Polygon caps
+  one aggs response at ~5,000 rows regardless of the limit param —
+  windows now 60 days with a loud truncation guard). Era-split
+  2005-2015 vs 2016-2026 on every headline number. The reads: (1)
+  prior close in top 20% of range → 77% touch PDH next day, 49%
+  break-and-hold (weak close mirrors: 71% touch PDL); (2) open beyond
+  the prior range = acceptance — open>PDH closes above prior close
+  79.5%, touches PDL only 12% (mirror below PDL); flat opens are a
+  52/48 coin flip — the no-trade read; (3) open-above days offer a
+  PDH retest 72% of the time, median 9:45 — and the 9:45 flush is
+  CHOP (52-56% win, MAE>MFE) while the retest arriving AFTER 10:30
+  (n=273) wins ~69%, +27bps to close, MFE~2x MAE, era-stable
+  (73%/66%): the level that held all morning is the entry, the
+  opening flush is not; (4) 15m-close confirmation does NOT pay at
+  the index (82.5% confirm rate x 21bps premium outweighs the shallow
+  −59bps knives — the OPPOSITE of the single-stock defense read, and
+  both are true); (5) the SHORT mirror fails — blind PDL fade 49.8%,
+  confirmed NEGATIVE (46.1%, −1.7bps): downside BIAS is real (76%
+  close below prior close) but the retest-short ENTRY doesn't grade;
+  index drift + reclaim squeezes. Caveats where the numbers surface:
+  SPY underlying bps, close-anchored outcomes, 15m granularity, no
+  costs; options expression is the separate layer per the
+  ledger-grades-the-signal rule. Next steps queued IN ORDER: a
+  morning-brief day-bias line (states + probabilities, measurement
+  only), QQQ replication, a short-side phase-3 mechanism study, and
+  only then a paper audition book (harness doctrine applies).
+
 - **FMP news cuts are a budget, not a policy** (2026-08-23, after the
   90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to
   250 and fetch_recent_news caches 150s per lookback (PR #217) —
