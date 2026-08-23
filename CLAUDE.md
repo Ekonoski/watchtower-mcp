@@ -637,10 +637,19 @@ Rendering doctrine, same spirit as the rest of this file:
   index drift + reclaim squeezes. Caveats where the numbers surface:
   SPY underlying bps, close-anchored outcomes, 15m granularity, no
   costs; options expression is the separate layer per the
-  ledger-grades-the-signal rule. Next steps queued IN ORDER: a
+  ledger-grades-the-signal rule. QQQ replication (2026-08-23, 3,877
+  days, same definitions untouched): the BIAS layer replicates almost
+  digit-for-digit (open>PDH → 78.2% vs SPY 79.5%; strong close →
+  79.6% touch PDH / 50.5% break-hold vs 77.2/48.8); the timing effect
+  replicates in DIRECTION (early retest 51.9% chop with MAE>MFE, late
+  62.6%) but at roughly a third of SPY's magnitude (+9bps vs +27,
+  MFE/MAE ~1.1x vs ~2x — QQQ's fatter MAE eats the edge); the short
+  mirror fails again (early PDL fade 43.6%, ~0bps). Verdict: the
+  structure is market-wide, the TRADE is SPY-first; QQQ needs its own
+  stop geometry before it qualifies. Next steps queued IN ORDER: a
   morning-brief day-bias line (states + probabilities, measurement
-  only), QQQ replication, a short-side phase-3 mechanism study, and
-  only then a paper audition book (harness doctrine applies).
+  only), a short-side phase-3 mechanism study, and only then a paper
+  audition book (harness doctrine applies).
 
 - **FMP news cuts are a budget, not a policy** (2026-08-23, after the
   90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to
