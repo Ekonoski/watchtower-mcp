@@ -1336,6 +1336,32 @@ def _seed_sector_study_if_missing():
         log.warning(f"[scheduler] sector study seed skipped: {e}")
 
 
+def _seed_daybias_bars_if_missing():
+    """Boot-time backfill of SPY/QQQ/IWM 15m history for the day-bias
+    study (Eric, 2026-08-23). ~33 Polygon calls total, resumable by
+    max-stored-date, marker-retired. Runs at any boot hour — the calls
+    are few and the inserts are boot-thread work."""
+    try:
+        from analysis.daybias_bars import COMPLETE_MARKER, run
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s LIMIT 1",
+                            (COMPLETE_MARKER,))
+                if cur.fetchone():
+                    return
+        finally:
+            conn.close()
+        import time as _time
+        _t0 = _time.time()
+        while _time.time() - _t0 < 2 * 3600:
+            if run():
+                break
+    except Exception as e:
+        log.warning(f"[scheduler] daybias bars seed skipped: {e}")
+
+
 def _seed_defense_retro_if_missing():
     """One-shot retro defense read (Eric, 2026-08-22): the desk's own
     past touch fills graded against the defense signature — research,
@@ -1912,6 +1938,7 @@ def start_scheduler():
         _seed_defense_study_if_missing()
         _seed_defense_retro_if_missing()
         _seed_sector_study_if_missing()
+        _seed_daybias_bars_if_missing()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
