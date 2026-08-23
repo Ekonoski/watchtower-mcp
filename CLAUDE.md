@@ -608,6 +608,19 @@ Rendering doctrine, same spirit as the rest of this file:
   resolutions. One clean answer at a time; week one showed what
   happens when experiments share a book.
 
+- **FMP news cuts are a budget, not a policy** (2026-08-23, after the
+  90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to
+  250 and fetch_recent_news caches 150s per lookback (PR #217) —
+  chosen because every 5-minute scan was re-downloading up to 1,000
+  mostly-identical articles, NOT because 250 is known-sufficient.
+  REMINDER (Eric): revisit ~2026-09-08 — if the dashboard shows usage
+  well off the ceiling AND the news_scanner logs show the fmp count
+  regularly hitting the 250 cap (truncation), raise the limit back
+  (500 or 1000) via Railway env; if the cap never binds, leave it.
+  The heavy one-time history backfills ran on POLYGON, not FMP — the
+  FMP burn was the news loop, so restoring the firehose is a data-
+  quality question, never a backfill hangover.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
