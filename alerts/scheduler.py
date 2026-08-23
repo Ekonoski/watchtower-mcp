@@ -956,6 +956,15 @@ def run_gex_intraday_job():
     except Exception as e:
         log.warning(f"[drift] check failed (non-fatal): {e}")
     try:
+        # Proximity pings ride the same tick (Eric, 2026-08-23): "tell
+        # me when a ticker is trading at or near those levels."
+        from alerts.gamma_prox import run_gamma_prox_check
+        res = run_gamma_prox_check()
+        if res and not res.get("off") and res.get("sent"):
+            log.info(f"[gamma-prox] {res}")
+    except Exception as e:
+        log.warning(f"[gamma-prox] check failed (non-fatal): {e}")
+    try:
         from analysis.vix import run_vix_update
         run_vix_update(intraday=True)
     except Exception as e:
