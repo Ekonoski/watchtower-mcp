@@ -27,7 +27,13 @@ log = logging.getLogger("watchtower.daybias_bars")
 COMPLETE_MARKER = "daybias_bars_v1"
 TICKERS = ("SPY", "QQQ", "IWM")
 START = dt.date(2005, 1, 1)
-WINDOW_DAYS = 365          # one get_aggs call per ~year (26 RTH bars/day)
+# 2026-08-23, first run: Polygon caps a single aggs response at ~5,000
+# results no matter the requested limit, so year windows silently got
+# only their first ~3 months (SPY "completed" with 7 bars/day). Windows
+# must stay under the cap: 60 days x ~64 full-session bars ~= 3,840.
+# The truncation guard below makes the cap loud if it ever binds again.
+WINDOW_DAYS = 60
+RESPONSE_CAP_WARN = 4500
 BUDGET_S = 30 * 60
 ET = "America/New_York"
 
@@ -84,6 +90,10 @@ def run() -> bool:
                                 f"fetch failed (will retry next boot): {e}")
                     all_done = False
                     break
+                if len(aggs) >= RESPONSE_CAP_WARN:
+                    log.warning(f"[daybias-bars] {tk} {cursor_date}..{w_end}: "
+                                f"{len(aggs)} aggs — near the response cap; "
+                                f"window may be TRUNCATED. Shrink WINDOW_DAYS.")
                 rows = _rth_rows(aggs, tk)
                 if rows:
                     with conn.cursor() as cur:
