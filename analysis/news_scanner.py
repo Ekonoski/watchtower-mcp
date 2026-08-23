@@ -203,6 +203,18 @@ def _get_grok_client():
 
 _FMP_BASE = "https://financialmodelingprep.com/stable"
 
+# FMP meters the plan by data VOLUME on a rolling 30 days (2026-08-22:
+# two usage warnings inside a week, 90% then 96%). The burn was here —
+# every 5-minute scan refetched up to 1,000 articles from two feeds
+# with no cache, ~250 heavyweight pulls a day of mostly-identical
+# payloads. Two cuts, no trading behavior changed: a 250-article
+# default (a 35-min window never fills it; NEWS_FMP_LIMIT restores the
+# firehose) and a short TTL cache so back-to-back scans reuse the
+# fetch instead of re-downloading the same headlines.
+NEWS_FMP_LIMIT_DEFAULT = 250
+NEWS_CACHE_TTL_S = int(os.environ.get("NEWS_CACHE_TTL_S", "150"))
+_NEWS_CACHE: dict = {}   # lookback_minutes -> (fetched_at_utc, articles)
+
 
 def _fetch_fmp_news(cutoff_utc: datetime) -> List[dict]:
     """
@@ -232,7 +244,8 @@ def _fetch_fmp_news(cutoff_utc: datetime) -> List[dict]:
             resp = requests.get(
                 f"{_FMP_BASE}{endpoint}",
                 params={"page": 0,
-                        "limit": int(os.environ.get("NEWS_FMP_LIMIT", "1000")),
+                        "limit": int(os.environ.get(
+                            "NEWS_FMP_LIMIT", str(NEWS_FMP_LIMIT_DEFAULT))),
                         "apikey": api_key},
                 timeout=20,
             )
@@ -279,6 +292,11 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
     Fetch news articles published in the last N minutes from Polygon + FMP.
     Returns list of raw article dicts with tickers, headline, description, published_utc.
     """
+    now = datetime.now(timezone.utc)
+    cached = _NEWS_CACHE.get(lookback_minutes)
+    if cached and (now - cached[0]).total_seconds() < NEWS_CACHE_TTL_S:
+        return list(cached[1])
+
     client = _get_polygon_client()
     if not client:
         return []
@@ -342,6 +360,7 @@ def fetch_recent_news(lookback_minutes: int = 35) -> List[dict]:
         f"({no_ticker} no-ticker, {polygon_kept} kept) + fmp {len(fmp_articles)} "
         f"({fmp_added} new) = {len(articles)} articles."
     )
+    _NEWS_CACHE[lookback_minutes] = (now, list(articles))
     return articles
 
 
