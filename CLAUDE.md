@@ -617,6 +617,11 @@ Rendering doctrine, same spirit as the rest of this file:
   well off the ceiling AND the news_scanner logs show the fmp count
   regularly hitting the 250 cap (truncation), raise the limit back
   (500 or 1000) via Railway env; if the cap never binds, leave it.
+  Eric's standing position (2026-08-23): he wants the system as
+  in-depth as possible and is OPEN to upgrading the FMP plan if the
+  data shows depth is being lost — cost is not the constraint, waste
+  was. Never let the quota silently cap coverage; surface the
+  trade-off and let him choose.
   The heavy one-time history backfills ran on POLYGON, not FMP — the
   FMP burn was the news loop, so restoring the firehose is a data-
   quality question, never a backfill hangover.
