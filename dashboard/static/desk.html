@@ -3,142 +3,339 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Watchtower · Desk Floor</title>
 <style>
-  :root { --bg:#0d0f0d; --panel:#141a14; --edge:#233023; --grn:#7ee787;
-          --amb:#e3b341; --red:#f85149; --dim:#5a6e5a; --txt:#c9d8c9; }
+  :root { --wood:#4a3423; --wood2:#5b4130; --wall:#2b3140; --wall-n:#1a1e28;
+          --scr:#0b120b; --grn:#7ee787; --amb:#e3b341; --red:#f85149;
+          --dim:#7a8296; --txt:#d8dee9; --panel:#161a22; --edge:#2a3040; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--bg); color:var(--txt);
-         font-family:'Courier New', monospace; font-size:13px; padding:14px;
-         background-image: repeating-linear-gradient(0deg,
-           rgba(0,0,0,.12) 0 1px, transparent 1px 3px); }
-  header { display:flex; justify-content:space-between; align-items:baseline;
-           border-bottom:2px solid var(--edge); padding-bottom:8px; margin-bottom:14px; }
-  h1 { font-size:16px; color:var(--grn); letter-spacing:2px; }
-  h1 .sub { color:var(--dim); font-size:11px; letter-spacing:1px; }
-  #clock { color:var(--amb); font-size:14px; }
-  .floor { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
-           gap:12px; }
-  .seat { background:var(--panel); border:1px solid var(--edge);
-          border-radius:4px; padding:10px 12px; min-height:120px; }
-  .seat h2 { font-size:12px; color:var(--amb); letter-spacing:2px;
-             border-bottom:1px dashed var(--edge); padding-bottom:5px;
-             margin-bottom:7px; display:flex; justify-content:space-between; }
-  .seat h2 .who { color:var(--dim); font-weight:normal; letter-spacing:0; }
-  .row { display:flex; justify-content:space-between; margin:3px 0; }
-  .k { color:var(--dim); }
-  .v { color:var(--txt); } .g { color:var(--grn); } .r { color:var(--red); }
-  .a { color:var(--amb); }
-  .wide { grid-column: 1 / -1; }
-  .squawk { max-height:230px; overflow-y:auto; }
-  .sq { padding:3px 0; border-bottom:1px dotted var(--edge); }
-  .stale { color:var(--red); }
-  .blink { animation: bl 1.2s steps(2) infinite; }
-  @keyframes bl { to { opacity:.25; } }
-  footer { margin-top:14px; color:var(--dim); font-size:11px;
-           border-top:1px solid var(--edge); padding-top:6px; }
-  #err { color:var(--red); margin:8px 0; }
-  a { color:var(--grn); }
-</style></head><body>
+  body { background:var(--wall-n); color:var(--txt);
+         font-family:'Courier New', monospace; font-size:12.5px;
+         transition: background 2s; overflow-x:hidden; }
+  body.day    { --wall:#39415a; --wall-n:#242a3a; }
+  body.dawn   { --wall:#4a3a4a; --wall-n:#2e2438; }
+  body.dusk   { --wall:#43304a; --wall-n:#291e30; }
+  body.night  { --wall:#232838; --wall-n:#151824; }
 
+  /* ── ticker tape ── */
+  .tape { background:#000; color:var(--grn); white-space:nowrap; overflow:hidden;
+          border-bottom:2px solid #222; font-size:13px; padding:4px 0; }
+  .tape .crawl { display:inline-block; padding-left:100%;
+                 animation: crawl 45s linear infinite; }
+  @keyframes crawl { to { transform:translateX(-100%);} }
+  .tape .up { color:var(--grn);} .tape .dn { color:var(--red);}
+  .tape .nm { color:var(--amb);}
+
+  header { display:flex; justify-content:space-between; align-items:center;
+           padding:8px 16px; background:var(--wall-n); border-bottom:1px solid var(--edge); }
+  h1 { font-size:15px; color:var(--grn); letter-spacing:3px; }
+  h1 .sub { color:var(--dim); font-size:10px; letter-spacing:1px; }
+  .hdr-r { display:flex; gap:14px; align-items:center; }
+  #session { color:var(--amb); font-size:11px; letter-spacing:2px; }
+  #clock { color:var(--amb); font-size:14px; }
+  a { color:var(--grn); text-decoration:none; }
+
+  .layout { display:flex; gap:0; align-items:stretch; }
+  /* ── the office ── */
+  .office { flex:1; background:linear-gradient(var(--wall) 0 46%, var(--wood) 46% 100%);
+            min-height:560px; padding:10px 14px 20px; position:relative; }
+  .wallrow { display:flex; justify-content:space-between; align-items:flex-start;
+             height:110px; }
+  .skyline { display:flex; align-items:flex-end; gap:3px; height:78px;
+             background:#0d1018; padding:6px 8px 0; border:4px solid #17130c;
+             border-radius:2px; }
+  .bld { width:12px; background:#1d2433; position:relative; }
+  .bld i { position:absolute; width:3px; height:3px; background:var(--amb);
+           opacity:.85; }
+  .wallclock { background:#f5efe0; color:#111; border:4px solid #17130c;
+               border-radius:50%; width:64px; height:64px; display:flex;
+               align-items:center; justify-content:center; font-weight:bold;
+               font-size:12px; }
+  .banner { background:#17130c; color:var(--amb); padding:6px 12px;
+            border-radius:2px; letter-spacing:2px; font-size:11px; }
+
+  .desks { display:grid; grid-template-columns:repeat(3, 1fr); gap:18px 22px;
+           margin-top:6px; }
+  .unit { text-align:center; }
+  .who { font-size:11px; letter-spacing:2px; color:var(--amb); margin-bottom:2px; }
+  .who .role { color:var(--dim); letter-spacing:0; }
+  .sprite { height:60px; display:flex; justify-content:center; align-items:flex-end; }
+  .px { width:4px; height:4px; }
+  .active .px { animation: hop 0.8s steps(2) infinite; }
+  @keyframes hop { 50% { transform:translateY(-3px);} }
+  .zz { position:relative; }
+  .zz::after { content:'z Z'; position:absolute; margin-left:6px; margin-top:-46px;
+               color:var(--dim); font-size:10px; animation: bl 2.4s steps(2) infinite; }
+  @keyframes bl { 50% { opacity:.2; } }
+  .desktop { background:linear-gradient(#6b4a2f,#553a24); border:3px solid #2e2013;
+             border-radius:3px; padding:6px; margin-top:-6px; }
+  .monitor { background:var(--scr); border:2px solid #222; border-radius:2px;
+             padding:5px 7px; text-align:left; min-height:64px; font-size:11px; }
+  .monitor .row { display:flex; justify-content:space-between; margin:2px 0; }
+  .k { color:var(--dim); } .g { color:var(--grn); } .r { color:var(--red); }
+  .a { color:var(--amb); }
+
+  /* bull pedestal */
+  .shrine { position:absolute; left:18px; bottom:12px; text-align:center; }
+  .bull { font-size:34px; filter: sepia(1) saturate(4) hue-rotate(-15deg) brightness(1.15);
+          display:inline-block; }
+  .shrine.winning .bull { animation: shine 2.2s ease-in-out infinite; }
+  @keyframes shine { 50% { filter: sepia(1) saturate(6) hue-rotate(-20deg) brightness(1.5);
+                           transform:translateY(-2px);} }
+  .plaque { background:#17130c; color:var(--amb); font-size:10px; padding:3px 8px;
+            border-radius:2px; margin-top:2px; letter-spacing:1px; }
+
+  /* printer */
+  .printer { position:absolute; right:18px; bottom:12px; text-align:center; }
+  .printer .box { width:56px; height:26px; background:#3a3f4d; border:3px solid #22262f;
+                  border-radius:3px; margin:0 auto; position:relative; }
+  .printer .paper { position:absolute; left:10px; top:-16px; width:32px; height:16px;
+                    background:#f5efe0; color:#111; font-size:8px; overflow:hidden;
+                    text-align:center; display:none; }
+  .printer.printing .paper { display:block; animation: feed 2.5s ease-out infinite; }
+  @keyframes feed { from { height:2px; top:-2px; } to { height:16px; top:-16px; } }
+  .printer .lbl { color:var(--dim); font-size:9px; margin-top:3px; letter-spacing:1px; }
+
+  /* ── right rail ── */
+  .rail { width:320px; background:var(--panel); border-left:2px solid var(--edge);
+          padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
+  .card { background:#10141c; border:1px solid var(--edge); border-radius:4px; padding:8px 10px; }
+  .card h2 { font-size:11px; letter-spacing:2px; color:var(--amb);
+             border-bottom:1px dashed var(--edge); padding-bottom:4px; margin-bottom:6px; }
+  .card .row { display:flex; justify-content:space-between; margin:3px 0; font-size:11.5px; }
+  .squawk { max-height:300px; overflow-y:auto; }
+  .sq { padding:3px 0; border-bottom:1px dotted var(--edge); font-size:11px; }
+  .blink { animation: bl 1.2s steps(2) infinite; }
+  #err { color:var(--red); padding:6px 16px; }
+  footer { color:var(--dim); font-size:10px; padding:8px 16px;
+           border-top:1px solid var(--edge); }
+  @media (max-width: 900px){ .layout { flex-direction:column; } .rail { width:100%; } }
+</style></head><body class="night">
+
+<div class="tape"><div class="crawl" id="tape">WATCHTOWER DESK FLOOR · loading the boards…</div></div>
 <header>
-  <h1>WATCHTOWER · DESK FLOOR <span class="sub">est. 2026 · every number from the ledger</span></h1>
-  <div id="clock">--:--:-- ET</div>
+  <h1>WATCH<span style="color:var(--amb)">TOWER</span> FLOOR <span class="sub">every pixel moves because the ledger says so</span></h1>
+  <div class="hdr-r"><span id="session">—</span><span id="clock">--:--:-- ET</span>
+  <a href="/dashboard">← dashboard</a></div>
 </header>
 <div id="err"></div>
-<div class="floor">
-  <div class="seat"><h2>TAPE <span class="who">news &amp; screens</span></h2><div id="seat-tape"><span class="k">loading…</span></div></div>
-  <div class="seat"><h2>QUANT <span class="who">pattern fleet</span></h2><div id="seat-quant"><span class="k">loading…</span></div></div>
-  <div class="seat"><h2>FLOW <span class="who">gamma engine</span></h2><div id="seat-flow"><span class="k">loading…</span></div></div>
-  <div class="seat"><h2>MACRO <span class="who">calendar watch</span></h2><div id="seat-macro"><span class="k">loading…</span></div></div>
-  <div class="seat"><h2>PM <span class="who">spec writer</span></h2><div id="seat-pm"><span class="k">loading…</span></div></div>
-  <div class="seat"><h2>BOOKS <span class="who">paper desk record</span></h2><div id="seat-books"><span class="k">loading…</span></div></div>
-  <div class="seat wide"><h2>SQUAWK <span class="who">fills &amp; exits — worst first is the ledger's job; newest first is the floor's</span></h2>
-    <div class="squawk" id="squawk"><span class="k">loading…</span></div></div>
+
+<div class="layout">
+  <div class="office">
+    <div class="wallrow">
+      <div class="skyline" id="skyline"></div>
+      <div class="banner">EST. 2026 · PAPER UNTIL PROVEN</div>
+      <div class="wallclock" id="wallclock">--:--</div>
+    </div>
+    <div class="desks" id="desks"></div>
+    <div class="shrine" id="shrine">
+      <div class="bull">🐂</div>
+      <div class="plaque" id="plaque">LONG THE RECORD</div>
+    </div>
+    <div class="printer" id="printer">
+      <div class="box"><div class="paper" id="paper">FILL</div></div>
+      <div class="lbl">FILL PRINTER</div>
+    </div>
+  </div>
+
+  <div class="rail">
+    <div class="card"><h2>BOOKS · the record</h2><div id="books"><span class="k">loading…</span></div></div>
+    <div class="card"><h2>TODAY'S SPECS</h2><div id="specs"><span class="k">loading…</span></div></div>
+    <div class="card"><h2>SQUAWK</h2><div class="squawk" id="squawk"><span class="k">loading…</span></div></div>
+  </div>
 </div>
-<footer>Measurement only — this page reads ingestion_log, paper_specs/trades, gex_levels, gamma_drift_alerts, economic_calendar. It controls nothing. · <a href="/dashboard">← main dashboard</a></footer>
+<footer>Reads ingestion_log · paper_specs/trades · gex_levels · gamma_drift_alerts · economic_calendar. Controls nothing, invents nothing — a sleeping trader means that job really hasn't run.</footer>
 
 <script>
-function ago(iso){ if(!iso) return '—';
-  const s=(Date.now()-new Date(iso).getTime())/1000;
-  if(s<90) return Math.round(s)+'s ago';
-  if(s<5400) return Math.round(s/60)+'m ago';
-  if(s<172800) return (s/3600).toFixed(1)+'h ago';
-  return Math.round(s/86400)+'d ago'; }
+/* ── pixel sprite: built from a char map, palette per seat ── */
+const SPRITE = [
+  "..hhhh..",
+  ".hhhhhh.",
+  ".hssssh.",
+  ".sesses.",
+  ".ssssss.",
+  "..ssss..",
+  ".bbbbbb.",
+  "bbbbbbbb",
+  "babbbbab",
+  "bbbbbbbb",
+  ".pppppp.",
+  ".pp..pp.",
+  ".pp..pp.",
+  ".dd..dd."
+];
+function sprite(hair, shirt){
+  const pal = { h:hair, s:'#e8b98a', e:'#1a1a1a', b:shirt, a:'#e8b98a',
+                p:'#3b4252', d:'#191a1e' };
+  const shadows=[];
+  SPRITE.forEach((row,y)=>{ [...row].forEach((ch,x)=>{
+    if(pal[ch]) shadows.push(`${x*4}px ${y*4}px 0 0 ${pal[ch]}`); });});
+  const d=document.createElement('div');
+  d.className='px';
+  d.style.boxShadow=shadows.join(',');
+  d.style.marginRight='32px'; d.style.marginBottom='52px';
+  return d;
+}
+const SEATS = [
+  {id:'tape',  name:'TAPE',  role:'news & screens',  hair:'#5b3a1e', shirt:'#3f6db4', jobs:['news','intraday_screen','screen'], fresh:30},
+  {id:'quant', name:'QUANT', role:'pattern fleet',   hair:'#1a1a1a', shirt:'#7a4fb0', jobs:['pattern','daily_scan','oscillator'], fresh:120},
+  {id:'flow',  name:'FLOW',  role:'gamma engine',    hair:'#c9a227', shirt:'#3fae7a', jobs:['gex'], fresh:45},
+  {id:'macro', name:'MACRO', role:'calendar watch',  hair:'#8a8f9c', shirt:'#b45050', jobs:['calendar','econ'], fresh:1600},
+  {id:'risk',  name:'RISK',  role:'guards the stops',hair:'#6e2f2f', shirt:'#c07a2e', jobs:['short','vix'], fresh:1600},
+  {id:'pm',    name:'PM',    role:'spec writer',     hair:'#2f4a2f', shirt:'#5a8f3f', jobs:['spec','paper'], fresh:1600},
+];
+
+function buildDesks(){
+  const wrap=document.getElementById('desks');
+  for(const s of SEATS){
+    const u=document.createElement('div'); u.className='unit'; u.id='u-'+s.id;
+    u.innerHTML=`<div class="who">${s.name} <span class="role">· ${s.role}</span></div>`;
+    const sp=document.createElement('div'); sp.className='sprite'; sp.id='sp-'+s.id;
+    sp.appendChild(sprite(s.hair, s.shirt)); u.appendChild(sp);
+    const dt=document.createElement('div'); dt.className='desktop';
+    dt.innerHTML=`<div class="monitor" id="m-${s.id}"><span class="k">…</span></div>`;
+    u.appendChild(dt); wrap.appendChild(u);
+  }
+  const sky=document.getElementById('skyline');
+  const hs=[52,38,60,30,46,64,34,50,42,58];
+  hs.forEach(h=>{ const b=document.createElement('div'); b.className='bld';
+    b.style.height=h+'px';
+    for(let i=0;i<Math.floor(h/10);i++){ const w=document.createElement('i');
+      w.style.left=(2+(i%2)*6)+'px'; w.style.top=(4+i*9)+'px';
+      if(Math.random()<0.35) w.style.opacity=0.12; b.appendChild(w);} sky.appendChild(b); });
+}
+
+function ago(iso){ if(!iso) return null;
+  return (Date.now()-new Date(iso).getTime())/60000; }  // minutes
+function agoTxt(iso){ const m=ago(iso); if(m==null) return '—';
+  if(m<2) return 'now'; if(m<90) return Math.round(m)+'m ago';
+  if(m<2880) return (m/60).toFixed(1)+'h ago'; return Math.round(m/1440)+'d ago'; }
 function esc(x){ return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function jobRow(j){ if(!j) return '<div class="row"><span class="k">no run on record</span></div>';
-  const ok=j.status==='completed'||j.status==='success'||j.status==='ok';
-  return `<div class="row"><span class="k">${esc(j.job)}</span>`+
-         `<span class="${ok?'g':'r'}">${esc(j.status||'?')}</span></div>`+
-         `<div class="row"><span class="k">last run</span><span class="v">${ago(j.at)}</span></div>`+
-         `<div class="row"><span class="k">records</span><span class="v">${j.n??'—'}</span></div>`; }
-function pick(jobs, pats){ for(const p of pats){
-  const j=jobs.find(x=>x.job&&x.job.toLowerCase().includes(p)); if(j) return j; } return null; }
+
+function setSeat(id, activeMins, lastIso, html){
+  const sp=document.getElementById('sp-'+id);
+  const m=ago(lastIso);
+  sp.classList.remove('active','zz');
+  if(m!=null && m<=activeMins) sp.classList.add('active');
+  else if(m==null || m>360) sp.classList.add('zz');
+  document.getElementById('m-'+id).innerHTML=html;
+}
 
 async function refresh(){
   let d;
   try{ const r=await fetch('/api/deskfloor');
     if(r.status===401){ document.getElementById('err').innerHTML=
-      'not logged in — open <a href="/dashboard">/dashboard</a> first, then come back.'; return; }
+      'not logged in — open <a href="/dashboard">/dashboard</a> first.'; return; }
     d=await r.json(); if(d.error) throw new Error(d.error);
     document.getElementById('err').textContent='';
   }catch(e){ document.getElementById('err').textContent='feed error: '+e.message; return; }
 
   const jobs=d.jobs||[];
-  document.getElementById('seat-tape').innerHTML =
-    jobRow(pick(jobs,['news','intraday_screen','screen']));
-  document.getElementById('seat-quant').innerHTML =
-    jobRow(pick(jobs,['pattern','daily_scan','oscillator']));
+  const pick=pats=>{ for(const p of pats){
+    const j=jobs.find(x=>x.job&&x.job.toLowerCase().includes(p)); if(j) return j;} return null; };
 
-  let flow='';
-  for(const g of (d.gamma||[])){
-    const slip=g.regime&&g.regime.toLowerCase().includes('slip');
-    flow+=`<div class="row"><span class="k">${esc(g.ticker)}</span>`+
-      `<span class="${slip?'r':'g'}">${esc(g.regime||'?')} ${g.gex>=0?'+':''}${g.gex.toFixed(1)}bn</span></div>`+
-      `<div class="row"><span class="k">&nbsp;CW/flip/PW</span>`+
-      `<span class="v">${g.cw||'—'} / ${g.flip?g.flip.toFixed(1):'—'} / ${g.pw||'—'}</span></div>`;
+  for(const s of SEATS){
+    const j=pick(s.jobs);
+    let html='';
+    if(s.id==='flow'){
+      for(const g of (d.gamma||[])){
+        const slip=(g.regime||'').toLowerCase().includes('slip');
+        html+=`<div class="row"><span class="k">${esc(g.ticker)}</span>`+
+              `<span class="${slip?'r':'g'}">${esc(g.regime||'?')} ${g.gex>=0?'+':''}${g.gex.toFixed(1)}bn</span></div>`;
+      }
+      html+=`<div class="row"><span class="k">drift</span><span class="a">${d.drift.sent} sent · ${d.drift.suppressed} held</span></div>`;
+    } else if(s.id==='macro'){
+      for(const m of (d.macro||[]).slice(0,3))
+        html+=`<div class="row"><span class="k">${esc(m.date.slice(5))}</span><span class="a">${esc(m.event).slice(0,16)}</span></div>`;
+      if(!(d.macro||[]).length) html='<span class="k">no high-impact ahead</span>';
+    } else if(s.id==='pm'){
+      const sp=(d.specs_today||[]);
+      if(sp.length) for(const x of sp)
+        html+=`<div class="row"><span class="k">${esc(x.book)} ${esc(x.status)}</span><span>${x.n}</span></div>`;
+      else html='<div class="row"><span class="k">no specs today</span></div>';
+    } else if(s.id==='risk'){
+      const open=(d.books||[]).reduce((a,b)=>a+b.open,0);
+      html=`<div class="row"><span class="k">open positions</span><span>${open}</span></div>`+
+           `<div class="row"><span class="k">index shorts</span><span class="r">none graded</span></div>`+
+           (j?`<div class="row"><span class="k">${esc(j.job)}</span><span class="k">${agoTxt(j.at)}</span></div>`:'');
+    } else {
+      html=j?`<div class="row"><span class="k">${esc(j.job).slice(0,16)}</span><span class="${(j.status||'').startsWith('comp')||j.status==='success'?'g':'r'}">${esc(j.status)}</span></div>`+
+             `<div class="row"><span class="k">ran</span><span>${agoTxt(j.at)}</span></div>`+
+             `<div class="row"><span class="k">records</span><span>${j.n??'—'}</span></div>`
+            :'<span class="k">no run on record</span>';
+    }
+    setSeat(s.id, s.fresh, (s.id==='pm'&&(d.specs_today||[]).length)?new Date().toISOString():(j?j.at:null), html);
   }
-  flow+=`<div class="row"><span class="k">drift today</span>`+
-        `<span class="a">${d.drift.sent} sent · ${d.drift.suppressed} held</span></div>`;
-  document.getElementById('seat-flow').innerHTML=flow||'<span class="k">no board</span>';
 
-  let mac='';
-  for(const m of (d.macro||[]))
-    mac+=`<div class="row"><span class="k">${esc(m.date)}</span><span class="a">${esc(m.event)}</span></div>`;
-  document.getElementById('seat-macro').innerHTML=mac||'<span class="k">no high-impact events ahead</span>';
-
-  let pm='';
-  for(const s of (d.specs_today||[]))
-    pm+=`<div class="row"><span class="k">${esc(s.book)} ${esc(s.status)}</span><span class="v">${s.n}</span></div>`;
-  document.getElementById('seat-pm').innerHTML =
-    pm||'<div class="row"><span class="k">no specs today</span><span class="v">(weekend or pre-write)</span></div>';
-
-  let bk='';
+  // BOOKS + bull
+  let bk=''; let best=null;
   for(const b of (d.books||[])){
-    const losses=b.resolved-b.wins;
+    if(!best || b.realized_r>best.realized_r) best=b;
     bk+=`<div class="row"><span class="k">${esc(b.book)}</span>`+
-      `<span class="${b.realized_r>=0?'g':'r'}">${b.realized_r>=0?'+':''}${b.realized_r}R</span></div>`+
-      `<div class="row"><span class="k">&nbsp;${b.wins}-${losses} · ${b.open} open</span>`+
-      `<span class="v">${b.fills_today} fill${b.fills_today===1?'':'s'} today</span></div>`;
+        `<span class="${b.realized_r>=0?'g':'r'}">${b.realized_r>=0?'+':''}${b.realized_r}R · ${b.wins}-${b.resolved-b.wins} · ${b.open} open</span></div>`;
   }
-  document.getElementById('seat-books').innerHTML=bk||'<span class="k">no trades yet</span>';
+  document.getElementById('books').innerHTML=bk||'<span class="k">no trades yet</span>';
+  const shrine=document.getElementById('shrine');
+  if(best){ document.getElementById('plaque').textContent=
+      `${best.book.toUpperCase()} ${best.realized_r>=0?'+':''}${best.realized_r}R`;
+    shrine.classList.toggle('winning', best.realized_r>0); }
 
-  let sq='';
+  let sp='';
+  for(const x of (d.specs_today||[]))
+    sp+=`<div class="row"><span class="k">${esc(x.book)} ${esc(x.status)}</span><span>${x.n}</span></div>`;
+  document.getElementById('specs').innerHTML=sp||
+    '<span class="k">none yet — zero is data (weekend or pre-write)</span>';
+
+  // SQUAWK + printer
+  let sq=''; let printing=false;
   for(const t of (d.squawk||[])){
     if(t.exited_at){
-      sq+=`<div class="sq"><span class="k">${ago(t.exited_at)}</span> EXIT `+
-        `<span class="a">${esc(t.ticker)}</span> <span class="k">${esc(t.book)}</span> `+
-        `@ ${t.exit_px} <span class="k">${esc(t.exit_reason||'')}</span> `+
-        `<span class="${(t.r??0)>=0?'g':'r'}">${t.r==null?'R n/a':(t.r>=0?'+':'')+t.r.toFixed(2)+'R'}</span></div>`;
+      sq+=`<div class="sq"><span class="k">${agoTxt(t.exited_at)}</span> EXIT `+
+          `<span class="a">${esc(t.ticker)}</span> <span class="k">${esc(t.book)} ${esc(t.exit_reason||'')}</span> `+
+          `<span class="${(t.r??0)>=0?'g':'r'}">${t.r==null?'R n/a':(t.r>=0?'+':'')+t.r.toFixed(2)+'R'}</span></div>`;
     } else {
-      sq+=`<div class="sq"><span class="k">${ago(t.entered_at)}</span> `+
-        `<span class="blink g">FILL</span> <span class="a">${esc(t.ticker)}</span> `+
-        `<span class="k">${esc(t.book)}</span> @ ${t.entry_px} <span class="k">working</span></div>`;
+      if(ago(t.entered_at)<10) printing=true;
+      sq+=`<div class="sq"><span class="k">${agoTxt(t.entered_at)}</span> `+
+          `<span class="blink g">FILL</span> <span class="a">${esc(t.ticker)}</span> `+
+          `<span class="k">${esc(t.book)}</span> @ ${t.entry_px}</div>`;
     }
   }
-  document.getElementById('squawk').innerHTML=sq||'<span class="k">quiet tape — a quiet day recorded is evidence</span>';
+  document.getElementById('squawk').innerHTML=sq||
+    '<span class="k">quiet tape — a quiet day recorded is evidence</span>';
+  document.getElementById('printer').classList.toggle('printing', printing);
+
+  // ticker tape from real boards + record
+  let items=[];
+  for(const g of (d.gamma||[]))
+    items.push(`<span class="nm">${esc(g.ticker)}</span> ${g.spot?g.spot.toFixed(2):'—'} `+
+      `<span class="${(g.regime||'').includes('slip')?'dn':'up'}">${esc(g.regime||'')}</span> `+
+      `CW ${g.cw||'—'} · FLIP ${g.flip?g.flip.toFixed(1):'—'} · PW ${g.pw||'—'}`);
+  for(const b of (d.books||[]))
+    items.push(`<span class="nm">${esc(b.book).toUpperCase()}</span> `+
+      `<span class="${b.realized_r>=0?'up':'dn'}">${b.realized_r>=0?'+':''}${b.realized_r}R</span> (${b.wins}-${b.resolved-b.wins})`);
+  items.push(`<span class="nm">DRIFT</span> ${d.drift.sent} sent / ${d.drift.suppressed} held`);
+  document.getElementById('tape').innerHTML =
+    items.join(' &nbsp;·&nbsp; ')+' &nbsp;·&nbsp; ';
 }
-function tick(){ document.getElementById('clock').textContent =
-  new Date().toLocaleTimeString('en-US',{timeZone:'America/New_York',hour12:false})+' ET'; }
-setInterval(tick,1000); tick();
+
+function tick(){
+  const now=new Date();
+  const et=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
+    hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit',weekday:'short'}).formatToParts(now);
+  const get=t=>et.find(p=>p.type===t).value;
+  const hh=+get('hour'), mm=get('minute'), wd=get('weekday');
+  document.getElementById('clock').textContent=`${get('hour')}:${mm}:${get('second')} ET`;
+  document.getElementById('wallclock').textContent=`${get('hour')}:${mm}`;
+  const wknd=(wd==='Sat'||wd==='Sun');
+  let cls='night', lbl='CLOSED';
+  if(!wknd){
+    if(hh>=7&&hh<9)  {cls='dawn'; lbl='PRE-MARKET';}
+    else if(hh===9)  {cls=(+mm>=30)?'day':'dawn'; lbl=(+mm>=30)?'RTH · LIVE':'PRE-MARKET';}
+    else if(hh>=10&&hh<16){cls='day'; lbl='RTH · LIVE';}
+    else if(hh>=16&&hh<20){cls='dusk'; lbl='AFTER HOURS';}
+  }
+  document.body.className=cls;
+  document.getElementById('session').textContent=lbl;
+}
+buildDesks(); setInterval(tick,1000); tick();
 refresh(); setInterval(refresh,60000);
 </script>
 </body></html>
