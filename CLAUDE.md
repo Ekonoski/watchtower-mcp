@@ -650,6 +650,22 @@ Rendering doctrine, same spirit as the rest of this file:
   morning-brief day-bias line (states + probabilities, measurement
   only), a short-side phase-3 mechanism study, and only then a paper
   audition book (harness doctrine applies).
+  The short-side mechanism study (2026-08-23, same evening): FOUR
+  mechanisms graded on the stored bars and every one refused. PDL
+  breakdown continuation from inside the range: negative, and WORST
+  with the obvious weak-close bias behind it (39-43% win, −16 to −21
+  bps — the crowded breakdown mean-reverts); opening-range-low
+  breakdown on gap-down days: coin flip (49.9%, +1.2 bps); the late
+  (≥10:30) PDL fade looked real in aggregate (59.2%, +37.9 bps,
+  n=196) but FAILED the era split — 68%/+54 bps 2005-2015 vs
+  50.0%/+20.7 2016-2026 — and failed QQQ replication outright
+  (48.9%, +0.5 bps): a pre-2016 artifact, not tradable structure.
+  VERDICT: the desk has NO graded intraday index short entry; the
+  short side of a down-bias day is expressed by NOT taking longs
+  (the flat-open stand-aside) and by gamma mechanics, not by fading
+  or chasing levels. Do not re-litigate this by feel — a new short
+  mechanism needs a new study that clears era-stability AND
+  replication, the same bar the long side cleared.
 
 - **FMP news cuts are a budget, not a policy** (2026-08-23, after the
   90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to
