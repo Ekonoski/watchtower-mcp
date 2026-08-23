@@ -1252,6 +1252,74 @@ def watchtower_levels(ticker: str, timeframes: str = "") -> str:
 
 
 @mcp.tool()
+def watchtower_structure(state: str = "retest", direction: str = "bullish",
+                         limit: int = 30) -> str:
+    """
+    The structure screen: the levels engine's multi-touch shelves run
+    FLEET-WIDE nightly off recorded daily bars, with the break->retest
+    lifecycle classified at MAJOR (>=3-touch) levels. This is the
+    break-and-retest-at-structure setup as a screen: 'breakout' = a
+    daily CLOSE through the shelf (wick rule), 'retest' = price back
+    within 1.5% of the broken level with no close back through — the
+    entry the desk's retest doctrine trades. Shelves are computed only
+    from bars BEFORE the action window (no lookahead). Bearish rows
+    (support breakdowns) are WARNINGS — structure shorts are retired
+    from entries. Screen only: graded by forward returns, never wired
+    into arming. Every row stamps its own run_date and break_date.
+
+    Args:
+        state: retest | breakout | failed | all (default retest)
+        direction: bullish | bearish | all (default bullish)
+        limit: max rows (default 30)
+    """
+    try:
+        from screen.reversal_screen import _conn
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT max(run_date) FROM structure_screen")
+                r = cur.fetchone()
+                run_d = r[0] if r else None
+                if run_d is None:
+                    return ("structure screen: no run recorded yet — the "
+                            "nightly 23:05 pass (or first-deploy seed) has "
+                            "not completed. Absence of a run is a hole, "
+                            "not an empty market.")
+                q = """SELECT ticker, direction, state, level, touches,
+                              stars, timeframes, break_date, retest_date,
+                              last_close, dist_pct
+                       FROM structure_screen WHERE run_date=%s"""
+                args = [run_d]
+                if state != "all":
+                    q += " AND state=%s"; args.append(state)
+                if direction != "all":
+                    q += " AND direction=%s"; args.append(direction)
+                q += " ORDER BY touches DESC, stars DESC NULLS LAST LIMIT %s"
+                args.append(max(1, min(int(limit), 100)))
+                cur.execute(q, args)
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return (f"structure screen (run {run_d}): 0 rows for "
+                    f"state={state} direction={direction} — a recorded "
+                    f"quiet read, not a hole.")
+        out = [f"STRUCTURE SCREEN — run {run_d} (shelves from settled "
+               f"closes; closes decide breaks; bearish = warning-only)"]
+        for (tk, dr, st, lvl, tch, stars, tfs, bd, rd, px, dist) in rows:
+            star = "★" * int(stars or 0)
+            warn = " ⚠ warning-only (shorts retired)" if dr == "bearish" else ""
+            rt = f", retest {rd}" if rd else ""
+            out.append(f"{tk}: {dr} {st} at {float(lvl):g} "
+                       f"({tch} touches {star} [{tfs}]) — broke {bd}{rt}, "
+                       f"last {float(px):g} ({float(dist):+.1f}% vs level)"
+                       f"{warn}")
+        return "\n".join(out)
+    except Exception as e:
+        return f"structure screen unavailable ({type(e).__name__}): {e}"
+
+
+@mcp.tool()
 def watchtower_gamma(ticker: str = "SPY") -> str:
     """
     Dealer-gamma (GEX) levels computed in-house from the nightly options
