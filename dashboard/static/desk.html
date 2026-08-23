@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchtower · Desk Floor</title>
+<style>
+  :root { --bg:#0d0f0d; --panel:#141a14; --edge:#233023; --grn:#7ee787;
+          --amb:#e3b341; --red:#f85149; --dim:#5a6e5a; --txt:#c9d8c9; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--txt);
+         font-family:'Courier New', monospace; font-size:13px; padding:14px;
+         background-image: repeating-linear-gradient(0deg,
+           rgba(0,0,0,.12) 0 1px, transparent 1px 3px); }
+  header { display:flex; justify-content:space-between; align-items:baseline;
+           border-bottom:2px solid var(--edge); padding-bottom:8px; margin-bottom:14px; }
+  h1 { font-size:16px; color:var(--grn); letter-spacing:2px; }
+  h1 .sub { color:var(--dim); font-size:11px; letter-spacing:1px; }
+  #clock { color:var(--amb); font-size:14px; }
+  .floor { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+           gap:12px; }
+  .seat { background:var(--panel); border:1px solid var(--edge);
+          border-radius:4px; padding:10px 12px; min-height:120px; }
+  .seat h2 { font-size:12px; color:var(--amb); letter-spacing:2px;
+             border-bottom:1px dashed var(--edge); padding-bottom:5px;
+             margin-bottom:7px; display:flex; justify-content:space-between; }
+  .seat h2 .who { color:var(--dim); font-weight:normal; letter-spacing:0; }
+  .row { display:flex; justify-content:space-between; margin:3px 0; }
+  .k { color:var(--dim); }
+  .v { color:var(--txt); } .g { color:var(--grn); } .r { color:var(--red); }
+  .a { color:var(--amb); }
+  .wide { grid-column: 1 / -1; }
+  .squawk { max-height:230px; overflow-y:auto; }
+  .sq { padding:3px 0; border-bottom:1px dotted var(--edge); }
+  .stale { color:var(--red); }
+  .blink { animation: bl 1.2s steps(2) infinite; }
+  @keyframes bl { to { opacity:.25; } }
+  footer { margin-top:14px; color:var(--dim); font-size:11px;
+           border-top:1px solid var(--edge); padding-top:6px; }
+  #err { color:var(--red); margin:8px 0; }
+  a { color:var(--grn); }
+</style></head><body>
+
+<header>
+  <h1>WATCHTOWER · DESK FLOOR <span class="sub">est. 2026 · every number from the ledger</span></h1>
+  <div id="clock">--:--:-- ET</div>
+</header>
+<div id="err"></div>
+<div class="floor">
+  <div class="seat"><h2>TAPE <span class="who">news &amp; screens</span></h2><div id="seat-tape"><span class="k">loading…</span></div></div>
+  <div class="seat"><h2>QUANT <span class="who">pattern fleet</span></h2><div id="seat-quant"><span class="k">loading…</span></div></div>
+  <div class="seat"><h2>FLOW <span class="who">gamma engine</span></h2><div id="seat-flow"><span class="k">loading…</span></div></div>
+  <div class="seat"><h2>MACRO <span class="who">calendar watch</span></h2><div id="seat-macro"><span class="k">loading…</span></div></div>
+  <div class="seat"><h2>PM <span class="who">spec writer</span></h2><div id="seat-pm"><span class="k">loading…</span></div></div>
+  <div class="seat"><h2>BOOKS <span class="who">paper desk record</span></h2><div id="seat-books"><span class="k">loading…</span></div></div>
+  <div class="seat wide"><h2>SQUAWK <span class="who">fills &amp; exits — worst first is the ledger's job; newest first is the floor's</span></h2>
+    <div class="squawk" id="squawk"><span class="k">loading…</span></div></div>
+</div>
+<footer>Measurement only — this page reads ingestion_log, paper_specs/trades, gex_levels, gamma_drift_alerts, economic_calendar. It controls nothing. · <a href="/dashboard">← main dashboard</a></footer>
+
+<script>
+function ago(iso){ if(!iso) return '—';
+  const s=(Date.now()-new Date(iso).getTime())/1000;
+  if(s<90) return Math.round(s)+'s ago';
+  if(s<5400) return Math.round(s/60)+'m ago';
+  if(s<172800) return (s/3600).toFixed(1)+'h ago';
+  return Math.round(s/86400)+'d ago'; }
+function esc(x){ return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function jobRow(j){ if(!j) return '<div class="row"><span class="k">no run on record</span></div>';
+  const ok=j.status==='completed'||j.status==='success'||j.status==='ok';
+  return `<div class="row"><span class="k">${esc(j.job)}</span>`+
+         `<span class="${ok?'g':'r'}">${esc(j.status||'?')}</span></div>`+
+         `<div class="row"><span class="k">last run</span><span class="v">${ago(j.at)}</span></div>`+
+         `<div class="row"><span class="k">records</span><span class="v">${j.n??'—'}</span></div>`; }
+function pick(jobs, pats){ for(const p of pats){
+  const j=jobs.find(x=>x.job&&x.job.toLowerCase().includes(p)); if(j) return j; } return null; }
+
+async function refresh(){
+  let d;
+  try{ const r=await fetch('/api/deskfloor');
+    if(r.status===401){ document.getElementById('err').innerHTML=
+      'not logged in — open <a href="/dashboard">/dashboard</a> first, then come back.'; return; }
+    d=await r.json(); if(d.error) throw new Error(d.error);
+    document.getElementById('err').textContent='';
+  }catch(e){ document.getElementById('err').textContent='feed error: '+e.message; return; }
+
+  const jobs=d.jobs||[];
+  document.getElementById('seat-tape').innerHTML =
+    jobRow(pick(jobs,['news','intraday_screen','screen']));
+  document.getElementById('seat-quant').innerHTML =
+    jobRow(pick(jobs,['pattern','daily_scan','oscillator']));
+
+  let flow='';
+  for(const g of (d.gamma||[])){
+    const slip=g.regime&&g.regime.toLowerCase().includes('slip');
+    flow+=`<div class="row"><span class="k">${esc(g.ticker)}</span>`+
+      `<span class="${slip?'r':'g'}">${esc(g.regime||'?')} ${g.gex>=0?'+':''}${g.gex.toFixed(1)}bn</span></div>`+
+      `<div class="row"><span class="k">&nbsp;CW/flip/PW</span>`+
+      `<span class="v">${g.cw||'—'} / ${g.flip?g.flip.toFixed(1):'—'} / ${g.pw||'—'}</span></div>`;
+  }
+  flow+=`<div class="row"><span class="k">drift today</span>`+
+        `<span class="a">${d.drift.sent} sent · ${d.drift.suppressed} held</span></div>`;
+  document.getElementById('seat-flow').innerHTML=flow||'<span class="k">no board</span>';
+
+  let mac='';
+  for(const m of (d.macro||[]))
+    mac+=`<div class="row"><span class="k">${esc(m.date)}</span><span class="a">${esc(m.event)}</span></div>`;
+  document.getElementById('seat-macro').innerHTML=mac||'<span class="k">no high-impact events ahead</span>';
+
+  let pm='';
+  for(const s of (d.specs_today||[]))
+    pm+=`<div class="row"><span class="k">${esc(s.book)} ${esc(s.status)}</span><span class="v">${s.n}</span></div>`;
+  document.getElementById('seat-pm').innerHTML =
+    pm||'<div class="row"><span class="k">no specs today</span><span class="v">(weekend or pre-write)</span></div>';
+
+  let bk='';
+  for(const b of (d.books||[])){
+    const losses=b.resolved-b.wins;
+    bk+=`<div class="row"><span class="k">${esc(b.book)}</span>`+
+      `<span class="${b.realized_r>=0?'g':'r'}">${b.realized_r>=0?'+':''}${b.realized_r}R</span></div>`+
+      `<div class="row"><span class="k">&nbsp;${b.wins}-${losses} · ${b.open} open</span>`+
+      `<span class="v">${b.fills_today} fill${b.fills_today===1?'':'s'} today</span></div>`;
+  }
+  document.getElementById('seat-books').innerHTML=bk||'<span class="k">no trades yet</span>';
+
+  let sq='';
+  for(const t of (d.squawk||[])){
+    if(t.exited_at){
+      sq+=`<div class="sq"><span class="k">${ago(t.exited_at)}</span> EXIT `+
+        `<span class="a">${esc(t.ticker)}</span> <span class="k">${esc(t.book)}</span> `+
+        `@ ${t.exit_px} <span class="k">${esc(t.exit_reason||'')}</span> `+
+        `<span class="${(t.r??0)>=0?'g':'r'}">${t.r==null?'R n/a':(t.r>=0?'+':'')+t.r.toFixed(2)+'R'}</span></div>`;
+    } else {
+      sq+=`<div class="sq"><span class="k">${ago(t.entered_at)}</span> `+
+        `<span class="blink g">FILL</span> <span class="a">${esc(t.ticker)}</span> `+
+        `<span class="k">${esc(t.book)}</span> @ ${t.entry_px} <span class="k">working</span></div>`;
+    }
+  }
+  document.getElementById('squawk').innerHTML=sq||'<span class="k">quiet tape — a quiet day recorded is evidence</span>';
+}
+function tick(){ document.getElementById('clock').textContent =
+  new Date().toLocaleTimeString('en-US',{timeZone:'America/New_York',hour12:false})+' ET'; }
+setInterval(tick,1000); tick();
+refresh(); setInterval(refresh,60000);
+</script>
+</body></html>
