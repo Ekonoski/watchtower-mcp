@@ -1860,6 +1860,125 @@ def register_routes(mcp) -> None:
         except OSError as e:
             return HTMLResponse(f"<h1>Dashboard asset missing</h1><p>{e}</p>", status_code=500)
 
+    @mcp.custom_route("/dashboard/desk", methods=["GET"])
+    async def desk_floor_page(request: Request):
+        # The Desk Floor (2026-08-23, Eric: "aesthetics would be a nice
+        # thing to have"): a trading-floor view of the system's REAL
+        # jobs. Every number on it comes from the ledger and the
+        # ingestion log — cosmetics over record, never over vibes.
+        path = os.path.join(_STATIC_DIR, "desk.html")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return HTMLResponse(f.read(),
+                                    headers={"Cache-Control": "no-cache"})
+        except OSError as e:
+            return HTMLResponse(f"<h1>Desk asset missing</h1><p>{e}</p>",
+                                status_code=500)
+
+    @mcp.custom_route("/api/deskfloor", methods=["GET"])
+    async def deskfloor(request: Request):
+        if not _is_authed(request):
+            return JSONResponse({"error": "auth"}, status_code=401)
+
+        def _load():
+            from screen.reversal_screen import _conn
+            conn = _conn()
+            try:
+                out = {}
+                with conn.cursor() as c:
+                    # Seats: freshest run per job family, from the log.
+                    c.execute("""
+                        SELECT DISTINCT ON (job_name) job_name, status,
+                               completed_at, records_processed
+                        FROM ingestion_log
+                        WHERE started_at > now() - interval '3 days'
+                        ORDER BY job_name, started_at DESC""")
+                    out["jobs"] = [
+                        {"job": r[0], "status": r[1],
+                         "at": r[2].isoformat() if r[2] else None,
+                         "n": r[3]} for r in c.fetchall()]
+                    # Books: the ledger's own record.
+                    c.execute("""
+                        SELECT s.book,
+                               count(*) FILTER (WHERE t.exited_at IS NULL) AS open,
+                               count(*) FILTER (WHERE t.exited_at IS NOT NULL) AS resolved,
+                               count(*) FILTER (WHERE t.r_multiple > 0) AS wins,
+                               round(coalesce(sum(t.r_multiple)
+                                     FILTER (WHERE t.exited_at IS NOT NULL), 0), 2) AS realized_r,
+                               count(*) FILTER (WHERE t.entered_at::date = CURRENT_DATE) AS fills_today
+                        FROM paper_trades t JOIN paper_specs s ON s.id = t.spec_id
+                        GROUP BY s.book ORDER BY s.book""")
+                    out["books"] = [
+                        {"book": r[0], "open": r[1], "resolved": r[2],
+                         "wins": r[3], "realized_r": float(r[4]),
+                         "fills_today": r[5]} for r in c.fetchall()]
+                    # Specs today (armed/skips per book) — zero is data.
+                    c.execute("""
+                        SELECT book, status, count(*) FROM paper_specs
+                        WHERE trade_date = CURRENT_DATE
+                        GROUP BY book, status ORDER BY book, status""")
+                    out["specs_today"] = [
+                        {"book": r[0], "status": r[1], "n": r[2]}
+                        for r in c.fetchall()]
+                    # FLOW seat: latest board per index venue.
+                    c.execute("""
+                        SELECT DISTINCT ON (ticker) ticker, spot, call_wall,
+                               put_wall, gamma_flip, net_gex, regime
+                        FROM gex_levels WHERE ticker IN ('SPY','QQQ','IWM')
+                        ORDER BY ticker, computed_at DESC""")
+                    out["gamma"] = [
+                        {"ticker": r[0], "spot": float(r[1] or 0),
+                         "cw": float(r[2] or 0), "pw": float(r[3] or 0),
+                         "flip": float(r[4] or 0), "gex": float(r[5] or 0),
+                         "regime": r[6]} for r in c.fetchall()]
+                    # Drift chatter today (sent vs suppressed).
+                    c.execute("""
+                        SELECT count(*) FILTER (WHERE alerted),
+                               count(*) FILTER (WHERE NOT alerted)
+                        FROM gamma_drift_alerts
+                        WHERE trade_date = CURRENT_DATE""")
+                    r = c.fetchone()
+                    out["drift"] = {"sent": r[0] or 0, "suppressed": r[1] or 0}
+                    # MACRO seat: next high-impact US events.
+                    c.execute("""
+                        SELECT event, event_date FROM economic_calendar
+                        WHERE country='US' AND impact='High'
+                          AND event_date >= CURRENT_DATE
+                        ORDER BY event_date LIMIT 3""")
+                    out["macro"] = [
+                        {"event": r[0], "date": r[1].isoformat()}
+                        for r in c.fetchall()]
+                    # Squawk: latest fills/exits from the ledger.
+                    c.execute("""
+                        SELECT s.book, s.ticker,
+                               t.entered_at, t.entry_px,
+                               t.exited_at, t.exit_px, t.exit_reason,
+                               t.r_multiple
+                        FROM paper_trades t
+                        JOIN paper_specs s ON s.id = t.spec_id
+                        ORDER BY greatest(t.entered_at,
+                                 coalesce(t.exited_at, t.entered_at)) DESC
+                        LIMIT 12""")
+                    out["squawk"] = [
+                        {"book": r[0], "ticker": r[1],
+                         "entered_at": r[2].isoformat() if r[2] else None,
+                         "entry_px": float(r[3]) if r[3] is not None else None,
+                         "exited_at": r[4].isoformat() if r[4] else None,
+                         "exit_px": float(r[5]) if r[5] is not None else None,
+                         "exit_reason": r[6],
+                         "r": float(r[7]) if r[7] is not None else None}
+                        for r in c.fetchall()]
+                return out
+            finally:
+                conn.close()
+
+        try:
+            data = await asyncio.to_thread(_load)
+            return JSONResponse(data)
+        except Exception as e:
+            log.warning(f"[dashboard] deskfloor failed: {e}")
+            return JSONResponse({"error": str(e)[:300]}, status_code=500)
+
     @mcp.custom_route("/api/login", methods=["POST"])
     async def login(request: Request):
         ip = _client_ip(request)
