@@ -1628,8 +1628,33 @@ def start_scheduler():
         write_morning_specs()
 
     def _paper_loop():
-        from analysis.paper_trader import run_trigger_loop
-        run_trigger_loop()
+        # Errors land in ingestion_log (2026-08-24: the trigger loop
+        # died silently at the 9:35 open — no RTH bars, no fills, stops
+        # unwatched — and only stdout knew. The day-bias lesson applied
+        # to the desk's most important job.)
+        try:
+            from analysis.paper_trader import run_trigger_loop
+            run_trigger_loop()
+        except Exception:
+            import traceback
+            log.exception("[paper] trigger loop failed")
+            try:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """INSERT INTO ingestion_log
+                               (job_name, status, started_at, completed_at,
+                                records_processed, errors_count, error_summary)
+                               VALUES ('paper_trigger_loop','error',now(),now(),
+                                       0,1,%s)""",
+                            (traceback.format_exc()[-900:],))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
 
     scheduler.add_job(
         _paper_specs,
