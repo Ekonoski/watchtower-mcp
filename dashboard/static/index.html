@@ -1465,8 +1465,12 @@ function renderPatterns() {
     const stStyle = r.status === "retest" ? ` style="color:var(--yellow);font-weight:600"` : "";
     const er = (r.er_days != null && r.er_days <= 7)
       ? ` <span style="color:var(--yellow);font-size:11px;font-weight:600" title="earnings ${r.er_date || ""} — inside a week">⚠${r.er_days === 0 ? "" : r.er_days + "d"}</span>` : "";
+    // A bullish row carries its live bearish siblings (CIFR/MNDY
+    // doctrine — the CMS case): warning only, never a gate.
+    const bw = r.bear_live
+      ? ` <span style="color:var(--red);font-size:11px;font-weight:600" title="bearish structure live on this ticker: ${escAttr(r.bear_live)}">⚠bear</span>` : "";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
-      <td class="left"><b>${esc(r.ticker)}</b>${er}</td>
+      <td class="left"><b>${esc(r.ticker)}</b>${er}${bw}</td>
       <td class="left"><span class="${bull ? "pos" : "neg"}">${bull ? "▲" : "▼"}</span> ${esc(name)}</td>
       <td class="left">${esc((r.sector || "").slice(0, 16))}</td>
       <td class="num">${esc(tfLabel[r.timeframe] || r.timeframe)}</td>
