@@ -1792,12 +1792,40 @@ def start_scheduler():
     # spec/day, measurement only. 5-min pass arms/fills/cancels on
     # recorded bars; 16:42 settle exits at the true close.
     def _daybias_loop():
-        from analysis.day_bias import run_daybias_loop
-        run_daybias_loop()
+        # Errors land in ingestion_log so they are diagnosable from the
+        # record (2026-08-24: the first live morning produced no spec
+        # and no readable error — a failure that only Railway's stdout
+        # knew about is a hole in the record).
+        try:
+            from analysis.day_bias import run_daybias_loop
+            run_daybias_loop()
+        except Exception:
+            import traceback
+            log.exception("[day-bias] loop failed")
+            try:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """INSERT INTO ingestion_log
+                               (job_name, status, started_at, completed_at,
+                                records_processed, errors_count, error_summary)
+                               VALUES ('day_bias_loop','error',now(),now(),
+                                       0,1,%s)""",
+                            (traceback.format_exc()[-900:],))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
 
     def _daybias_settle():
-        from analysis.day_bias import run_daybias_settle
-        run_daybias_settle()
+        try:
+            from analysis.day_bias import run_daybias_settle
+            run_daybias_settle()
+        except Exception:
+            log.exception("[day-bias] settle failed")
 
     scheduler.add_job(
         _daybias_loop,
