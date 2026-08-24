@@ -1056,7 +1056,10 @@ def run_trigger_loop():
             bars = _rth(bars)
             if not bars:
                 continue
-            ts, op_, close, hi, lo = bars[-1]
+            # 2026-08-24: the SIXTH element (volume) landed Friday night;
+            # this was the one unpack site the star-tolerance sweep
+            # missed, and it took the whole loop down at Monday's open.
+            ts, op_, close, hi, lo, *_v = bars[-1]
             sign = 1 if direction == "long" else -1
             if tid is None:                          # not entered yet
                 # 14:30 no-new is a day-trade clock; a swing resting limit
