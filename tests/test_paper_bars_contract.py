@@ -70,3 +70,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_no_fixed_width_bar_unpacks_survive_in_paper_trader():
+    """2026-08-24: `ts, op_, close, hi, lo = bars[-1]` — one five-way
+    unpack of the six-element bar tuple survived Friday's star-tolerance
+    sweep and took the trigger loop down at Monday's open (no RTH bars,
+    no fills, stops unwatched). Every destructuring of a bar tuple must
+    be star-tolerant so the NEXT added element degrades gracefully."""
+    import re
+    import inspect
+    from analysis import paper_trader
+    src = inspect.getsource(paper_trader)
+    fixed = [ln.strip() for ln in src.splitlines()
+             if re.search(r"=\s*bars\[-?\d+\]\s*$", ln)
+             and "*" not in ln.split("=")[0]
+             and re.search(r",.*,", ln.split("=")[0])]
+    assert not fixed, f"fixed-width bar unpack(s): {fixed}"
