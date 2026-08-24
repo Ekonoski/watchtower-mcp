@@ -1440,7 +1440,14 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
                        (SELECT min(ec.report_date) - CURRENT_DATE
                           FROM earnings_calendar ec
                          WHERE ec.ticker = p.ticker
-                           AND ec.report_date >= CURRENT_DATE) AS er_days
+                           AND ec.report_date >= CURRENT_DATE) AS er_days,
+                       (SELECT string_agg(b.pattern || ' ' || b.timeframe
+                                          || ' (' || b.status || ')', ' + ')
+                          FROM pattern_scan b
+                         WHERE b.ticker = p.ticker
+                           AND b.direction = 'bearish'
+                           AND b.status IN ('forming','retest','breakout')
+                       ) AS bear_live
                 FROM pattern_scan p
                 LEFT JOIN screener_snapshot s ON s.ticker = p.ticker
                 LEFT JOIN oscillator_scan w
@@ -1504,6 +1511,11 @@ def _pattern_rows(tf: str = "all", status: str = "all", direction: str = "all",
             "weekly_dir": r[18],
             "er_date": r[19].isoformat() if r[19] is not None else None,
             "er_days": int(r[20]) if r[20] is not None else None,
+            # CIFR/MNDY doctrine, extended to this surface (2026-08-24,
+            # the CMS case): a bullish row must carry its live bearish
+            # siblings — a pretty weekly setup beside an unseen daily
+            # breakdown reads as a buy. Warning only, never a gate.
+            "bear_live": r[21] if r[3] == "bullish" else None,
         }
         if estimate_resolution is not None:
             row["est"] = estimate_resolution(r[2], r[1], r[12], timing)
