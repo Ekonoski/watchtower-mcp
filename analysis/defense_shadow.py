@@ -141,17 +141,19 @@ def evaluate_defense_shadows() -> dict:
         for tid, tk, trig, stop, entered_at, tdate in todo:
             trig, stop = float(trig), float(stop)
             bars = _bars_for(conn, tk, tdate)
-            # The touch bar is the one whose window contains the fill
-            # time (a resting limit fills the moment the touch prints).
+            # The touch bar is the FIRST bar whose low reached the
+            # trigger — a resting limit fills the moment the first
+            # touch prints, whatever the trade row's timestamp says
+            # (2026-08-24: outage-recovery fills carried hours-late
+            # timestamps; the fill-time window pointed at the wrong
+            # bar). Fall back to the fill-time window only if no bar
+            # shows the touch (a recorded-tape hole).
             import datetime as _dt
-            touch_idx = None
-            for i, b in enumerate(bars):
-                if b["ts"] <= entered_at < b["ts"] + _dt.timedelta(minutes=15):
-                    touch_idx = i
-                    break
-            if touch_idx is None:   # fill before first recorded RTH bar
+            touch_idx = next((i for i, b in enumerate(bars)
+                              if b["low"] <= trig), None)
+            if touch_idx is None:
                 for i, b in enumerate(bars):
-                    if b["low"] <= trig:
+                    if b["ts"] <= entered_at < b["ts"] + _dt.timedelta(minutes=15):
                         touch_idx = i
                         break
             if touch_idx is None:
