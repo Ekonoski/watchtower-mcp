@@ -1863,6 +1863,50 @@ def start_scheduler():
         id="daybias_settle", replace_existing=True,
     )
 
+    # 📐 day-bias verdict ping (2026-08-25, Eric: "ok build the ping
+    # tonight after close"): one #desk message per day stating
+    # ARMED / STAND-ASIDE / unavailable, riding one minute behind the
+    # book's own ticks so the 9:51 send reports the 9:50 decision; the
+    # same pass announces an early-touch cancel the moment the record
+    # shows it (2026-08-25's first cancelled_early happened silently).
+    def _daybias_ping():
+        try:
+            from alerts.day_bias_ping import run_daybias_ping
+            run_daybias_ping()
+        except Exception:
+            import traceback
+            log.exception("[day-bias-ping] failed")
+            try:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """INSERT INTO ingestion_log
+                               (job_name, status, started_at, completed_at,
+                                records_processed, errors_count, error_summary)
+                               VALUES ('day_bias_ping','error',now(),now(),
+                                       0,1,%s)""",
+                            (traceback.format_exc()[-900:],))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+    scheduler.add_job(
+        _daybias_ping,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="51,56",
+                    timezone=et),
+        id="daybias_ping_open", replace_existing=True,
+    )
+    scheduler.add_job(
+        _daybias_ping,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="1-56/5",
+                    timezone=et),
+        id="daybias_ping_market", replace_existing=True,
+    )
+
     # Intraday structure watcher (2026-08-24): follows the nightly
     # screen's freshest breakout/retest names on 15m bars; pings a
     # DEFENDED retest at major structure. Screen extension — arms

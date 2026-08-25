@@ -693,6 +693,15 @@ Rendering doctrine, same spirit as the rest of this file:
   replication. If it grades, it becomes a SECOND declared entry with
   its own arming rule; if not, the cancel stands vindicated. Until
   graded, cancelled_early days stay untraded — no re-arm by feel.
+  The 📐 verdict ping (2026-08-25, built the evening of the first
+  cancelled_early): `alerts/day_bias_ping.py` posts one #desk message
+  per day at 9:51 — ARMED (with the full playbook: level, 10:30-only
+  window, stop, prior with n) / STAND-ASIDE (zero is data) /
+  unavailable (a hole is a hole) — and announces an early-touch
+  CANCEL the tick the record shows it, because the first one happened
+  silently and Eric had to ask. Read-only by signature, at-most-once
+  per (kind, date) via discord_notify_log; tests/test_day_bias_ping.py
+  pins the formats and the module's inability to write the books.
 
 - **FMP news cuts are a budget, not a policy** (2026-08-23, after the
   90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to
