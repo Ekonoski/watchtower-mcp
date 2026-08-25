@@ -681,6 +681,18 @@ Rendering doctrine, same spirit as the rest of this file:
   ledger-grades-the-signal rule. tests/test_day_bias.py pins the
   decision core (early-touch cancel, late fill at PDH, wick-excused
   disaster stop, stand-aside) and book isolation by signature.
+  First cancelled_early recorded 2026-08-25: the 10:00–10:15 bar
+  printed 765.12 through PDH 765.22 — the level failed its morning
+  proof and the book stood down, per definition. QUEUED the same day
+  (Eric, on asking whether a reclaim re-arms — it does not, the day
+  is done): grade the **early-touch-reclaim variant** — on days
+  cancelled for a pre-10:30 PDH touch, does a post-10:30 15m CLOSE
+  back above PDH (a true reclaim, wick rule) grade positively to the
+  close? The stored index_intraday_bars answer it; the adoption bar
+  is the same one the long side cleared — era-stability AND QQQ
+  replication. If it grades, it becomes a SECOND declared entry with
+  its own arming rule; if not, the cancel stands vindicated. Until
+  graded, cancelled_early days stay untraded — no re-arm by feel.
 
 - **FMP news cuts are a budget, not a policy** (2026-08-23, after the
   90%→96% rolling-30-day usage warnings): NEWS_FMP_LIMIT defaults to
