@@ -76,7 +76,7 @@ def format_prox(ticker: str, ts_et: str, spot: float, hit: dict,
     gex_txt = f"net {gex:+.2f}bn" if gex is not None else "net GEX n/a"
     decor = (" · ⚠ decoration magnitude — trade the chart, not the wall"
              if gex is not None and abs(gex) < DECOR_BN else "")
-    return (f"📍 **{ticker}** at {hit['label']} {lv:g} — spot {spot:g} "
+    return (f"📍 **{ticker}** AT LEVEL — {hit['label']} {lv:g} · spot {spot:g} "
             f"({hit['dist_pct']:+.2f}% {side}) · {gex_txt} · "
             f"{regime or '?'}{inv}{decor}\n"
             f"({ts_et} ET board · watch prompt, not a signal · "

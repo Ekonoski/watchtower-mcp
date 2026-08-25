@@ -104,7 +104,12 @@ def format_alert(ticker: str, snap_ts_et: str, changes: list,
             parts.append(f"REGIME {c['old']} → {c['new']}")
         else:
             parts.append(f"{label[c['field']]} {_px(c['old'])} → {_px(c['new'])}")
-    head = f"⚠ **{ticker}** re-marked {snap_ts_et} ET — " + " · ".join(parts)
+    # 🧲 = this channel's drift identity (Eric, 2026-08-24: each alert
+    # kind wears its own glyph — 🧲 drift · 📍 at-level · 🏗 structure ·
+    # 🟢 fill · 🟩/🔴 exit). ⚠ stays a warning marker inside messages,
+    # never an identity.
+    head = (f"🧲 **{ticker}** GAMMA DRIFT {snap_ts_et} ET — "
+            + " · ".join(parts))
     slots = (f"Slots: CW {_px(snap['call_wall'])} / PW {_px(snap['put_wall'])}"
              f" / GF {_px(snap['gamma_flip'])}")
     tail = (f"spot {_px(snap['spot'])} · net GEX {float(snap['net_gex']):+.2f}bn"
