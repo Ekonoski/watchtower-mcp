@@ -1863,6 +1863,42 @@ def start_scheduler():
         id="daybias_settle", replace_existing=True,
     )
 
+    # Intraday structure watcher (2026-08-24): follows the nightly
+    # screen's freshest breakout/retest names on 15m bars; pings a
+    # DEFENDED retest at major structure. Screen extension — arms
+    # nothing; verdicts persist to structure_watch.
+    def _structure_watch():
+        try:
+            from alerts.structure_watch import run_structure_watch
+            run_structure_watch()
+        except Exception:
+            import traceback
+            log.exception("[structure-watch] failed")
+            try:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """INSERT INTO ingestion_log
+                               (job_name, status, started_at, completed_at,
+                                records_processed, errors_count, error_summary)
+                               VALUES ('structure_watch','error',now(),now(),
+                                       0,1,%s)""",
+                            (traceback.format_exc()[-900:],))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+    scheduler.add_job(
+        _structure_watch,
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="8,23,38,53",
+                    timezone=et),
+        id="structure_watch_market", replace_existing=True,
+    )
+
     # Structure screen — 11:05 PM ET, after the nightly price settle,
     # so the shelves read from settled closes.
     def _structure_screen_job():
