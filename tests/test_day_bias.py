@@ -85,6 +85,14 @@ def test_book_isolation_by_signature():
     assert "book='swing'" not in src and "book='gamma" not in src
     # Every spec/trade statement is scoped to this book's rows.
     assert "WHERE book=%s" in src or "book=%s" in src
+    # Isolation must be SYMMETRIC (2026-08-25, trade #70): the main
+    # trigger loop grabbed the day-bias spec and filled it by the
+    # gamma book's close_through rules — before 10:30, without a
+    # touch. The day-bias book is managed ONLY by its own loop.
+    from analysis import paper_trader
+    loop_src = inspect.getsource(paper_trader.run_trigger_loop)
+    assert "day_bias" in loop_src, \
+        "run_trigger_loop must exclude the day_bias book"
 
 
 if __name__ == "__main__":

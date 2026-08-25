@@ -1020,9 +1020,10 @@ def run_trigger_loop():
                                 s.created_at, t.id, t.entry_px, t.entered_at, t.exited_at,
                                 t.confirm_status
                          FROM paper_specs s LEFT JOIN paper_trades t ON t.spec_id=s.id
-                         WHERE (s.trade_date=%s AND s.status IN ('armed','triggered'))
+                         WHERE s.book <> 'day_bias'
+                           AND ((s.trade_date=%s AND s.status IN ('armed','triggered'))
                             OR (s.status='triggered' AND t.id IS NOT NULL
-                                AND t.exited_at IS NULL)""",
+                                AND t.exited_at IS NULL))""",
                       (today,))
             rows = c.fetchall()
         if not rows:
