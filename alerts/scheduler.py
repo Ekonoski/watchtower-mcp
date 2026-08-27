@@ -2113,6 +2113,16 @@ def start_scheduler():
     # the next 6:45 AM slot. Background thread — never blocks startup.
     import threading
 
+    def _seed_fill_audit_if_missing():
+        """One-shot 1-minute-tape forensics on the 2026-08-27 SPY gamma
+        fills (trades 86/87) — verdicts to fill_audit, marker-retired.
+        Read-only over the books by the module's own signature."""
+        try:
+            from analysis.fill_audit import run
+            run()
+        except Exception as e:
+            log.warning(f"[scheduler] fill audit seed skipped: {e}")
+
     def _seed_all():
         try:
             from analysis.options_picker import entitlement_probe
@@ -2136,6 +2146,7 @@ def start_scheduler():
         _seed_sector_study_if_missing()
         _seed_daybias_bars_if_missing()
         _seed_structure_screen_if_empty()
+        _seed_fill_audit_if_missing()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
