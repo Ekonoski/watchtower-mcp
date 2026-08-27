@@ -614,6 +614,36 @@ Rendering doctrine, same spirit as the rest of this file:
   minute events), the evidence schema, and the module's read-only
   signature.
 
+- **The options-expression shadow: the wrapper is measured before it is
+  traded** (2026-08-27, Eric: "we also need to be swing trading
+  options... let's definitely build this"). The names are NOT chosen
+  for options — the swing book's graded classes choose the names;
+  `analysis/options_expression.py` only asks which signals options can
+  EXPRESS and measures the answer: every swing fill gets the ticket
+  the desk would buy (ITM call, delta≈0.70 when greeks exist else the
+  ~0.85×spot strike, tenor by class — weekly 55-100 DTE, daily 28-50),
+  priced from the live chain at entry and re-priced at the live
+  trade's exit into `options_expression`. Refusals record WHY
+  (illiquid <100 OI / no_chain / no_mark — a silent filter is a
+  _social_block); marks are chain prints; spread cost is a DECLARED
+  v1 hole (snapshots carry no bid/ask here) stated wherever the
+  comparison renders; a missed same-day window is a 'hole', never a
+  reconstruction. Eric's 2026-08-10 gate stands: the live options
+  paper book opens only after the swing book's ~30 clean resolutions
+  — this shadow exists so it launches calibrated instead of guessing.
+  Same evening, the fundamentals question ("should we choose names on
+  fundamentals as well?") got the doctrine answer — measure, don't
+  argue: `paper_specs.fundamentals_state`
+  (analysis/fundamentals_tag.py — Piotroski, Altman Z, days-to-
+  earnings from tables the nightly FMP jobs already fill) stamps
+  every swing spec AFTER curation, arming-blind by signature. Stated
+  prior, honestly: the sector study showed price already embodies
+  most slow information at this horizon — if the tag earns promotion
+  it is most likely as a VETO/warning (Z<1.8 distress, earnings
+  inside the hold), not a selector. tests/test_options_expression.py
+  pins the picker, the named refusals, the tenor map, the write-only-
+  its-own-table signature, and the writer's blindness.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that

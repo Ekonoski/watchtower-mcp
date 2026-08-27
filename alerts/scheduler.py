@@ -2113,6 +2113,53 @@ def start_scheduler():
     # the next 6:45 AM slot. Background thread — never blocks startup.
     import threading
 
+    # Swing options-expression shadow (2026-08-27): every swing fill gets
+    # the option ticket the desk WOULD buy, priced at entry and at the
+    # live trade's exit — the wrapper graded against shares per the
+    # ledger-grades-the-signal rule. Measurement only; the live options
+    # paper book stays behind the swing book's ~30-resolution gate.
+    def _options_expression():
+        try:
+            from analysis.options_expression import run_options_expression
+            run_options_expression()
+        except Exception:
+            import traceback
+            log.exception("[opt-expr] failed")
+            try:
+                from screen.reversal_screen import _conn
+                conn = _conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """INSERT INTO ingestion_log
+                               (job_name, status, started_at, completed_at,
+                                records_processed, errors_count, error_summary)
+                               VALUES ('options_expression','error',now(),now(),
+                                       0,1,%s)""",
+                            (traceback.format_exc()[-900:],))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+    scheduler.add_job(
+        _options_expression,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="57", timezone=et),
+        id="options_expression_open", replace_existing=True,
+    )
+    scheduler.add_job(
+        _options_expression,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="12,42",
+                    timezone=et),
+        id="options_expression_market", replace_existing=True,
+    )
+    scheduler.add_job(
+        _options_expression,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="35", timezone=et),
+        id="options_expression_close", replace_existing=True,
+    )
+
     def _seed_fill_audit_if_missing():
         """One-shot 1-minute-tape forensics on the 2026-08-27 SPY gamma
         fills (trades 86/87) — verdicts to fill_audit, marker-retired.
