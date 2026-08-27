@@ -331,7 +331,32 @@ def curate_swing(rows, cap=SWING_MAX):
 
 
 def _touch(level, px):
+    # NOTE (2026-08-27): 0.1% is ±77¢ on SPY — a gamma "touch" can fire
+    # without the level itself printing (trade 87 shorted the 770 wall
+    # off a 769.57 close). Recorded in entry_bar; graded by the replay
+    # harness before any change.
     return abs(px - level) / level <= 0.001
+
+
+def _entry_bar_json(decided_on, live_bars, trig):
+    """The evidence a fill carries: the bar the price came from, the
+    first bar that satisfied the touch, and the tolerance flag when the
+    touch was _touch()-near rather than a literal range hit."""
+    import json as _json
+
+    def _b(b):
+        ts, o, c, h, lo, *_v = b
+        return {"ts": ts.isoformat(), "open": float(o), "close": float(c),
+                "high": float(h), "low": float(lo)}
+
+    touch = next((b for b in live_bars
+                  if (b[4] <= trig <= b[3]) or _touch(trig, b[2])), None)
+    near = bool(touch is not None
+                and not (touch[4] <= trig <= touch[3]))
+    return _json.dumps({"decided_on": _b(decided_on),
+                        "touch": _b(touch) if touch is not None else None,
+                        "near_touch_tolerance": near,
+                        "n_live_bars": len(live_bars)})
 
 
 def _qlvl(p: float) -> float:
@@ -1113,11 +1138,20 @@ def run_trigger_loop():
                             cpx, cts, cstat = shadow[0], shadow[1], "confirmed"
                     else:
                         cstat = "n/a"
+                    # The exact bar(s) this decision read, stamped on the
+                    # trade (2026-08-27: two fills could not be certified
+                    # from stored first-seen bars — vendor settling can
+                    # differ between fetches seconds apart, and _touch's
+                    # 0.1% tolerance means "touched" isn't always visible
+                    # in the final tape. The trade row now carries its own
+                    # evidence).
+                    ebar = _entry_bar_json(bars[-1], live_bars, trig)
                     with conn.cursor() as c:
                         c.execute("""INSERT INTO paper_trades (spec_id, entered_at, entry_px,
-                                     fill_kind, confirm_px, confirm_at, confirm_status)
-                                     VALUES (%s, now(), %s, %s, %s, %s, %s)""",
-                                  (sid, entry_fill, kind, cpx, cts, cstat))
+                                     fill_kind, confirm_px, confirm_at, confirm_status,
+                                     entry_bar)
+                                     VALUES (%s, now(), %s, %s, %s, %s, %s, %s::jsonb)""",
+                                  (sid, entry_fill, kind, cpx, cts, cstat, ebar))
                         c.execute("UPDATE paper_specs SET status='triggered' WHERE id=%s", (sid,))
                     conn.commit()
                     log.info("[paper] ENTER %s %s %s @ %.2f (%s, %s, shadow=%s)",

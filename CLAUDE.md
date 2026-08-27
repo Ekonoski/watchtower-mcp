@@ -589,6 +589,31 @@ Rendering doctrine, same spirit as the rest of this file:
   rows exist, then applies to the detector definition as a graded
   change — not mid-test by feel.
 
+- **A fill must carry its own evidence** (2026-08-27, the 770-fade
+  audit — Eric: "so the trade was actually accurate and the tape was
+  correct?"). Two of the morning's SPY gamma fills could not be
+  certified from stored bars: the wall-fade entered without the wall
+  ever printing (the hidden cause: `_touch()` carries a 0.1%
+  tolerance — ±77¢ on SPY — so a 769.57 close "touched" 770; code-
+  correct, but the rationale string said "after touch" and the record
+  couldn't show which kind), and a flip-hold's entry price differed
+  28¢ from the stored touch-bar close because two fetches seconds
+  apart returned different values for the same just-completed bar
+  (vendor settling) while `paper_spec_bars` keeps only the FIRST-seen
+  version. The fixes: every new fill stamps `paper_trades.entry_bar`
+  (decided-on bar, touch bar, and a `near_touch_tolerance` flag) so
+  "was this fill valid" is answerable from the trade row forever; a
+  one-shot 1-minute-tape forensic job (`analysis/fill_audit.py`,
+  marker `fill_audit_v1`, verdicts in `fill_audit`) adjudicated the
+  two questioned fills — research verification of the record, read-
+  only over the books by tested signature. The tolerance itself is
+  NOT retuned by feel: whether near-touch fades are a feature or a
+  leak is a replay-harness question, and any change grades before it
+  ships. tests/test_fill_audit.py pins the verdict logic (an entry-
+  minute print is INCONCLUSIVE — 1m aggregates cannot order sub-
+  minute events), the evidence schema, and the module's read-only
+  signature.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
