@@ -495,6 +495,55 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
 
 @mcp.tool()
+def watchtower_log_cipher(ticker: str, timeframe: str, label: str = "take",
+                          note: str = "") -> str:
+    """
+    Log a cipher exemplar — Eric's eye, captured as labeled data.
+
+    Call this the moment a chart is judged: `label='take'` for a chart
+    the eye would enter, `label='pass'` for a near-miss it refuses
+    (passes matter as much as takes — the mechanical definition lives
+    in the boundary between them). The system snapshots its own stored
+    oscillator state for (ticker, timeframe) — full component set,
+    bar-stamped — into the exemplar museum. A missing or stale state
+    records a HOLE with the reason; the label is kept either way.
+
+    Args:
+      ticker: the symbol on the chart.
+      timeframe: 1h, 4h, daily, or weekly (the scanned timeframes).
+      label: 'take' or 'pass'.
+      note: Eric's words, verbatim — "deep red MF curling", "turn is
+        spent". Short is fine; the components are captured anyway.
+
+    Target: ~30 takes and ~20 passes, then the classification pass
+    derives the entry definition from the set (the BW-3D rule: the eye
+    is not specified by adjectives).
+    """
+    try:
+        from analysis.cipher_exemplars import log_exemplar
+        return log_exemplar(ticker, timeframe, label, note)
+    except ValueError as e:
+        return f"Not logged: {e}"
+    except Exception as e:
+        return f"Exemplar logging failed: {e}"
+
+
+@mcp.tool()
+def watchtower_cipher_exemplars() -> str:
+    """
+    The cipher exemplar museum's census — counts by label (take/pass)
+    and capture state (captured/hole), plus the most recent entries.
+    Use it to check progress toward the ~30-take / ~20-pass gate that
+    unlocks the mechanical-definition pass.
+    """
+    try:
+        from analysis.cipher_exemplars import exemplar_summary
+        return exemplar_summary()
+    except Exception as e:
+        return f"Exemplar summary failed: {e}"
+
+
+@mcp.tool()
 def watchtower_fair_value(ticker: str, discount_rate: float = 10.0,
                           growth_rate: float = 0.0, years: int = 10) -> str:
     """

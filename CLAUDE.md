@@ -614,6 +614,29 @@ Rendering doctrine, same spirit as the rest of this file:
   minute events), the evidence schema, and the module's read-only
   signature.
 
+- **The cipher exemplar museum: the eye becomes data, one labeled
+  chart at a time** (2026-08-27, Eric on his premarket cipher entries:
+  "we just haven't been able to master those on a mechanical level
+  yet" → "build the MCP tool"). The standing BW-3D rule finally gets
+  its mechanism: `watchtower_log_cipher(ticker, timeframe, take|pass,
+  note)` — callable from ANY Claude session the moment a chart is
+  judged — snapshots the system's own stored oscillator state (full
+  component row from oscillator_scan, bar-stamped) into
+  `cipher_exemplars`. PASSES ARE FIRST-CLASS: the mechanical
+  definition lives in the boundary between takes and near-miss
+  refusals, so both record with the same machinery. A missing/stale
+  state is a NAMED hole (per-timeframe staleness: 1h ages in a day,
+  weekly gets 8) and the label is kept anyway — the eye's verdict is
+  data even when the snapshot missed. Gate: ~30 takes / ~20 passes,
+  then the classification pass derives the entry definition from the
+  set. The named archetypes (NFLX-3D, CHWY, UNH takes; AGO spent-turn,
+  LNG no-level, NI/MARA knife, COLM/GOOS recovered-flow passes) are
+  QUEUED for retro-seeding from recorded history — several were
+  intraday reads needing historical intraday recompute, a research
+  backfill. `watchtower_cipher_exemplars` prints the census.
+  tests/test_cipher_exemplars.py pins normalization, per-timeframe
+  staleness, pass-parity, and writes-own-table-only by signature.
+
 - **The options-expression shadow: the wrapper is measured before it is
   traded** (2026-08-27, Eric: "we also need to be swing trading
   options... let's definitely build this"). The names are NOT chosen
