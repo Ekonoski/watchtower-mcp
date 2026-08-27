@@ -438,6 +438,7 @@ def write_morning_specs():
             c.execute("ALTER TABLE paper_specs ADD COLUMN IF NOT EXISTS osc_state jsonb")
             # Sector-rotation tag column (2026-08-22): same doctrine.
             c.execute("ALTER TABLE paper_specs ADD COLUMN IF NOT EXISTS sector_state jsonb")
+            c.execute("ALTER TABLE paper_specs ADD COLUMN IF NOT EXISTS fundamentals_state jsonb")
         conn.commit()
         with conn.cursor() as c:
             # book-scoped so a restart after the open doesn't mistake the
@@ -464,7 +465,7 @@ def write_morning_specs():
             # The cipher was studied on structure breakouts, not gamma
             # mechanics — gamma specs carry no cipher or sector tag,
             # deliberately (index/mega-cap venues aren't sector trades).
-            specs = [s + (None, None) for s in gamma_specs]
+            specs = [s + (None, None, None) for s in gamma_specs]
 
             # Swing book: breakout-retest limits (blind by design — control group).
             # Each row carries its own scan date so the freshness gate can
@@ -559,6 +560,7 @@ def write_morning_specs():
                 sector_state_for = None
             tag_mix = {}
             sec_mix = {}
+            fund_mix = {}
             for tk, tf, pat, _dir, trig, tgt, inv, score in kept:
                 c.execute("""SELECT trade_date, COALESCE(open, close),
                                     COALESCE(high, close), COALESCE(low, close),
@@ -581,9 +583,20 @@ def write_morning_specs():
                     stag = {"sector": None, "reason": "rs_cache_unavailable"}
                 sec_mix[tk] = (f"{stag['sector']}#{stag['rank_1m']}"
                                if "rank_1m" in stag else "unavailable")
+                # Fundamentals tag (2026-08-27): same after-curation
+                # contract — measurement only, holes carry reasons.
+                try:
+                    from analysis.fundamentals_tag import (flag_line,
+                                                           fundamentals_state_for)
+                    ftag = fundamentals_state_for(conn, tk)
+                    fund_mix[tk] = flag_line(ftag)
+                except Exception as e:
+                    ftag = {"reason": f"tag_error: {str(e)[:300]}"}
+                    fund_mix[tk] = "unavailable"
                 specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
                               trig, inv, tgt, "armed", rationale,
-                              json.dumps(tag), json.dumps(stag)))
+                              json.dumps(tag), json.dumps(stag),
+                              json.dumps(ftag)))
             if tag_mix:
                 from collections import Counter as _Counter
                 mix = _Counter(tag_mix.values())
@@ -598,12 +611,18 @@ def write_morning_specs():
                 log.info("[paper] swing sector tags (measurement only, "
                          "never a gate): %s",
                          ", ".join(f"{tk}:{s}" for tk, s in sorted(sec_mix.items())))
+            if fund_mix:
+                log.info("[paper] swing fundamentals tags (measurement "
+                         "only, never a gate): %s",
+                         ", ".join(f"{tk}:{s}"
+                                   for tk, s in sorted(fund_mix.items())))
 
         with conn.cursor() as c:
             c.executemany("""INSERT INTO paper_specs
                 (trade_date, book, ticker, direction, setup, entry_trigger, stop,
-                 target, status, rationale, osc_state, sector_state)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", specs)
+                 target, status, rationale, osc_state, sector_state,
+                 fundamentals_state)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", specs)
         conn.commit()
         log.info("[paper] %d specs written for %s (binary_day=%s: %s)",
                  len(specs), today, binary_day, ", ".join(highs) or "none")
