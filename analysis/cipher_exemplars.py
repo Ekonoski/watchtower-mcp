@@ -33,10 +33,11 @@ log = logging.getLogger("watchtower.cipher_exemplars")
 
 TIMEFRAMES = {"1h": "1h", "4h": "4h", "1d": "daily", "d": "daily",
               "daily": "daily", "w": "weekly", "1w": "weekly",
-              "weekly": "weekly"}
+              "weekly": "weekly", "16d": "16d", "16": "16d"}
 LABELS = {"take", "pass"}
 # Staleness bars, same spirit as the screens: intraday states age fast.
-STALE_DAYS = {"1h": 1, "4h": 2, "daily": 4, "weekly": 8}
+# 16d bars complete every ~16 trading days; 25 calendar days of grace.
+STALE_DAYS = {"1h": 1, "4h": 2, "daily": 4, "weekly": 8, "16d": 25}
 
 OSC_COLS = ("bar_ts", "wt1", "wt2", "wt_diff", "mf_candle", "mf_volume",
             "rsi", "stoch_k", "stoch_d", "pctr", "pctr_ema", "macd",
@@ -80,6 +81,12 @@ def log_exemplar(ticker: str, timeframe: str, label: str,
     what was captured, or what hole was recorded and why."""
     from screen.reversal_screen import _conn
     tk, tf, lb = normalize(ticker, timeframe, label)
+    if tf == "16d":
+        # The GOAT timeframe (2026-08-29): no scanned row exists — the
+        # state computes on demand from the same fixed-anchor bars the
+        # green-dot study graded, so exemplar and study speak one
+        # dialect.
+        return _log_16d(tk, lb, note, source)
     conn = _conn()
     try:
         with conn.cursor() as c:
@@ -127,6 +134,49 @@ def log_exemplar(ticker: str, timeframe: str, label: str,
                 + (f" · \"{note}\"" if note else ""))
     finally:
         conn.close()
+
+
+def _log_16d(tk: str, lb: str, note: str, source: str) -> str:
+    """16d capture path: state from greendot_screen.state_16d (fixed-
+    anchor bars, live oscillator engine). A thin history is a NAMED
+    hole; the label is kept either way."""
+    import json as _json
+    from analysis.greendot_screen import state_16d
+    from screen.reversal_screen import _conn
+    state, bar_or_reason = state_16d(tk)
+    hole = None if state is not None else bar_or_reason
+    if hole:
+        note = (note + " | " if note else "") + f"HOLE: {hole}"
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("""SELECT close, trade_date FROM daily_prices
+                         WHERE ticker=%s AND close IS NOT NULL
+                         ORDER BY trade_date DESC LIMIT 1""", (tk,))
+            px = c.fetchone()
+        with conn.cursor() as c:
+            c.execute("""INSERT INTO cipher_exemplars
+                         (ticker, timeframe, label, note, source, state,
+                          osc, bar_ts, price, price_asof)
+                         VALUES (%s,'16d',%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
+                         RETURNING id""",
+                      (tk, lb, note or None, source,
+                       "hole" if hole else "captured",
+                       _json.dumps(state) if state else None,
+                       bar_or_reason if state else None,
+                       px[0] if px else None, px[1] if px else None))
+            eid = c.fetchone()[0]
+        conn.commit()
+    finally:
+        conn.close()
+    if hole:
+        return (f"#{eid} {tk} 16d {lb.upper()} logged — but the state is "
+                f"a HOLE ({hole}). Label kept.")
+    return (f"#{eid} {tk} 16d {lb.upper()} captured — bar {bar_or_reason}: "
+            f"MF {state.get('mf_candle')}, waves {state.get('wt1')}/"
+            f"{state.get('wt2')}, RSI {state.get('rsi')}, "
+            f"%R {state.get('pctr')}, MACDh {state.get('macd_hist')}"
+            + (f" · \"{note}\"" if note else ""))
 
 
 def exemplar_summary() -> str:
