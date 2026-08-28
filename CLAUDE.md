@@ -676,9 +676,16 @@ Rendering doctrine, same spirit as the rest of this file:
   (one-shot, marker _v1) grades the EXACT live rules —
   build_gamma_specs + gamma_replay.simulate_day, nothing reimplemented
   — on the seven mega-cap boards since 2026-07-15 (~33 board days;
-  research-fetched 15m bars). Verdict read from the table; a
-  `gamma_single` paper book (own book, earnings-week skips) ships only
-  if it survives, Tuesday debut at earliest (Monday is month-end).
+  research-fetched 15m bars). VERDICT (read the same evening):
+  REFUSED — 5 trades in 33 days, all wall_fades, 1-4 for −14.28R
+  (avg −2.86R; AMZN −8.83R on one fade). The failure mode is
+  structural, not sample-luck: the 0.15% close-basis stop is
+  index-calibrated — single-name momentum closes FAR beyond it, so
+  losses run to multiples of the risk unit — and flip-holds never
+  armed/triggered at all. NO gamma_single book. The mega-caps stay
+  eyes (drift/prox alerts), not hands; any future single-name gamma
+  book needs its own stop geometry graded first, the same bar QQQ
+  faces for day-bias.
   (2) Eric: "the QQQ walls drifted — that is important data" → live
   trades FREEZE stop and target at entry while the board re-prices;
   `analysis/target_shadow.py` replays every resolved gamma trade from
@@ -687,6 +694,14 @@ Rendering doctrine, same spirit as the rest of this file:
   hypothesis). Daily 16:47 pass + retro backfill; the better variant
   over ~20-30 shadow-resolved trades ships as the rule; until then
   frozen stands. tests/test_target_shadow.py pins the walk semantics.
+  RETRO VERDICT (first read, n=12 graded + 3 holes): FROZEN WINS and
+  it is not close — live frozen targets +2.24R vs walk_toward −3.54R
+  and walk_both −3.19R on the same trades. The physical reading: OPEN
+  INTEREST sits at fixed strikes — the intraday "wall walk" re-labels
+  max-gamma, but the morning wall's OI pool remains the actual magnet,
+  so the remembered level out-trades the re-priced one. Small n; the
+  16:47 pass keeps accumulating; but the prior flipped — frozen is
+  not just the default, it is currently the measured best.
   Flip-hold context for reading results (live n=7): 3 of 7 reached the
   wall same-day — ALL entered before 10:30; all 10:30+ entries ended
   eod_flat (avg +0.22R, profitable); entry time and wall distance are
