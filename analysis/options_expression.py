@@ -33,8 +33,13 @@ log = logging.getLogger("watchtower.options_expression")
 TARGET_DELTA = 0.70
 MIN_OI = 100
 STRIKE_LO_X, STRIKE_HI_X = 0.70, 1.02   # ITM call band around share entry
-WEEKLY_DTE = (55, 100)
-DAILY_DTE = (28, 50)
+# 2026-08-28 (the VRTX day-one catch): the original 55-100 weekly window
+# missed monthlies-only chains whose nearest suitable expiry sat at 49
+# DTE — VRTX, one of the most liquid biotech chains alive, graded
+# "no_chain". Windows widened so a monthly ladder always has ≥1 expiry
+# inside; the retry below covers the stragglers and says so.
+WEEKLY_DTE = (40, 115)
+DAILY_DTE = (24, 60)
 EXIT_STALE_DAYS = 2   # exit marks older than this are holes, not prices
 
 
@@ -107,6 +112,18 @@ def run_options_expression() -> dict:
                                 entry_px * STRIKE_LO_X,
                                 entry_px * STRIKE_HI_X)
             pick, verdict, note = pick_contract(rows, entry_px)
+            if verdict == "no_chain":
+                # One widened retry before recording the refusal — an
+                # empty window on a liquid name is usually the window's
+                # fault, not the chain's (the VRTX lesson).
+                rows = _fetch_chain(tk, "call",
+                                    today + dt.timedelta(days=max(14, lo_d - 21)),
+                                    today + dt.timedelta(days=hi_d + 45),
+                                    entry_px * STRIKE_LO_X,
+                                    entry_px * STRIKE_HI_X)
+                pick, verdict, note = pick_contract(rows, entry_px)
+                if verdict == "ticket":
+                    note = "widened_window"
             exp = dte = None
             if pick is not None and pick.get("exp"):
                 try:
