@@ -2175,6 +2175,17 @@ def start_scheduler():
         id="target_shadow_daily", replace_existing=True,
     )
 
+    def _seed_options_catchup():
+        """Boot catch-up for the options-expression shadow: a deploy
+        restart between cron slots can miss a same-day fill's ticket
+        window (2026-08-28: VRTX's re-ticket waited on a cron that had
+        already passed). Idempotent — processes only unticketed fills."""
+        try:
+            from analysis.options_expression import run_options_expression
+            run_options_expression()
+        except Exception as e:
+            log.warning(f"[scheduler] options catch-up skipped: {e}")
+
     def _seed_mega_replay_if_missing():
         """One-shot: the index gamma playbook graded on the mega-cap
         boards (2026-08-28) — same build_gamma_specs/simulate_day code
@@ -2242,6 +2253,7 @@ def start_scheduler():
         _seed_fill_audit_if_missing()
         _seed_mega_replay_if_missing()
         _seed_target_shadow()
+        _seed_options_catchup()
         _seed_greendot_study()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
