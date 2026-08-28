@@ -2160,6 +2160,52 @@ def start_scheduler():
         id="options_expression_close", replace_existing=True,
     )
 
+    # Walking-target shadow: daily 16:47 pass shadows the day's newly
+    # resolved gamma trades from recorded bars + boards (2026-08-28).
+    def _target_shadow_daily():
+        try:
+            from analysis.target_shadow import run_target_shadow
+            run_target_shadow()
+        except Exception:
+            log.exception("[target-shadow] daily pass failed")
+
+    scheduler.add_job(
+        _target_shadow_daily,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="47", timezone=et),
+        id="target_shadow_daily", replace_existing=True,
+    )
+
+    def _seed_mega_replay_if_missing():
+        """One-shot: the index gamma playbook graded on the mega-cap
+        boards (2026-08-28) — same build_gamma_specs/simulate_day code
+        path, research-fetched 15m bars, marker-retired."""
+        try:
+            from analysis.gamma_mega_replay import run
+            run()
+        except Exception as e:
+            log.warning(f"[scheduler] mega replay seed skipped: {e}")
+
+    def _seed_target_shadow():
+        """Retro + catch-up: frozen vs walking targets for every
+        resolved gamma trade, from recorded bars + recorded boards."""
+        try:
+            from analysis.target_shadow import run_target_shadow
+            run_target_shadow()
+        except Exception as e:
+            log.warning(f"[scheduler] target shadow seed skipped: {e}")
+
+    def _seed_greendot_study():
+        """The 16D below-zero green-dot study (VFF archetype) — chunked
+        fleet passes with resume; loops until this boot's budget is
+        spent or the fleet completes."""
+        try:
+            from analysis.greendot_study import run
+            for _ in range(12):          # ~4,800 tickers max per boot
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot seed skipped: {e}")
+
     def _seed_fill_audit_if_missing():
         """One-shot 1-minute-tape forensics on the 2026-08-27 SPY gamma
         fills (trades 86/87) — verdicts to fill_audit, marker-retired.
@@ -2194,6 +2240,9 @@ def start_scheduler():
         _seed_daybias_bars_if_missing()
         _seed_structure_screen_if_empty()
         _seed_fill_audit_if_missing()
+        _seed_mega_replay_if_missing()
+        _seed_target_shadow()
+        _seed_greendot_study()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 

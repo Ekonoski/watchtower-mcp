@@ -667,6 +667,55 @@ Rendering doctrine, same spirit as the rest of this file:
   pins the picker, the named refusals, the tenor map, the write-only-
   its-own-table signature, and the writer's blindness.
 
+- **Gamma expansion is replayed before it is armed, and targets are
+  shadowed before they walk** (2026-08-28). Two questions from the same
+  session, both answered by measurement: (1) Eric: "meaningful netGEX
+  on several other names — will the system trade those?" → the gamma
+  book's universe is VENUE=[SPY,QQQ,IWM] BY DESIGN; the mega-caps are
+  watched (drift/prox alerts) but never armed. `gamma_mega_replay`
+  (one-shot, marker _v1) grades the EXACT live rules —
+  build_gamma_specs + gamma_replay.simulate_day, nothing reimplemented
+  — on the seven mega-cap boards since 2026-07-15 (~33 board days;
+  research-fetched 15m bars). Verdict read from the table; a
+  `gamma_single` paper book (own book, earnings-week skips) ships only
+  if it survives, Tuesday debut at earliest (Monday is month-end).
+  (2) Eric: "the QQQ walls drifted — that is important data" → live
+  trades FREEZE stop and target at entry while the board re-prices;
+  `analysis/target_shadow.py` replays every resolved gamma trade from
+  RECORDED bars + RECORDED 15-min boards under walk_both and
+  walk_toward variants (stops never walk — that one is not a
+  hypothesis). Daily 16:47 pass + retro backfill; the better variant
+  over ~20-30 shadow-resolved trades ships as the rule; until then
+  frozen stands. tests/test_target_shadow.py pins the walk semantics.
+  Flip-hold context for reading results (live n=7): 3 of 7 reached the
+  wall same-day — ALL entered before 10:30; all 10:30+ entries ended
+  eod_flat (avg +0.22R, profitable); entry time and wall distance are
+  the real variables, queued for the geometry gate once replayed.
+
+- **The 16D below-zero green-dot study — Eric's GOAT claim,
+  pre-registered** (2026-08-28, off the VFF chart: "every green dot
+  indicates the bottom... within 3-6 months", refined live to dots
+  BELOW THE ZERO LINE on stocks in MAJOR DRAWDOWN; VFF-16D is the
+  named archetype and was onboarded — ticker + daily history — so the
+  archetype cannot be a hole). Spec frozen before any number:
+  event = 16D wavetrend cross-up with wt2 ≤ 0 at the cross; condition
+  = drawdown vs 2-yr high bucketed <30/30-50/50-70/70+; outcomes =
+  distance to fwd 6-mo low, lower-dot-followed within a year
+  (first-dot vs later-dot bottoms), 3/6/12-mo forward returns;
+  baselines at readout = random days on the SAME drawdown cohort +
+  era split + the survivorship caveat stamped (currently-listed
+  universe — the corpses' dots are unseen). Bars are FIXED-ANCHOR
+  16-trading-day blocks on SPY's own calendar index — end-anchored
+  resamples repaint (the BW-3D lesson) and
+  tests/test_greendot_study.py pins the no-repaint property, the
+  zero-line leg, and writes-own-tables-only. Chunked fleet seeder
+  (greendot_progress resume); dots in `greendot_dots`. Same session's
+  smaller catch: the options shadow's weekly DTE window (55-100)
+  called VRTX "no_chain" because a monthlies-only ladder's nearest
+  suitable expiry sat at 49 DTE — windows widened (40-115 / 24-60)
+  plus a widened retry that records `widened_window` when it saves
+  the ticket.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
