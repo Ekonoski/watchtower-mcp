@@ -2175,6 +2175,24 @@ def start_scheduler():
         id="target_shadow_daily", replace_existing=True,
     )
 
+    # 16D green-dot screen upkeep (2026-08-29): after the nightly price
+    # settle, append dots when a 16D block completed and fill forward
+    # outcomes whose history has arrived.
+    def _greendot_nightly():
+        try:
+            from analysis.greendot_screen import (maybe_append_new_dots,
+                                                  update_forward_outcomes)
+            maybe_append_new_dots()
+            update_forward_outcomes()
+        except Exception:
+            log.exception("[greendot-screen] nightly failed")
+
+    scheduler.add_job(
+        _greendot_nightly,
+        CronTrigger(day_of_week="mon-fri", hour="23", minute="20", timezone=et),
+        id="greendot_nightly", replace_existing=True,
+    )
+
     def _seed_options_catchup():
         """Boot catch-up for the options-expression shadow: a deploy
         restart between cron slots can miss a same-day fill's ticket

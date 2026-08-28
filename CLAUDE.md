@@ -731,6 +731,33 @@ Rendering doctrine, same spirit as the rest of this file:
   plus a widened retry that records `widened_window` when it saves
   the ticket.
 
+- **The green-dot verdict and its screen** (2026-08-29, the study's
+  readout): Eric's GOAT claim graded TRUE as an expectancy engine, not
+  a bottom-ticker — on 50%+/70%+ drawdown stocks, below-zero 16D dots
+  pay +5.8/+10.0% median 6-mo (56-57% positive) vs −10.6/−4.6%
+  (38-40%) for random days on the SAME cohort; the dot's median path
+  still dips another 17-25% first (only ~17-21% of deep dots print
+  within 5% of the forward low); the FIRST dot is the LAST dot ~70% of
+  the time; CROSS DEPTH is the throttle (≤−30 pays +7.7/57%; shallow
+  crosses NEGATIVE — the LNG level-is-the-signal lesson at 16D);
+  era-stable in direction, magnitude decayed post-2016 (+6.8 vs +24.5
+  med); averages (+94%/+190%) are lottery-skew + survivorship, read
+  medians. VFF's own three dots are the whole distribution: a rally-
+  not-bottom, a knife, and the launch dot — which carried the deepest
+  cross (−37). Shipped: `watchtower_greendot` (fresh deep-cross dots
+  on ≥30% drawdown, priors + survivorship stamped in the render, a
+  quiet screen is a reading), nightly 23:20 upkeep (dots append only
+  when a 16D block completes — block-boundary claim per id — and
+  forward outcomes fill as history arrives), and 16d as an exemplar-
+  museum timeframe (state computed on demand from the SAME fixed-
+  anchor bars, so exemplar and study speak one dialect). Doctrine for
+  reading the screen: the dot forecasts the bottom's ERA — expect
+  adverse excursion, size in PRE-PLANNED tranches with a fixed total,
+  never open-ended averaging ("DCA until it turns" unbounded is
+  martingale into the ~43% that keep dying); the tranche-schedule
+  question (lump vs laddered adds) is QUEUED as a follow-up grade off
+  the stored dots' forward paths.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that

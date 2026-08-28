@@ -495,6 +495,25 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
 
 @mcp.tool()
+def watchtower_greendot() -> str:
+    """
+    The 16D green-dot screen — fresh below-zero wavetrend cross-ups
+    (deep crosses ≤ −30) on stocks in ≥30% drawdown, from the fixed-
+    anchor 16-day bars the study graded. Renders each dot with its
+    cross depth, drawdown, and price-since-dot, plus the study's priors
+    (cohort-beating 6-mo medians; expect ~20% adverse excursion — the
+    dot forecasts the bottom's ERA, not its tick) and the survivorship
+    caveat. A quiet screen is a reading, not an error.
+    """
+    try:
+        from analysis.greendot_screen import format_screen, screen_rows
+        rows, n = screen_rows()
+        return format_screen(rows, n)
+    except Exception as e:
+        return f"Green-dot screen failed: {e}"
+
+
+@mcp.tool()
 def watchtower_log_cipher(ticker: str, timeframe: str, label: str = "take",
                           note: str = "") -> str:
     """
@@ -510,7 +529,8 @@ def watchtower_log_cipher(ticker: str, timeframe: str, label: str = "take",
 
     Args:
       ticker: the symbol on the chart.
-      timeframe: 1h, 4h, daily, or weekly (the scanned timeframes).
+      timeframe: 1h, 4h, daily, weekly, or 16d (16d computes on demand
+        from the green-dot study's fixed-anchor bars).
       label: 'take' or 'pass'.
       note: Eric's words, verbatim — "deep red MF curling", "turn is
         spent". Short is fine; the components are captured anyway.

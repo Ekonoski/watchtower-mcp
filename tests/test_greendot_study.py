@@ -82,6 +82,37 @@ def test_writes_only_its_own_tables():
     assert src.count("ON CONFLICT (ticker, trade_date) DO NOTHING") == 1
 
 
+
+
+def test_last_complete_block_boundary():
+    from analysis.greendot_screen import last_complete_block
+    # A block is complete only once a day of the NEXT block exists.
+    assert last_complete_block(16) == -1     # block 0 fully present, unproven
+    assert last_complete_block(17) == 0      # day 17 proves block 0 closed
+    assert last_complete_block(32) == 0
+    assert last_complete_block(33) == 1
+    assert last_complete_block(48) == 1
+    assert last_complete_block(49) == 2
+
+
+def test_16d_is_a_loggable_exemplar_timeframe():
+    from analysis.cipher_exemplars import STALE_DAYS, normalize
+    assert normalize("vff", "16d", "take") == ("VFF", "16d", "take")
+    assert normalize("vff", "16", "pass")[1] == "16d"
+    assert STALE_DAYS["16d"] >= 20   # blocks complete every ~16 trading days
+
+
+def test_screen_render_carries_priors_and_caveat():
+    from analysis.greendot_screen import format_screen
+    quiet = format_screen([], 5000)
+    assert "quiet screen is a reading" in quiet
+    assert "survivors only" in quiet
+    rows = [("VFF", dt.date(2026, 8, 15), -36.9, 76.7, 1.21, 2.94)]
+    full = format_screen(rows, 5000)
+    assert "VFF" in full and "cross -36.9" in full.replace("−", "-")
+    assert "survivors only" in full and "tranches" in full
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
