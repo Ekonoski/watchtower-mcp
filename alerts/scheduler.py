@@ -2235,6 +2235,18 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot seed skipped: {e}")
 
+    def _seed_greendot_multiscale():
+        """The multiscale dot study (2026-08-29): the same below-zero
+        dot on daily and weekly bars, fixed daily-horizon outcomes —
+        Eric's clock-speed compounding question. Resume per scale."""
+        try:
+            from analysis.greendot_multiscale import run
+            for _ in range(16):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot multiscale seed skipped: {e}")
+
     def _seed_greendot_ema():
         """EMA-reclaim entry variants (2026-08-29, Eric: price above
         the 8/21 EMAs after the dot, no cross required) — daily and
@@ -2317,6 +2329,7 @@ def start_scheduler():
         _seed_greendot_entry()
         _seed_greendot15()
         _seed_greendot_ema()
+        _seed_greendot_multiscale()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
