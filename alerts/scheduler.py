@@ -2254,8 +2254,8 @@ def start_scheduler():
         whole curve or nothing."""
         try:
             from analysis.greendot_scale_sweep import run
-            for _ in range(12):
-                if run():
+            for _ in range(40):          # the overnight curve: ~10k
+                if run(batch=250):       # ticker-scale units per boot
                     break
         except Exception as e:
             log.warning(f"[scheduler] greendot sweep seed skipped: {e}")
