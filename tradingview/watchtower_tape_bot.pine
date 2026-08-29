@@ -1,15 +1,21 @@
 //@version=5
-// WATCHTOWER TAPE BOT v2.0
+// WATCHTOWER TAPE BOT v2.1
 // CONTROL > LEVEL > TREND > SETUP > MOMENTUM. Confirmed closes only.
+// v2.1 — futures made first-class (2026-08-29, the NQ check):
+//   - Futures 24H toggle: with it ON (default), Globex overnight bars
+//     vote — setups arm and alerts fire around the clock, badge shows
+//     GLOBEX/RTH. OFF restores equities discipline (RTH decides).
+//   - Futures premarket is the OVERNIGHT session, not the equity
+//     4:00-9:30 window: ONH/ONL accumulate from the 18:00 ET Globex
+//     open to the 9:30 equity open, so the line always sits on a wick
+//     you can see. Stocks keep PMH/PML exactly as verified.
 // v2.0 — ground-up recalibration of the level clocks. One rule, no
 // market assumptions: HISTORY always uses the last completed day/week;
 // the LIVE edge uses it too, unless the market has stopped printing
 // bars (then the just-finished period is "previous"). Detection is
 // from the chart's own bars; weeks additionally confirm against the
 // weekly bar's scheduled close so a partial week can never promote.
-// Verified by trace across: stock/crypto x intraday/daily/weekly x
-// live/premarket/evening/weekend/history.
-// Capability matrix: PM/ORB/session badge = intraday only; PD levels =
+// Capability matrix: PM/ON/ORB/session badge = intraday only; PD levels =
 // intraday+daily; PW levels = intraday/daily/weekly; gamma slots = all.
 indicator("Watchtower Tape Bot", overlay = true, max_lines_count = 60, max_labels_count = 60)
 
@@ -20,9 +26,12 @@ lenS   = input.int(21, "Slow EMA", minval = 2, group = grpE)
 grpL   = "Automatic levels"
 usePD  = input.bool(true,  "Prev day high/low (PDH/PDL)",   group = grpL)
 usePW  = input.bool(true,  "Prev week high/low (PWH/PWL)",  group = grpL)
-usePM  = input.bool(true,  "Premarket high/low (PMH/PML)",  group = grpL)
+usePM  = input.bool(true,  "Premarket / overnight high-low", group = grpL)
 useORB = input.bool(true,  "Opening range (ORB)",           group = grpL)
 orbMin = input.int(30, "ORB minutes", options = [15, 30], group = grpL)
+
+grpF   = "Futures"
+fut24  = input.bool(true, "Futures vote 24H (Globex bars arm setups and alerts)", group = grpF)
 
 grpW   = "Watchtower levels (paste from the morning gamma board)"
 useWT  = input.bool(true, "Enable Watchtower levels", group = grpW)
@@ -38,7 +47,7 @@ lvlW   = input.int(2, "Key-level line width", minval = 1, maxval = 4, group = gr
 lvlTag = input.bool(true, "Label flags on levels", group = grpS)
 colPD  = input.color(color.orange,  "PDH/PDL", group = grpS)
 colPW  = input.color(color.lime,    "PWH/PWL", group = grpS)
-colPM  = input.color(color.fuchsia, "PMH/PML", group = grpS)
+colPM  = input.color(color.fuchsia, "PMH/PML or ONH/ONL", group = grpS)
 colORB = input.color(color.aqua,    "ORB",     group = grpS)
 colWT  = input.color(color.yellow,  "Watchtower slots", group = grpS)
 
@@ -55,6 +64,7 @@ lvlPct = input.float(1.0, "Key-level search width, pct of price", minval = 0.1, 
 
 // ── Chart context ──
 intra  = timeframe.isintraday
+isFut  = syminfo.type == "futures"
 sess24 = syminfo.type == "crypto" or syminfo.type == "forex"
 okPD   = intra or timeframe.isdaily
 okPW   = intra or timeframe.isdaily or timeframe.isweekly
@@ -62,8 +72,8 @@ okPW   = intra or timeframe.isdaily or timeframe.isweekly
 inRTH  = intra and not na(time(timeframe.period, "0930-1600", "America/New_York"))
 inPre  = intra and not sess24 and not na(time(timeframe.period, "0400-0930", "America/New_York"))
 inPost = intra and not na(time(timeframe.period, "1600-2000", "America/New_York"))
-canVote = not intra or sess24 or inRTH
-sessTxt = not intra ? "EOD" : sess24 ? "24H" : inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
+canVote = not intra or sess24 or (isFut and fut24) or inRTH
+sessTxt = not intra ? "EOD" : sess24 ? "24H" : isFut ? (inRTH ? "RTH" : "GLOBEX") : inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
 isNewDay = intra and ta.change(time("D")) != 0
 isNewWk  = okPW and ta.change(time("W")) != 0
 
@@ -89,11 +99,13 @@ ctlIsRng  = ctlTxt == "RANGING"
 // marketStopped: the chart's own last bar closed over an hour ago —
 // no bars are printing, so the period that bar belongs to is finished.
 // Only ever true on the last bar; historical bars always use the
-// completed prior period (no repaint, ever).
+// completed prior period (no repaint, ever). Futures traced too: the
+// daily 17:00-18:00 ET halt is exactly one hour, so it never falsely
+// promotes; the weekend does, correctly.
 marketStopped = barstate.islast and timenow > time_close + 3600000
 // Week completion additionally confirms against the weekly bar's own
 // scheduled close, so a mid-week evening can never promote a partial
-// week (stocks: passes Fri 16:00; crypto: passes at the UTC week end).
+// week (stocks/futures: passes Fri close; crypto: at the UTC week end).
 wEndT  = request.security(syminfo.tickerid, "W", time_close, lookahead = barmerge.lookahead_on)
 wkOver = barstate.islast and not na(wEndT) and timenow >= wEndT
 
@@ -147,14 +159,27 @@ if okPW
     pwh := wkOver ? cWh : pWh
     pwl := wkOver ? cWl : pWl
 
+// ── Premarket (stocks) / overnight (futures) range ──
+// Stocks: the 4:00-9:30 ET equity premarket, as verified.
+// Futures (v2.1): "premarket" is the wrong concept — the level that
+// matters is the OVERNIGHT session high/low, accumulated from the
+// 18:00 ET Globex open (the day reset) until the 9:30 equity open,
+// then frozen for the day. Labeled ONH/ONL so nobody mistakes it.
 var float pmH = na
 var float pmL = na
+var bool  rthSeen = false
 if isNewDay
     pmH := na
     pmL := na
-if inPre
+    rthSeen := false
+if inRTH
+    rthSeen := true
+inON = isFut and intra and not inRTH and not rthSeen
+if isFut ? inON : inPre
     pmH := na(pmH) ? high : math.max(pmH, high)
     pmL := na(pmL) ? low  : math.min(pmL, low)
+pmHi = isFut ? "ONH" : "PMH"
+pmLo = isFut ? "ONL" : "PML"
 
 orbEndT = timestamp("America/New_York", year, month, dayofmonth, 9, 30 + orbMin, 0)
 inORB   = inRTH and time < orbEndT and not sess24
@@ -186,8 +211,8 @@ if usePW and okPW
     f_add("PWH", pwh)
     f_add("PWL", pwl)
 if usePM and intra and not sess24
-    f_add("PMH", pmH)
-    f_add("PML", pmL)
+    f_add(pmHi, pmH)
+    f_add(pmLo, pmL)
 if useORB and orbDone and intra
     f_add("ORB H", orbH)
     f_add("ORB L", orbL)
@@ -211,7 +236,7 @@ if array.size(lvlPrices) > 0
             nearNm := array.get(lvlNames, i)
 
 f_lvlCol(nm) =>
-    nm == "PDH" or nm == "PDL" ? colPD : nm == "PWH" or nm == "PWL" ? colPW : nm == "PMH" or nm == "PML" ? colPM : nm == "ORB H" or nm == "ORB L" ? colORB : colWT
+    nm == "PDH" or nm == "PDL" ? colPD : nm == "PWH" or nm == "PWL" ? colPW : nm == "PMH" or nm == "PML" or nm == "ONH" or nm == "ONL" ? colPM : nm == "ORB H" or nm == "ORB L" ? colORB : colWT
 
 var line[]  lvlLines  = array.new_line()
 var label[] lvlLabels = array.new_label()
