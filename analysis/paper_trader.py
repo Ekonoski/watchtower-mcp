@@ -263,6 +263,33 @@ def bearish_conflicts(rows):
     return {tk: " + ".join(v) for tk, v in out.items()}
 
 
+STOP_WIDTH_WIDE = 25.0     # % risk beyond this = one "R" spans half a company
+STOP_WIDTH_TIGHT = 2.0     # % risk under this = noise-width stop, lottery R
+
+
+def stop_width_flag(trigger, stop):
+    """Pure. 2026-08-29, the external-audit catch (Grok, verified):
+    open-book risk widths ran 1.0%..57.1%, so R-sums were mixing
+    animals — a +16% move scoring +0.3R beside a 1%-stop scalp. R is
+    the honest unit (return per unit RISKED), but degenerate widths
+    deserve to be visible at arming. Returns a warning string or None.
+    Never gates — same contract as bearish_conflicts."""
+    try:
+        t, s = float(trigger), float(stop)
+        if t <= 0:
+            return None
+        risk = (t - s) / t * 100.0
+    except (TypeError, ValueError):
+        return None
+    if risk > STOP_WIDTH_WIDE:
+        return (f"stop-width outlier: {risk:.1f}% risk (wide — one R "
+                f"spans a huge range; R-sums mix animals)")
+    if 0 < risk < STOP_WIDTH_TIGHT:
+        return (f"stop-width outlier: {risk:.1f}% risk (noise-tight — "
+                f"expect lottery-ish R outcomes)")
+    return None
+
+
 def swing_class_ok(pattern: str, timeframe: str) -> bool:
     """The class gate, pure so it pins in a test. The SQL query filters by
     pattern AND timeframe independently; this is the joint filter that
@@ -573,6 +600,10 @@ def write_morning_specs():
                              f"trigger per retest doctrine; stop=pattern invalid {inv:g}")
                 if tk in warns:
                     rationale += f" | ⚠ bearish structure live: {warns[tk]}"
+                swf = stop_width_flag(trig, inv)
+                if swf:
+                    rationale += f" | ⚠ {swf}"
+                    log.warning("[paper] swing: %s %s", tk, swf)
                 if sector_state_for is not None:
                     try:
                         stag = sector_state_for(conn, tk)
