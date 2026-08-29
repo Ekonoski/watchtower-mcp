@@ -495,6 +495,63 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
 
 @mcp.tool()
+def watchtower_dot_book() -> str:
+    """
+    Eric's live swing ledger — every position with its entry, its dot
+    anchor (date/price/cross/drawdown), live price, return from entry
+    AND from dot, planned adds, stop line, and the cohort prior beside
+    reality. Unlogged entry prices render as holes, never guesses.
+    Closed positions worst-first (losers lead).
+    """
+    try:
+        from analysis.dot_book import render_book
+        return render_book()
+    except Exception as e:
+        return f"Dot book render failed: {e}"
+
+
+@mcp.tool()
+def watchtower_dot_entry(ticker: str, entry_kind: str, thesis: str = "",
+                         entry_date: str = "", entry_px: float = 0.0,
+                         size_note: str = "", stop_line: str = "",
+                         add1_px: float = 0.0, add2_px: float = 0.0) -> str:
+    """
+    Log a live swing entry into the dot book. entry_kind: at_dot |
+    near_dot | reclaim_premium | runner_hold | structure. The latest
+    recorded 16D dot for the ticker is snapshotted as the anchor
+    automatically. Pass entry_px=0 to leave the fill unlogged (renders
+    as a hole until supplied). stop_line is the exit rule in words
+    (e.g. 'daily close < 546').
+    """
+    try:
+        from analysis.dot_book import log_entry
+        return log_entry(ticker, entry_kind, thesis=thesis,
+                         entry_date=entry_date or None,
+                         entry_px=entry_px or None,
+                         size_note=size_note, stop_line=stop_line,
+                         add1_px=add1_px or None, add2_px=add2_px or None)
+    except Exception as e:
+        return f"Dot book entry failed: {e}"
+
+
+@mcp.tool()
+def watchtower_dot_exit(ticker: str, exit_px: float, exit_reason: str,
+                        exit_date: str = "") -> str:
+    """
+    Close the open dot-book position for a ticker: exit price, reason
+    (e.g. 'stop: daily close below box', 'trimmed into strength',
+    'thesis played out'), optional date (defaults today). Realized
+    return computes only from logged fills — never guessed.
+    """
+    try:
+        from analysis.dot_book import log_exit
+        return log_exit(ticker, exit_px, exit_reason,
+                        exit_date=exit_date or None)
+    except Exception as e:
+        return f"Dot book exit failed: {e}"
+
+
+@mcp.tool()
 def watchtower_ai_capex() -> str:
     """
     The AI-capex basket breadth line — Eric's taxonomy (2026-08-29):
