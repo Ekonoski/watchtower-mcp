@@ -2247,6 +2247,18 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot multiscale seed skipped: {e}")
 
+    def _seed_reddot():
+        """The 16D red-dot study (2026-08-29): the green dot's mirror
+        — bearish cross-downs above zero, the candidate EXIT rule.
+        Chunked fleet pass with resume."""
+        try:
+            from analysis.reddot_study import run
+            for _ in range(16):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] reddot seed skipped: {e}")
+
     def _seed_greendot_sweep():
         """The block-size sweep (2026-08-29): the dot at 3/8/12/21/26/32
         day blocks — Eric's open timeframe search. Runs LAST so the
@@ -2375,6 +2387,7 @@ def start_scheduler():
         _seed_greendot_multiscale()
         _seed_greendot_align()
         _seed_greendot_gate()
+        _seed_reddot()
         _seed_greendot_sweep()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
