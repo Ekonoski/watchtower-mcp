@@ -45,6 +45,7 @@ usePW  = input.bool(true,  "Prev week high/low (PWH/PWL)",  group = grpL)
 usePM  = input.bool(true,  "Premarket high/low (PMH/PML)",  group = grpL)
 useORB = input.bool(true,  "Opening range (ORB)",           group = grpL)
 orbMin = input.int(30, "ORB minutes", options = [15, 30], group = grpL)
+lvlCh  = input.bool(true, "Levels from chart bars (match what you see)", group = grpL)
 
 grpW   = "Watchtower levels (paste from the morning gamma board)"
 useWT  = input.bool(true, "Enable Watchtower levels", group = grpW)
@@ -81,6 +82,7 @@ inPre  = not na(time(timeframe.period, "0400-0930", "America/New_York"))
 inPost = not na(time(timeframe.period, "1600-2000", "America/New_York"))
 sessTxt = inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
 isNewDay = ta.change(time("D")) != 0
+isNewWk  = ta.change(time("W")) != 0
 
 // ── EMAs + control ───────────────────────────────────────────────────────────
 emaF = ta.ema(close, lenF)
@@ -122,10 +124,40 @@ wH1 = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.look
 wL1 = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
 dayGone = dayofmonth(timenow, "America/New_York") != dayofmonth(dT, "America/New_York") or month(timenow, "America/New_York") != month(dT, "America/New_York")
 wkEnd   = dayofweek(timenow, "America/New_York") == dayofweek.saturday or dayofweek(timenow, "America/New_York") == dayofweek.sunday
-pdh = dayGone ? dH0 : dH1
-pdl = dayGone ? dL0 : dL1
-pwh = wkEnd ? wH0 : wH1
-pwl = wkEnd ? wL0 : wL1
+// v1.3 — chart-bar accumulated day/week ranges: the levels the EYE
+// sees (Eric, the JD ETH catch: official-session lows float above
+// visible extended-hours wicks). Whatever bars the chart shows build
+// these, so the lines always touch the wicks; toggle lvlCh for the
+// official-session numbers instead.
+var float cDh = na
+var float cDl = na
+var float pDh = na
+var float pDl = na
+if isNewDay
+    pDh := cDh
+    pDl := cDl
+    cDh := high
+    cDl := low
+else
+    cDh := na(cDh) ? high : math.max(cDh, high)
+    cDl := na(cDl) ? low  : math.min(cDl, low)
+var float cWh = na
+var float cWl = na
+var float pWh = na
+var float pWl = na
+if isNewWk
+    pWh := cWh
+    pWl := cWl
+    cWh := high
+    cWl := low
+else
+    cWh := na(cWh) ? high : math.max(cWh, high)
+    cWl := na(cWl) ? low  : math.min(cWl, low)
+
+pdh = lvlCh ? (dayGone ? cDh : pDh) : (dayGone ? dH0 : dH1)
+pdl = lvlCh ? (dayGone ? cDl : pDl) : (dayGone ? dL0 : dL1)
+pwh = lvlCh ? (wkEnd ? cWh : pWh) : (wkEnd ? wH0 : wH1)
+pwl = lvlCh ? (wkEnd ? cWl : pWl) : (wkEnd ? wL0 : wL1)
 
 // Premarket high/low (accumulated 4:00–9:30, frozen for the session)
 var float pmH = na
