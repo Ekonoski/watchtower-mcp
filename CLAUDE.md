@@ -874,6 +874,33 @@ Rendering doctrine, same spirit as the rest of this file:
   the capex layer, software platforms out — as one breadth line;
   membership pinned by test, warnings on longs, never shorts.
 
+- **The Tape Bot trades nothing; the eyes stay eyes** (2026-08-29,
+  the retest-machine study — Eric, the night the indicator went live
+  on his charts: "should we add a version of it to our autonomous
+  trading?"). The v2.2 Pine state machine ported VERBATIM
+  (tests/test_tapebot_retest.py pins two Pine-order truths the port
+  surfaced: a crossing close re-arms the machine the other way, and
+  the wick refusal manifests as a flip, never a signal) and graded at
+  PDH/PDL on the stored SPY/QQQ 15m record — 21,419 signals, entries
+  at the alert bar's close, outcomes to the true daily close
+  (tapebot_retest_events, migration 032, marker tapebot_retest_v1).
+  VERDICT: REFUSED as an autonomous entry. Every event x era x
+  ticker cell is a coin flip — 42-55% win, avg/median inside +/-10
+  bps, MFE ~= MAE — and the pre-registered cuts (time-of-day, level,
+  open-above conditioning) all fail the both-eras + replication bar:
+  the best survivor (SPY PDH retest, open-above, post-10:30 —
+  +9.5/+3.5 avg bps by era) dies on QQQ (-1.5/+0.6); the short
+  events grade 42-47%, negative AGAIN. The reading: the machine is
+  an honest NARRATOR of level fights, not an edge — it takes every
+  confirmed break-retest regardless of day shape, re-arms all day,
+  and holds no first-touch discipline; the only PDH-retest trade
+  that grades remains the day-bias definition (open-above + the
+  10:30 first-touch cancel + one trade/day), which is ALREADY the
+  live day_bias book. ONH/ONL phase 2 (premarket backfill) NOT
+  earned by phase 1. The Tape Bot's job is what it already does:
+  put the desk's rules on Eric's charts and page him on level
+  breaks — eyes and alerts, not hands.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
