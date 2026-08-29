@@ -107,10 +107,25 @@ ctlTxt    = xUp ? "CROSS UP" : xDn ? "CROSS DOWN" : isChoppy ? "RANGING" : ctlBu
 ctlIsRng  = ctlTxt == "RANGING"
 
 // ── Session levels: PDH/PDL, PWH/PWL, premarket, ORB ─────────────────────────
-pdh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
-pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead = barmerge.lookahead_on)
-pwh = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
-pwl = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
+// v1.2.1 — completed-bar-aware PDH/PDL/PWH/PWL (the JD Saturday catch:
+// on weekends/premarket the "current" daily bar is already finished, so
+// [1] reached one day too far back — Thursday's low labeled PDL). Use
+// the closed [0] bar when its date is behind today; [1] live.
+dT  = request.security(syminfo.tickerid, "D", time,    lookahead = barmerge.lookahead_on)
+dH0 = request.security(syminfo.tickerid, "D", high,    lookahead = barmerge.lookahead_on)
+dL0 = request.security(syminfo.tickerid, "D", low,     lookahead = barmerge.lookahead_on)
+dH1 = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+dL1 = request.security(syminfo.tickerid, "D", low[1],  lookahead = barmerge.lookahead_on)
+wH0 = request.security(syminfo.tickerid, "W", high,    lookahead = barmerge.lookahead_on)
+wL0 = request.security(syminfo.tickerid, "W", low,     lookahead = barmerge.lookahead_on)
+wH1 = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
+wL1 = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
+dayGone = dayofmonth(timenow, "America/New_York") != dayofmonth(dT, "America/New_York") or month(timenow, "America/New_York") != month(dT, "America/New_York")
+wkEnd   = dayofweek(timenow, "America/New_York") == dayofweek.saturday or dayofweek(timenow, "America/New_York") == dayofweek.sunday
+pdh = dayGone ? dH0 : dH1
+pdl = dayGone ? dL0 : dL1
+pwh = wkEnd ? wH0 : wH1
+pwl = wkEnd ? wL0 : wL1
 
 // Premarket high/low (accumulated 4:00–9:30, frozen for the session)
 var float pmH = na
