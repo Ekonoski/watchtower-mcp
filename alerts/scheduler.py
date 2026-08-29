@@ -2235,6 +2235,19 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot seed skipped: {e}")
 
+    def _seed_greendot15():
+        """The 15-day-block robustness pass (2026-08-29, the 3W-chart
+        question): same dot spec re-blocked at 15 trading days; the
+        edge must survive re-blocking or be trusted less. Research
+        one-shot with resume; writes only its own tables."""
+        try:
+            from analysis.greendot_robust15 import run
+            for _ in range(12):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot15 seed skipped: {e}")
+
     def _seed_greendot_entry():
         """The green-dot ENTRY-SCHEDULE study (2026-08-29, Eric's HA-doji
         refinement): five pre-registered variants per dot, graded on real
@@ -2287,6 +2300,7 @@ def start_scheduler():
         _seed_options_catchup()
         _seed_greendot_study()
         _seed_greendot_entry()
+        _seed_greendot15()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
