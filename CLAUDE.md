@@ -758,6 +758,41 @@ Rendering doctrine, same spirit as the rest of this file:
   question (lump vs laddered adds) is QUEUED as a follow-up grade off
   the stored dots' forward paths.
 
+- **The green-dot entry-schedule verdict: confirmation is priced at
+  the 16D scale, and the ladder is a risk choice, not free money**
+  (2026-08-29, the readout of Eric's HA-doji question — all 20,404
+  dots graded across five pre-registered variants, zero holes,
+  entries always at REAL closes). On the deep cohort (dd ≥ 50%,
+  cross ≤ −30, n=3,718): the HA doji-then-green rule fires on only
+  43% of dots, misses ~29% of the RUNNERS outright (no signal inside
+  6 months on dots that ended higher), pays a +9.3% median premium
+  over the dot close, and still eats −17.6% median MAE vs −19.5%
+  entering at the dot — two points of drawdown bought for nine of
+  premium and a third of the winners. The strict break variant is
+  strictly worse (+22.5% premium, MAE −19.2%); first-raw-green saves
+  nothing (MAE −20.0%). The physical read: a 16D confirmation candle
+  IS the move — one bar of proof costs a quarter of the payoff, the
+  inverse of the day-bias finding where 15m confirmation was cheap.
+  The doji-green sequence remains a legitimate READ that the turn is
+  here (the exemplar museum grades that eye); it is refused as an
+  entry-price mechanism. The bounded ladder (1/3 at dot / −15% /
+  −25%) grades exactly as Monday's doctrine guessed: per DEPLOYED
+  dollar it wins everything — MAE −12.8% vs −19.5%, median 6-mo
+  +13.0% vs +7.0%, 64% positive, era-stable, only ~69% of budget
+  ever at risk — but per COMMITTED budget the lump's capped mean
+  beats it (23.2% vs 15.1% at 6 mo), because the ladder underweights
+  the runners (1,353 dots never dipped 15%: one tranche in, +36.7%
+  median) and concentrates into the sinkers (1,646 filled all three:
+  −8.9% median). Both are true and both render wherever this
+  surfaces: ladder = shallower drawdown, cash in reserve, better
+  hit rate; lump = more raw expectancy per dollar committed. Stated
+  caveats: survivors-only universe, capped means, ladder outcomes
+  measured on final avg-px basis from the dot date, no costs. And
+  the session's query lesson, kept: Postgres LEAST/GREATEST IGNORE
+  NULLs — LEAST(fwd6m, 300) turns a data hole into +300% — so every
+  capped aggregate guards NULL explicitly (the med-11.8-vs-7.7
+  reconcile catch; numbers on one line must reconcile).
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
