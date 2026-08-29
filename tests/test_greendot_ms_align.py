@@ -27,6 +27,18 @@ def test_reuses_ema_machinery_by_signature():
     assert "def ema(" not in src and "def find_above_both(" not in src
 
 
+def test_weekly_uses_native_scale_patience():
+    from analysis.greendot_ms_align import CLEAR_WINDOW_W
+    assert CLEAR_WINDOW_W == 15   # 15 WEEKLY bars — symmetric with daily
+
+
+def test_weekly_reuses_weekly_bar_machinery():
+    from analysis import greendot_ms_align
+    src = inspect.getsource(greendot_ms_align)
+    assert "week_end_indices" in src
+    assert "def week_end_indices" not in src   # imported, not rebuilt
+
+
 def test_writes_only_its_own_table():
     from analysis import greendot_ms_align
     src = inspect.getsource(greendot_ms_align)

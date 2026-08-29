@@ -2280,9 +2280,12 @@ def start_scheduler():
         is dot + price above the 8/21 before the EMAs flip). Trails
         the multiscale base pass; finishes as it finishes."""
         try:
-            from analysis.greendot_ms_align import run
+            from analysis.greendot_ms_align import run, run_weekly
             for _ in range(16):
                 if run():
+                    break
+            for _ in range(16):
+                if run_weekly():
                     break
         except Exception as e:
             log.warning(f"[scheduler] greendot align seed skipped: {e}")
