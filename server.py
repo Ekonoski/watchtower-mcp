@@ -2519,9 +2519,12 @@ except Exception as _dash_err:
 
 import logging
 import os
+import sys
 import tempfile
 
-logging.basicConfig(level=logging.INFO)
+# stdout, not the stderr default: Railway tags stderr lines as errors,
+# which paints every INFO line red and buries the real errors.
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 _SCHEDULER_LOCK = os.path.join(tempfile.gettempdir(), "watchtower_scheduler.lock")
 _scheduler = None
