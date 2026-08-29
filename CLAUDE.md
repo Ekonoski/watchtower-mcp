@@ -830,6 +830,40 @@ Rendering doctrine, same spirit as the rest of this file:
   dots are grid-stable, one more reason cross ≤ −30 is the
   load-bearing leg.
 
+- **The clock-speed verdicts: the dot is a ~3-week signal, and the
+  8/21 clear is a sorter at every scale, never a fill** (2026-08-29
+  evening, Eric's compounding question — "smaller moves on a daily
+  bounce or weekly bounce, or hold longer with the 16d?"). The same
+  dot definition re-run at daily and weekly bars (greendot_dots_ms,
+  fixed daily-horizon outcomes): DAILY dots are noise (med 126d
+  +0.85%, 51.6% — and still eat a −16% quarter excursion: a faster
+  chart samples the same slow bottoming, it does not escape it);
+  WEEKLY dots are a decayed dead zone (post-2016 med 126d +2.0%,
+  51.6% vs 16D's +7.1%/56.2% on matched tickers — and the gap
+  WIDENED after 2016); the 16D wins per dollar-day at every horizon
+  before even counting the ~6x cost differential of fast cycling.
+  Eric's 8/21-reclaim rule, graded at three scales
+  (greendot_ms_align): a SUPERB knife detector everywhere — daily
+  cleared-vs-never spreads +6.3 vs −9.6 (126d), weekly +21.0 vs
+  −17.9 (252d), 16D 54% vs 18% run-50%+ — and a losing ENTRY
+  everywhere, because the premium scales with the timeframe (5.6% /
+  16.2% / 33.3%) and always consumes the sorting edge (weekly-clear
+  entries are NEGATIVE at 63d: the clear IS the bounce). One law:
+  enter at the dot, read the clears as conviction/triage on holdings.
+  The gated ladder both ways: v1 (any reclaim before the touch)
+  VACUOUS — binding 0.1%, a gate that cannot fire; v2 (reclaim
+  within 15 days, the graded knife test) binds 9.8% and HURTS (med
+  6-mo 13.7 vs 14.5, no MAE saved) — the daily knife signal does not
+  transfer to 16D adds, whose cheapest fills live exactly in the
+  not-yet-reclaimed dip. The PLAIN ladder stands, having beaten two
+  informed attempts to improve it. The block-size sweep (nd3-nd32,
+  exploratory, both-eras + agreeing-neighbors bar) reads out
+  separately; partials so far: 3d dead like the weekly, 8d
+  half-alive (trails 16D both eras at 12mo). And the AI-capex basket
+  (watchtower_ai_capex) ships Eric's taxonomy — NVDA bellwether +
+  the capex layer, software platforms out — as one breadth line;
+  membership pinned by test, warnings on longs, never shorts.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
