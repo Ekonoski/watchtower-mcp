@@ -302,7 +302,7 @@ if dashOn and barstate.islast
 // and messages land in the channel directly.
 f_say(msg) =>
     m = syminfo.ticker + " " + timeframe.period + ": " + msg
-    alert(dcFmt ? '{"content": "🏰 ' + m + '"}' : m, alert.freq_once_per_bar_close)
+    alert(dcFmt ? '{"content": "WT | ' + m + '"}' : m, alert.freq_once_per_bar_close)
 
 if barstate.isconfirmed and inRTH
     // Level breaks: a confirmed close through ANY level in the book —
