@@ -2240,9 +2240,12 @@ def start_scheduler():
         the 8/21 EMAs after the dot, no cross required) — daily and
         16d-bar readings both graded into greendot_entry."""
         try:
-            from analysis.greendot_ema_entry import run
+            from analysis.greendot_ema_entry import run, run_weekly
             for _ in range(20):
                 if run():
+                    break
+            for _ in range(20):
+                if run_weekly():
                     break
         except Exception as e:
             log.warning(f"[scheduler] greendot ema seed skipped: {e}")

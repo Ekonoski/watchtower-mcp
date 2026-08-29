@@ -54,6 +54,20 @@ def test_search_starts_after_the_dot():
     assert find_above_both(closes, e8, e21, 3, 3) is None
 
 
+def test_week_ends_are_completed_weeks_only():
+    import datetime as dt
+    from analysis.greendot_ema_entry import week_end_indices
+    # Two full weeks (Mon-Fri) then a Monday of week 3.
+    d0 = dt.date(2024, 1, 1)   # a Monday
+    dates = [d0 + dt.timedelta(days=k) for k in
+             (0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 14)]
+    ends = week_end_indices(dates)
+    # Week 1 ends at index 4, week 2 at index 9; week 3 (in progress,
+    # one day) is EXCLUDED — a half-week close can never trigger.
+    assert ends == [4, 9]
+    assert week_end_indices(dates[:5]) == []   # only one (unproven) week
+
+
 def test_writes_only_greendot_entry():
     from analysis import greendot_ema_entry
     src = inspect.getsource(greendot_ema_entry)
