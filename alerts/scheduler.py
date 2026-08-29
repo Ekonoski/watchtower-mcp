@@ -2235,6 +2235,19 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot seed skipped: {e}")
 
+    def _seed_greendot_entry():
+        """The green-dot ENTRY-SCHEDULE study (2026-08-29, Eric's HA-doji
+        refinement): five pre-registered variants per dot, graded on real
+        closes. Chunked with resume, marker-retired; writes only
+        greendot_entry. Runs after the dot study so dots exist."""
+        try:
+            from analysis.greendot_entry_study import run
+            for _ in range(20):          # ~8,000 tickers max per boot
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot entry seed skipped: {e}")
+
     def _seed_fill_audit_if_missing():
         """One-shot 1-minute-tape forensics on the 2026-08-27 SPY gamma
         fills (trades 86/87) — verdicts to fill_audit, marker-retired.
@@ -2273,6 +2286,7 @@ def start_scheduler():
         _seed_target_shadow()
         _seed_options_catchup()
         _seed_greendot_study()
+        _seed_greendot_entry()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
