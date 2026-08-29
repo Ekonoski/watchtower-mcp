@@ -2247,6 +2247,18 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot multiscale seed skipped: {e}")
 
+    def _seed_greendot_align():
+        """Daily-dot alignment pass (2026-08-29, Eric: the daily trade
+        is dot + price above the 8/21 before the EMAs flip). Trails
+        the multiscale base pass; finishes as it finishes."""
+        try:
+            from analysis.greendot_ms_align import run
+            for _ in range(16):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot align seed skipped: {e}")
+
     def _seed_greendot_ema():
         """EMA-reclaim entry variants (2026-08-29, Eric: price above
         the 8/21 EMAs after the dot, no cross required) — daily and
@@ -2330,6 +2342,7 @@ def start_scheduler():
         _seed_greendot15()
         _seed_greendot_ema()
         _seed_greendot_multiscale()
+        _seed_greendot_align()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
