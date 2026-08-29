@@ -495,6 +495,25 @@ def watchtower_get_hidden_gems(top_n: int = 10) -> str:
 
 
 @mcp.tool()
+def watchtower_ai_capex() -> str:
+    """
+    The AI-capex basket breadth line — Eric's taxonomy (2026-08-29):
+    the names whose price IS the AI capex cycle (NVDA bellwether +
+    AVGO/AMD/MU/TSM/ARM/VRT/SMCI/ANET/CRWV), deliberately excluding
+    software platforms (MSFT, PLTR). One read: how many weekly
+    wavetrends are rolling lower, weekly MACD red, daily money flow
+    negative, and live bearish structures near trigger — per-name
+    lines with bar stamps, holes named. The complex cracks bottom-up;
+    the bellwether decides last. Warnings on longs, never shorts.
+    """
+    try:
+        from analysis.ai_capex import basket_read
+        return basket_read()
+    except Exception as e:
+        return f"AI-capex basket read failed: {e}"
+
+
+@mcp.tool()
 def watchtower_greendot() -> str:
     """
     The 16D green-dot screen — fresh below-zero wavetrend cross-ups
