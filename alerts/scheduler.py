@@ -2365,6 +2365,19 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] fill audit seed skipped: {e}")
 
+    def _seed_tapebot_retest():
+        """The Tape Bot retest-machine study (2026-08-29, Eric: should
+        the indicator's setups trade autonomously?) — the Pine state
+        machine graded at PDH/PDL on the stored SPY/QQQ 15m record.
+        Marker-retired one-shot; writes only tapebot_retest_events."""
+        try:
+            from analysis.tapebot_retest_study import run
+            for _ in range(4):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] tapebot retest seed skipped: {e}")
+
     def _seed_all():
         try:
             from analysis.options_picker import entitlement_probe
@@ -2402,6 +2415,7 @@ def start_scheduler():
         _seed_greendot_stack()
         _seed_reddot()
         _seed_greendot_sweep()
+        _seed_tapebot_retest()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
