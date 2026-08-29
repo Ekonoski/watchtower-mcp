@@ -859,7 +859,17 @@ Rendering doctrine, same spirit as the rest of this file:
   informed attempts to improve it. The block-size sweep (nd3-nd32,
   exploratory, both-eras + agreeing-neighbors bar) reads out
   separately; partials so far: 3d dead like the weekly, 8d
-  half-alive (trails 16D both eras at 12mo). And the AI-capex basket
+  half-alive (trails 16D both eras at 12mo).
+  SWEEP VERDICT (same night, curve complete but nd32 partial-n): NO
+  CHALLENGER. Post-2016 the curve climbs weekly→15 then PLATEAUS
+  16-26 (~7.0-7.6% med 126d, 56%); pre-2016 it PEAKS at 15/16 (11.5)
+  and rolls off (21: 9.6, 26: 6.1). Under the pre-registered bar
+  (beat 16 in BOTH eras, neighbors agreeing) 21/26 fail — half a
+  point of modern-era noise against a clear old-era loss — and
+  slower blocks find 40% as many dots for zero both-era gain. 16 is
+  the only size at/near the top of both curves: Eric's eye found,
+  years ago, the number an exhaustive sweep could not improve. The
+  timeframe question is CLOSED absent a regime change. And the AI-capex basket
   (watchtower_ai_capex) ships Eric's taxonomy — NVDA bellwether +
   the capex layer, software platforms out — as one breadth line;
   membership pinned by test, warnings on longs, never shorts.
