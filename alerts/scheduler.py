@@ -2247,6 +2247,18 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot multiscale seed skipped: {e}")
 
+    def _seed_greendot_stack():
+        """The full-stack dot study (2026-08-29 night): Eric's actual
+        entry — %R/RSI/MACD turning + location proxy — tagged at every
+        recorded dot. Chunked with resume; marker-retired."""
+        try:
+            from analysis.greendot_stack import run
+            for _ in range(16):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot stack seed skipped: {e}")
+
     def _seed_reddot():
         """The 16D red-dot study (2026-08-29): the green dot's mirror
         — bearish cross-downs above zero, the candidate EXIT rule.
@@ -2387,6 +2399,7 @@ def start_scheduler():
         _seed_greendot_multiscale()
         _seed_greendot_align()
         _seed_greendot_gate()
+        _seed_greendot_stack()
         _seed_reddot()
         _seed_greendot_sweep()
 
