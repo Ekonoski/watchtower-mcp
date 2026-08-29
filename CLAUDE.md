@@ -770,9 +770,18 @@ Rendering doctrine, same spirit as the rest of this file:
   entering at the dot — two points of drawdown bought for nine of
   premium and a third of the winners. The strict break variant is
   strictly worse (+22.5% premium, MAE −19.2%); first-raw-green saves
-  nothing (MAE −20.0%). The physical read: a 16D confirmation candle
-  IS the move — one bar of proof costs a quarter of the payoff, the
-  inverse of the day-bias finding where 15m confirmation was cheap.
+  nothing (MAE −20.0%). The physical read, CORRECTED same day on
+  Eric's pushback ("the sixteen day dot doesn't mean it's spent...
+  those run forty, fifty plus percent"): he's right — deep dots are
+  NOT spent (44% run 30%+ within a year, 35% run 50%+, 18.5% run
+  100%+, median runner +86.5%; a 9% premium is trivial against
+  that). The refusal stands on SELECTIVITY, not exhaustion: the
+  doji-green fires on 37.7%-run-50%+ dots vs 33.2% on never-fired —
+  barely sorts — and the 100%+ monsters are EQUALLY common among
+  dots where it never printed (18.3 vs 18.7%): the biggest movers
+  rip without pausing to print the pattern (the ASTE lesson at 16D).
+  One bar of proof at this scale buys a third of the runners missed
+  for ~4pts of sorting.
   The doji-green sequence remains a legitimate READ that the turn is
   here (the exemplar museum grades that eye); it is refused as an
   entry-price mechanism. The bounded ladder (1/3 at dot / −15% /
