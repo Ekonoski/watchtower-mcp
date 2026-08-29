@@ -782,6 +782,22 @@ Rendering doctrine, same spirit as the rest of this file:
   rip without pausing to print the pattern (the ASTE lesson at 16D).
   One bar of proof at this scale buys a third of the runners missed
   for ~4pts of sorting.
+  The 8/21 EMA-reclaim grade (same day, Eric's rule frozen verbatim:
+  price above BOTH EMAs, no cross): DAILY fires on 99.9% of deep
+  dots at +1.3% median premium — it is the dot with extra steps,
+  changing nothing; WEEKLY is marginal (~1pt of MAE saved for ~5pts
+  of premium; the predicted "sweet middle" does not exist); 16D is
+  the one rule tested with REAL selectivity — reclaimed dots run
+  50%+ from the dot 54.3% vs 18.0% never-reclaimed, 3x and
+  era-stable (52/16 post-2016, 60/22 pre) — but it charges a +33.3%
+  median premium to know (partly definitional: clearing 16D-scale
+  EMAs off a washout IS a ~33% rally), so its from-entry outcomes
+  are the board's worst (med 12-mo +10.2% vs the dot's +19.8%).
+  Verdict: FILTER, not entry — buy the dot (ladder or lump per the
+  risk choice above), read the 16D reclaim as the hold/conviction
+  signal that the dot is a trend-changer. QUEUED as its own graded
+  question: does ADDING a tranche on the 16D reclaim beat holding
+  original size?
   The doji-green sequence remains a legitimate READ that the turn is
   here (the exemplar museum grades that eye); it is refused as an
   entry-price mechanism. The bounded ladder (1/3 at dot / −15% /
