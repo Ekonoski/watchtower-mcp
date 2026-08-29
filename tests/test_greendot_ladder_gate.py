@@ -56,6 +56,22 @@ def test_touch_after_reclaim_fills():
     # -25% (75.0) never touched → 2 tranches deployed.
 
 
+def test_v2_deadline_refuses_a_late_reclaim():
+    # Reclaim arrives on day 20 — past the 15-day knife test. v1
+    # (no deadline) arms the adds; v2 walls them off.
+    closes = [100.0] + [80.0] * 19 + [96.0] + [86.0, 84.0, 92.0]
+    lows = [100.0] + [78.0] * 19 + [95.0] + [84.0, 82.0, 91.0]
+    n = len(closes)
+    e8 = [90.0] * n
+    e21 = [94.0] * n
+    v1_fills, v1_fc = gated_fills(100.0, lows, closes, e8, e21, 0, n - 1,
+                                  LADDER)
+    v2_fills, v2_fc = gated_fills(100.0, lows, closes, e8, e21, 0, n - 1,
+                                  LADDER, clear_deadline=15)
+    assert v1_fc == 20 and v1_fills == [100.0, 85.0]  # late reclaim arms -15
+    assert v2_fc is None and v2_fills == [100.0]  # knife test failed
+
+
 def test_writes_only_greendot_entry():
     from analysis import greendot_ladder_gate
     src = inspect.getsource(greendot_ladder_gate)

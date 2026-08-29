@@ -2265,9 +2265,12 @@ def start_scheduler():
         after a daily 8/21 reclaim — the knife cohort walled off from
         the add money. Variant 'ladder_gated' beside the baseline."""
         try:
-            from analysis.greendot_ladder_gate import run
+            from analysis.greendot_ladder_gate import run, run_v2
             for _ in range(20):
                 if run():
+                    break
+            for _ in range(20):
+                if run_v2():
                     break
         except Exception as e:
             log.warning(f"[scheduler] greendot gate seed skipped: {e}")
