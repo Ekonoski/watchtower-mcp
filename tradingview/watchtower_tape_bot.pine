@@ -1,0 +1,332 @@
+//@version=5
+// ─────────────────────────────────────────────────────────────────────────────
+// WATCHTOWER TAPE BOT v1.2
+// The on-chart intraday copilot: CONTROL > LEVEL > TREND > SETUP > MOMENTUM.
+// Every state decides on CONFIRMED closes only (the wick rule). Direction is
+// never strength: the dashboard can be green and weak, red and weak.
+//
+// v1.2 — levels you can see, levels that call you (2026-08-29):
+//   • Prominent level rendering: session keys (PDH/PDL orange, PWH/PWL green,
+//     PMH/PML fuchsia, ORB aqua) drawn as labeled flags with adjustable
+//     width — no more squinting at dotted lines. Watchtower slots stay
+//     yellow, now labeled too.
+//   • LEVEL-BREAK ALERTS: any level in the book (session keys AND the pasted
+//     gamma/FVG slots) firing on a confirmed RTH close through it — the wick
+//     rule, as an alert. Control flips (8/21 cross) and fresh setup states
+//     alert too. One TradingView alert on "Any alert() function call" covers
+//     everything.
+//   • Discord webhook mode: messages format as {"content": ...} so the
+//     alert webhook URL can be a Discord webhook directly — lands in #desk
+//     beside the gamma drift and desk event alerts.
+//
+// v1.1 — session discipline (same fix as Scanner v1.3):
+//   • Setup state machine votes on REGULAR-SESSION bars only. Premarket and
+//     after-hours tape can inform levels (PMH/PML) but never arm, advance, or
+//     kill a setup.
+//   • Session badge in the header: WT · RTH / PRE / POST / CLOSED.
+//   • Setup state resets at each new day — no stale carryover.
+//   • Alerts only fire during regular hours.
+//
+// House additions no stock indicator has: six Watchtower level slots (gamma
+// call wall, put wall, flip, FVG top/bottom, free slot) — paste each morning
+// from the Watchtower gamma board. Levels come in pairs: the shelf says where
+// the fight happens; only a confirmed close settles it.
+// ─────────────────────────────────────────────────────────────────────────────
+indicator("Watchtower Tape Bot", overlay = true, max_lines_count = 60, max_labels_count = 60)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grpE   = "EMAs"
+lenF   = input.int(8,  "Fast EMA", minval = 1, group = grpE)
+lenS   = input.int(21, "Slow EMA", minval = 2, group = grpE)
+
+grpL   = "Automatic levels"
+usePD  = input.bool(true,  "Prev day high/low (PDH/PDL)",   group = grpL)
+usePW  = input.bool(true,  "Prev week high/low (PWH/PWL)",  group = grpL)
+usePM  = input.bool(true,  "Premarket high/low (PMH/PML)",  group = grpL)
+useORB = input.bool(true,  "Opening range (ORB)",           group = grpL)
+orbMin = input.int(30, "ORB minutes", options = [15, 30], group = grpL)
+
+grpW   = "Watchtower levels (paste from the morning gamma board)"
+useWT  = input.bool(true, "Enable Watchtower levels", group = grpW)
+cwPx   = input.float(0.0, "Call wall  (CW)",  group = grpW)
+pwPx   = input.float(0.0, "Put wall   (PW)",  group = grpW)
+gfPx   = input.float(0.0, "Gamma flip (GF)",  group = grpW)
+fvTop  = input.float(0.0, "FVG top    (FVT)", group = grpW)
+fvBot  = input.float(0.0, "FVG bottom (FVB)", group = grpW)
+c1Px   = input.float(0.0, "Custom     (C1)",  group = grpW)
+
+grpS   = "Level style"
+lvlW   = input.int(2, "Key-level line width", minval = 1, maxval = 4, group = grpS)
+lvlTag = input.bool(true, "Label flags on levels", group = grpS)
+colPD  = input.color(color.orange,  "PDH/PDL", group = grpS)
+colPW  = input.color(color.lime,    "PWH/PWL", group = grpS)
+colPM  = input.color(color.fuchsia, "PMH/PML", group = grpS)
+colORB = input.color(color.aqua,    "ORB",     group = grpS)
+colWT  = input.color(color.yellow,  "Watchtower slots", group = grpS)
+
+grpA   = "Alerts"
+alrtLv = input.bool(true, "Alert on level breaks (confirmed RTH close through any level)", group = grpA)
+alrtCt = input.bool(true, "Alert on 8/21 control flips", group = grpA)
+alrtSt = input.bool(true, "Alert on fresh setup states (retest/held)", group = grpA)
+dcFmt  = input.bool(true, "Format alerts for a Discord webhook", group = grpA)
+
+grpD   = "Dashboard"
+dashOn = input.bool(true, "Show dashboard", group = grpD)
+dashSz = input.string("normal", "Text size", options = ["small", "normal", "large"], group = grpD)
+lvlPct = input.float(1.0, "Key-level search width (% of price)", minval = 0.1, step = 0.1, group = grpD)
+
+// ── Session clock ────────────────────────────────────────────────────────────
+inRTH  = not na(time(timeframe.period, "0930-1600", "America/New_York"))
+inPre  = not na(time(timeframe.period, "0400-0930", "America/New_York"))
+inPost = not na(time(timeframe.period, "1600-2000", "America/New_York"))
+sessTxt = inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
+isNewDay = ta.change(time("D")) != 0
+
+// ── EMAs + control ───────────────────────────────────────────────────────────
+emaF = ta.ema(close, lenF)
+emaS = ta.ema(close, lenS)
+plot(emaF, "EMA fast", color = color.new(color.aqua,   0), linewidth = 2)
+plot(emaS, "EMA slow", color = color.new(color.orange, 0), linewidth = 2)
+
+xUp = ta.crossover(emaF,  emaS)
+xDn = ta.crossunder(emaF, emaS)
+
+// Bars since the last confirmed cross (freshness of control)
+var int sinceX = 0
+sinceX := (xUp or xDn) and barstate.isconfirmed ? 0 : sinceX + (barstate.isconfirmed ? 1 : 0)
+
+// Chop test: how often has price closed across the slow EMA recently?
+crossCnt = 0
+for i = 1 to 14
+    if (close[i] > emaS[i]) != (close[i + 1] > emaS[i + 1])
+        crossCnt += 1
+isChoppy = crossCnt >= 4
+
+ctlBull   = emaF > emaS
+ctlTxt    = xUp ? "CROSS UP" : xDn ? "CROSS DOWN" : isChoppy ? "RANGING" : ctlBull ? "BUYERS" : "SELLERS"
+ctlIsRng  = ctlTxt == "RANGING"
+
+// ── Session levels: PDH/PDL, PWH/PWL, premarket, ORB ─────────────────────────
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead = barmerge.lookahead_on)
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
+pwl = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
+
+// Premarket high/low (accumulated 4:00–9:30, frozen for the session)
+var float pmH = na
+var float pmL = na
+if isNewDay
+    pmH := na
+    pmL := na
+if inPre
+    pmH := na(pmH) ? high : math.max(pmH, high)
+    pmL := na(pmL) ? low  : math.min(pmL, low)
+
+// Opening range (first orbMin minutes of RTH), complete only when finished
+orbEndT = timestamp("America/New_York", year, month, dayofmonth, 9, 30 + orbMin, 0)
+inORB   = inRTH and time < orbEndT
+var float orbH = na
+var float orbL = na
+var bool  orbDone = false
+if isNewDay
+    orbH := na
+    orbL := na
+    orbDone := false
+if inORB
+    orbH := na(orbH) ? high : math.max(orbH, high)
+    orbL := na(orbL) ? low  : math.min(orbL, low)
+if inRTH and not inORB and not na(orbH)
+    orbDone := true
+
+// ── Level book: collect enabled levels ───────────────────────────────────────
+var string[] lvlNames  = array.new_string()
+var float[]  lvlPrices = array.new_float()
+array.clear(lvlNames)
+array.clear(lvlPrices)
+f_add(nm, px) =>
+    if not na(px) and px > 0
+        array.push(lvlNames, nm)
+        array.push(lvlPrices, px)
+if usePD
+    f_add("PDH", pdh)
+    f_add("PDL", pdl)
+if usePW
+    f_add("PWH", pwh)
+    f_add("PWL", pwl)
+if usePM
+    f_add("PMH", pmH)
+    f_add("PML", pmL)
+if useORB and orbDone
+    f_add("ORB H", orbH)
+    f_add("ORB L", orbL)
+if useWT
+    f_add("CW",  cwPx)
+    f_add("PW",  pwPx)
+    f_add("GF",  gfPx)
+    f_add("FVT", fvTop)
+    f_add("FVB", fvBot)
+    f_add("C1",  c1Px)
+
+// Nearest level within the search band
+float nearPx  = na
+string nearNm = na
+if array.size(lvlPrices) > 0
+    bestD = close * lvlPct / 100.0
+    for i = 0 to array.size(lvlPrices) - 1
+        d = math.abs(close - array.get(lvlPrices, i))
+        if d <= bestD
+            bestD  := d
+            nearPx := array.get(lvlPrices, i)
+            nearNm := array.get(lvlNames, i)
+
+// Level color by family (v1.2)
+f_lvlCol(nm) =>
+    nm == "PDH" or nm == "PDL" ? colPD : nm == "PWH" or nm == "PWL" ? colPW : nm == "PMH" or nm == "PML" ? colPM : nm == "ORB H" or nm == "ORB L" ? colORB : colWT
+
+// Draw the enabled levels — prominent, labeled (v1.2)
+var line[]  lvlLines  = array.new_line()
+var label[] lvlLabels = array.new_label()
+if barstate.islast
+    while array.size(lvlLines) > 0
+        line.delete(array.pop(lvlLines))
+    while array.size(lvlLabels) > 0
+        label.delete(array.pop(lvlLabels))
+    if array.size(lvlPrices) > 0
+        for i = 0 to array.size(lvlPrices) - 1
+            px  = array.get(lvlPrices, i)
+            nm  = array.get(lvlNames, i)
+            col = f_lvlCol(nm)
+            array.push(lvlLines, line.new(bar_index - 300, px, bar_index, px,
+                 extend = extend.right, color = color.new(col, 15),
+                 style = line.style_solid, width = lvlW))
+            if lvlTag
+                array.push(lvlLabels, label.new(bar_index + 8, px, nm,
+                     style = label.style_label_left, color = color.new(col, 0),
+                     textcolor = color.black, size = size.normal))
+
+// ── Setup state machine on the NEAREST level (confirmed RTH closes only) ─────
+// IDLE → BROKE UP/DOWN (close through) → WAIT RETEST → RETEST BULL/BEAR
+// (price returns to the level and confirms hold/reject) → HELD while respected.
+// v1.1: only regular-session bars decide. A premarket or after-hours close
+// through a level is noise until the session confirms it.
+var string  st       = "IDLE"
+var float   stLvl    = na
+var string  stLvlNm  = na
+var int     stAge    = 0
+band = close * 0.0015
+
+// New day: clear yesterday's state — a setup does not survive overnight.
+if isNewDay
+    st      := "IDLE"
+    stLvl   := na
+    stLvlNm := na
+    stAge   := 0
+
+if barstate.isconfirmed and inRTH
+    stAge += 1
+    // A fresh confirmed break of the nearest level (re)arms the machine
+    if not na(nearPx)
+        brokeUp = close > nearPx and close[1] <= nearPx
+        brokeDn = close < nearPx and close[1] >= nearPx
+        if brokeUp or brokeDn
+            st      := brokeUp ? "BROKE UP" : "BROKE DOWN"
+            stLvl   := nearPx
+            stLvlNm := nearNm
+            stAge   := 0
+    // Progression on the armed level
+    if not na(stLvl)
+        touching = low <= stLvl + band and high >= stLvl - band
+        if (st == "BROKE UP" or st == "BROKE DOWN") and stAge >= 1
+            st := st == "BROKE UP" ? "WAIT RETEST ↑" : "WAIT RETEST ↓"
+        if st == "WAIT RETEST ↑" and touching
+            st := close > stLvl ? "RETEST BULL" : "RETEST FAIL"
+        if st == "WAIT RETEST ↓" and touching
+            st := close < stLvl ? "RETEST BEAR" : "RECLAIMED"
+        if st == "RETEST BULL"
+            st := close > stLvl ? (stAge > 3 ? "HELD BULL" : st) : "LOST"
+        if st == "RETEST BEAR"
+            st := close < stLvl ? (stAge > 3 ? "HELD BEAR" : st) : "RECLAIMED"
+        if st == "RETEST FAIL" or st == "LOST" or st == "RECLAIMED" or stAge > 40
+            st      := "IDLE"
+            stLvl   := na
+            stLvlNm := na
+
+setupTxt = not inRTH ? (st == "IDLE" ? "CLOSED" : "CLOSED · was " + st) : st == "IDLE" ? "NO ACTIVE SETUP" : na(stLvlNm) ? st : stLvlNm + " " + st
+
+// ── Key-level row text ───────────────────────────────────────────────────────
+lvlTxt = na(nearNm) ? "NO LEVEL NEAR" : nearNm + (close > nearPx ? " ABOVE" : " BELOW")
+
+// ── Trend row: directional expansion vs chop through the band ────────────────
+spread    = math.abs(emaF - emaS)
+spreadAvg = ta.sma(spread, 20)
+expanding = spread > spreadAvg
+trendTxt  = ctlIsRng or isChoppy ? "RANGING" : ctlBull and close > emaS and expanding ? "TRENDING BULL" : (not ctlBull) and close < emaS and expanding ? "TRENDING BEAR" : "RANGING"
+
+// ── Momentum row: is the move actually pushing? ──────────────────────────────
+atr14   = ta.atr(14)
+rngX    = ta.sma(high - low, 5) / atr14                    // range expansion
+dirRun  = math.abs(math.sum(close > open ? 1 : -1, 6))     // directional persistence of last 6 bars
+volX    = volume / ta.sma(volume, 20)                      // participation
+score   = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0)
+momTxt  = not inRTH ? "CLOSED" : trendTxt == "RANGING" and score <= 1 ? "SIDEWAYS" : score >= 3 ? "STRONG" : score == 2 ? "GOOD" : "WEAK"
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+cGood = color.new(#0d8f6f, 20)
+cBad  = color.new(#c0392b, 20)
+cWarn = color.new(#c07a1f, 20)
+cGray = color.new(#5a6373, 20)
+cHead = color.new(#1c2230, 0)
+f_dir(txt) => txt == "CROSS UP" or txt == "BUYERS" or txt == "TRENDING BULL" or str.contains(txt, "BULL") or str.contains(txt, "ABOVE") or str.contains(txt, "RECLAIMED") ? cGood : txt == "CROSS DOWN" or txt == "SELLERS" or txt == "TRENDING BEAR" or str.contains(txt, "BEAR") or str.contains(txt, "BELOW") or str.contains(txt, "LOST") ? cBad : cGray
+momCol = momTxt == "STRONG" ? cGood : momTxt == "GOOD" ? color.new(#2e7d32, 20) : momTxt == "WEAK" ? cWarn : cGray
+
+txSz = dashSz == "small" ? size.small : dashSz == "large" ? size.large : size.normal
+var table dash = table.new(position.top_right, 2, 6, border_width = 1, border_color = color.new(color.black, 60))
+if dashOn and barstate.islast
+    table.cell(dash, 0, 0, "WATCHTOWER", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 0, "WT · " + sessTxt, text_color = color.white, bgcolor = inRTH ? cHead : cWarn, text_size = txSz)
+    table.cell(dash, 0, 1, "8/21 CONTROL", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 1, ctlTxt,   text_color = color.white, bgcolor = f_dir(ctlTxt),   text_size = txSz)
+    table.cell(dash, 0, 2, "KEY LEVEL", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 2, lvlTxt,   text_color = color.white, bgcolor = f_dir(lvlTxt),   text_size = txSz)
+    table.cell(dash, 0, 3, "TREND", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 3, trendTxt, text_color = color.white, bgcolor = f_dir(trendTxt), text_size = txSz)
+    table.cell(dash, 0, 4, "ACTIVE SETUP", text_color = color.white, bgcolor = f_dir(setupTxt), text_size = txSz)
+    table.cell(dash, 1, 4, setupTxt, text_color = color.white, bgcolor = f_dir(setupTxt), text_size = txSz)
+    table.cell(dash, 0, 5, "MOMENTUM", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 5, momTxt,   text_color = color.white, bgcolor = momCol,          text_size = txSz)
+
+// ── Alerts (fire on confirmed RTH bars only) ─────────────────────────────────
+// v1.2: dynamic alert() calls — one TradingView alert on "Any alert()
+// function call" covers levels, control flips, and setup states. With
+// Discord format on, point the alert's webhook URL at a Discord webhook
+// and messages land in the channel directly.
+f_say(msg) =>
+    m = syminfo.ticker + " " + timeframe.period + ": " + msg
+    alert(dcFmt ? '{"content": "🏰 ' + m + '"}' : m, alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and inRTH
+    // Level breaks: a confirmed close through ANY level in the book —
+    // the wick rule, as an alert. Session keys and gamma slots alike.
+    if alrtLv and array.size(lvlPrices) > 0
+        for i = 0 to array.size(lvlPrices) - 1
+            px = array.get(lvlPrices, i)
+            nm = array.get(lvlNames, i)
+            if close > px and close[1] <= px
+                f_say("closed ABOVE " + nm + " " + str.tostring(px, format.mintick) + " @ " + str.tostring(close, format.mintick))
+            if close < px and close[1] >= px
+                f_say("closed BELOW " + nm + " " + str.tostring(px, format.mintick) + " @ " + str.tostring(close, format.mintick))
+    // Control flips
+    if alrtCt and xUp
+        f_say("8/21 CROSS UP — buyers take control")
+    if alrtCt and xDn
+        f_say("8/21 CROSS DOWN — sellers take control")
+    // Fresh setup states
+    if alrtSt and st != st[1] and (st == "RETEST BULL" or st == "RETEST BEAR" or st == "HELD BULL" or st == "HELD BEAR")
+        f_say("setup: " + (na(stLvlNm) ? st : stLvlNm + " " + st))
+
+freshRB = barstate.isconfirmed and inRTH and st == "RETEST BULL" and st[1] != "RETEST BULL"
+freshRS = barstate.isconfirmed and inRTH and st == "RETEST BEAR" and st[1] != "RETEST BEAR"
+ready   = barstate.isconfirmed and inRTH and trendTxt != "RANGING" and (momTxt == "GOOD" or momTxt == "STRONG") and (str.contains(setupTxt, "RETEST BULL") or str.contains(setupTxt, "RETEST BEAR") or str.contains(setupTxt, "HELD"))
+alertcondition(freshRB, "WT Retest BULL",  "Watchtower Tape Bot: fresh RETEST BULL confirmed")
+alertcondition(freshRS, "WT Retest BEAR",  "Watchtower Tape Bot: fresh RETEST BEAR confirmed")
+alertcondition(ready,   "WT READY",        "Watchtower Tape Bot: trend + retest + momentum aligned")
