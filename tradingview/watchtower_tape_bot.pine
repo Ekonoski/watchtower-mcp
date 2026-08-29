@@ -80,7 +80,9 @@ lvlPct = input.float(1.0, "Key-level search width (% of price)", minval = 0.1, s
 inRTH  = not na(time(timeframe.period, "0930-1600", "America/New_York"))
 inPre  = not na(time(timeframe.period, "0400-0930", "America/New_York"))
 inPost = not na(time(timeframe.period, "1600-2000", "America/New_York"))
-sessTxt = inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
+sess24 = syminfo.type == "crypto" or syminfo.type == "forex"
+sessTxt = sess24 ? "24H" : inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
+canVote = sess24 or inRTH
 isNewDay = ta.change(time("D")) != 0
 isNewWk  = ta.change(time("W")) != 0
 
@@ -113,7 +115,8 @@ ctlIsRng  = ctlTxt == "RANGING"
 // on weekends/premarket the "current" daily bar is already finished, so
 // [1] reached one day too far back — Thursday's low labeled PDL). Use
 // the closed [0] bar when its date is behind today; [1] live.
-dT  = request.security(syminfo.tickerid, "D", time,    lookahead = barmerge.lookahead_on)
+dEndT = request.security(syminfo.tickerid, "D", time_close, lookahead = barmerge.lookahead_on)
+wEndT = request.security(syminfo.tickerid, "W", time_close, lookahead = barmerge.lookahead_on)
 dH0 = request.security(syminfo.tickerid, "D", high,    lookahead = barmerge.lookahead_on)
 dL0 = request.security(syminfo.tickerid, "D", low,     lookahead = barmerge.lookahead_on)
 dH1 = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
@@ -122,8 +125,10 @@ wH0 = request.security(syminfo.tickerid, "W", high,    lookahead = barmerge.look
 wL0 = request.security(syminfo.tickerid, "W", low,     lookahead = barmerge.lookahead_on)
 wH1 = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
 wL1 = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
-dayGone = dayofmonth(timenow, "America/New_York") != dayofmonth(dT, "America/New_York") or month(timenow, "America/New_York") != month(dT, "America/New_York")
-wkEnd   = dayofweek(timenow, "America/New_York") == dayofweek.saturday or dayofweek(timenow, "America/New_York") == dayofweek.sunday
+// v1.3.1 — the universal completion test: a day/week is "gone" only
+// when now is past that bar's own scheduled close. No session guesses.
+dayGone = not na(dEndT) and timenow >= dEndT
+wkGone  = not na(wEndT) and timenow >= wEndT
 // v1.3 — chart-bar accumulated day/week ranges: the levels the EYE
 // sees (Eric, the JD ETH catch: official-session lows float above
 // visible extended-hours wicks). Whatever bars the chart shows build
@@ -156,8 +161,8 @@ else
 
 pdh = lvlCh ? (dayGone ? cDh : pDh) : (dayGone ? dH0 : dH1)
 pdl = lvlCh ? (dayGone ? cDl : pDl) : (dayGone ? dL0 : dL1)
-pwh = lvlCh ? (wkEnd ? cWh : pWh) : (wkEnd ? wH0 : wH1)
-pwl = lvlCh ? (wkEnd ? cWl : pWl) : (wkEnd ? wL0 : wL1)
+pwh = lvlCh ? (wkGone ? cWh : pWh) : (wkGone ? wH0 : wH1)
+pwl = lvlCh ? (wkGone ? cWl : pWl) : (wkGone ? wL0 : wL1)
 
 // Premarket high/low (accumulated 4:00–9:30, frozen for the session)
 var float pmH = na
@@ -165,13 +170,13 @@ var float pmL = na
 if isNewDay
     pmH := na
     pmL := na
-if inPre
+if inPre and not sess24
     pmH := na(pmH) ? high : math.max(pmH, high)
     pmL := na(pmL) ? low  : math.min(pmL, low)
 
 // Opening range (first orbMin minutes of RTH), complete only when finished
 orbEndT = timestamp("America/New_York", year, month, dayofmonth, 9, 30 + orbMin, 0)
-inORB   = inRTH and time < orbEndT
+inORB   = inRTH and time < orbEndT and not sess24
 var float orbH = na
 var float orbL = na
 var bool  orbDone = false
@@ -269,7 +274,7 @@ if isNewDay
     stLvlNm := na
     stAge   := 0
 
-if barstate.isconfirmed and inRTH
+if barstate.isconfirmed and canVote
     stAge += 1
     // A fresh confirmed break of the nearest level (re)arms the machine
     if not na(nearPx)
@@ -298,7 +303,7 @@ if barstate.isconfirmed and inRTH
             stLvl   := na
             stLvlNm := na
 
-setupTxt = not inRTH ? (st == "IDLE" ? "CLOSED" : "CLOSED · was " + st) : st == "IDLE" ? "NO ACTIVE SETUP" : na(stLvlNm) ? st : stLvlNm + " " + st
+setupTxt = not canVote ? (st == "IDLE" ? "CLOSED" : "CLOSED · was " + st) : st == "IDLE" ? "NO ACTIVE SETUP" : na(stLvlNm) ? st : stLvlNm + " " + st
 
 // ── Key-level row text ───────────────────────────────────────────────────────
 lvlTxt = na(nearNm) ? "NO LEVEL NEAR" : nearNm + (close > nearPx ? " ABOVE" : " BELOW")
@@ -315,7 +320,7 @@ rngX    = ta.sma(high - low, 5) / atr14                    // range expansion
 dirRun  = math.abs(math.sum(close > open ? 1 : -1, 6))     // directional persistence of last 6 bars
 volX    = volume / ta.sma(volume, 20)                      // participation
 score   = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0)
-momTxt  = not inRTH ? "CLOSED" : trendTxt == "RANGING" and score <= 1 ? "SIDEWAYS" : score >= 3 ? "STRONG" : score == 2 ? "GOOD" : "WEAK"
+momTxt  = not canVote ? "CLOSED" : trendTxt == "RANGING" and score <= 1 ? "SIDEWAYS" : score >= 3 ? "STRONG" : score == 2 ? "GOOD" : "WEAK"
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 cGood = color.new(#0d8f6f, 20)
@@ -330,7 +335,7 @@ txSz = dashSz == "small" ? size.small : dashSz == "large" ? size.large : size.no
 var table dash = table.new(position.top_right, 2, 6, border_width = 1, border_color = color.new(color.black, 60))
 if dashOn and barstate.islast
     table.cell(dash, 0, 0, "WATCHTOWER", text_color = color.white, bgcolor = cHead, text_size = txSz)
-    table.cell(dash, 1, 0, "WT · " + sessTxt, text_color = color.white, bgcolor = inRTH ? cHead : cWarn, text_size = txSz)
+    table.cell(dash, 1, 0, "WT · " + sessTxt, text_color = color.white, bgcolor = canVote ? cHead : cWarn, text_size = txSz)
     table.cell(dash, 0, 1, "8/21 CONTROL", text_color = color.white, bgcolor = cHead, text_size = txSz)
     table.cell(dash, 1, 1, ctlTxt,   text_color = color.white, bgcolor = f_dir(ctlTxt),   text_size = txSz)
     table.cell(dash, 0, 2, "KEY LEVEL", text_color = color.white, bgcolor = cHead, text_size = txSz)
@@ -351,7 +356,7 @@ f_say(msg) =>
     m = syminfo.ticker + " " + timeframe.period + ": " + msg
     alert(dcFmt ? '{"content": "WT | ' + m + '"}' : m, alert.freq_once_per_bar_close)
 
-if barstate.isconfirmed and inRTH
+if barstate.isconfirmed and canVote
     // Level breaks: a confirmed close through ANY level in the book —
     // the wick rule, as an alert. Session keys and gamma slots alike.
     if alrtLv and array.size(lvlPrices) > 0
@@ -371,9 +376,9 @@ if barstate.isconfirmed and inRTH
     if alrtSt and st != st[1] and (st == "RETEST BULL" or st == "RETEST BEAR" or st == "HELD BULL" or st == "HELD BEAR")
         f_say("setup: " + (na(stLvlNm) ? st : stLvlNm + " " + st))
 
-freshRB = barstate.isconfirmed and inRTH and st == "RETEST BULL" and st[1] != "RETEST BULL"
-freshRS = barstate.isconfirmed and inRTH and st == "RETEST BEAR" and st[1] != "RETEST BEAR"
-ready   = barstate.isconfirmed and inRTH and trendTxt != "RANGING" and (momTxt == "GOOD" or momTxt == "STRONG") and (str.contains(setupTxt, "RETEST BULL") or str.contains(setupTxt, "RETEST BEAR") or str.contains(setupTxt, "HELD"))
+freshRB = barstate.isconfirmed and canVote and st == "RETEST BULL" and st[1] != "RETEST BULL"
+freshRS = barstate.isconfirmed and canVote and st == "RETEST BEAR" and st[1] != "RETEST BEAR"
+ready   = barstate.isconfirmed and canVote and trendTxt != "RANGING" and (momTxt == "GOOD" or momTxt == "STRONG") and (str.contains(setupTxt, "RETEST BULL") or str.contains(setupTxt, "RETEST BEAR") or str.contains(setupTxt, "HELD"))
 alertcondition(freshRB, "WT Retest BULL",  "Watchtower Tape Bot: fresh RETEST BULL confirmed")
 alertcondition(freshRS, "WT Retest BEAR",  "Watchtower Tape Bot: fresh RETEST BEAR confirmed")
 alertcondition(ready,   "WT READY",        "Watchtower Tape Bot: trend + retest + momentum aligned")
