@@ -2247,6 +2247,18 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot multiscale seed skipped: {e}")
 
+    def _seed_greendot_gate():
+        """The gated-ladder study (2026-08-29): tranches 2/3 arm only
+        after a daily 8/21 reclaim — the knife cohort walled off from
+        the add money. Variant 'ladder_gated' beside the baseline."""
+        try:
+            from analysis.greendot_ladder_gate import run
+            for _ in range(20):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot gate seed skipped: {e}")
+
     def _seed_greendot_align():
         """Daily-dot alignment pass (2026-08-29, Eric: the daily trade
         is dot + price above the 8/21 before the EMAs flip). Trails
@@ -2343,6 +2355,7 @@ def start_scheduler():
         _seed_greendot_ema()
         _seed_greendot_multiscale()
         _seed_greendot_align()
+        _seed_greendot_gate()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
