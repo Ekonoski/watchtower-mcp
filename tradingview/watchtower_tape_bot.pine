@@ -1,6 +1,13 @@
 //@version=5
-// WATCHTOWER TAPE BOT v2.1
+// WATCHTOWER TAPE BOT v2.2
 // CONTROL > LEVEL > TREND > SETUP > MOMENTUM. Confirmed closes only.
+// v2.2 — stock overnight range toggle (2026-08-29, the TSLA read):
+//   with "Stocks: overnight range" ON, the fuchsia pair becomes ONH/ONL
+//   on stocks too — accumulated from the 4:00 PM close through the next
+//   9:30 open (post-market + premarket as one overnight tape, weekends
+//   spanned naturally), frozen for the day at 9:30. OFF (default) keeps
+//   the verified equity-standard PMH/PML. Needs extended hours visible
+//   on the chart; on an RTH-only chart the overnight has no bars.
 // v2.1 — futures made first-class (2026-08-29, the NQ check):
 //   - Futures 24H toggle: with it ON (default), Globex overnight bars
 //     vote — setups arm and alerts fire around the clock, badge shows
@@ -27,6 +34,7 @@ grpL   = "Automatic levels"
 usePD  = input.bool(true,  "Prev day high/low (PDH/PDL)",   group = grpL)
 usePW  = input.bool(true,  "Prev week high/low (PWH/PWL)",  group = grpL)
 usePM  = input.bool(true,  "Premarket / overnight high-low", group = grpL)
+stkON  = input.bool(false, "Stocks: overnight range ONH/ONL (4PM close to 9:30 open) instead of premarket", group = grpL)
 useORB = input.bool(true,  "Opening range (ORB)",           group = grpL)
 orbMin = input.int(30, "ORB minutes", options = [15, 30], group = grpL)
 
@@ -159,27 +167,40 @@ if okPW
     pwh := wkOver ? cWh : pWh
     pwl := wkOver ? cWl : pWl
 
-// ── Premarket (stocks) / overnight (futures) range ──
-// Stocks: the 4:00-9:30 ET equity premarket, as verified.
+// ── Premarket (stocks) / overnight (futures + toggled stocks) range ──
+// Stocks default: the 4:00-9:30 ET equity premarket, as verified.
 // Futures (v2.1): "premarket" is the wrong concept — the level that
 // matters is the OVERNIGHT session high/low, accumulated from the
 // 18:00 ET Globex open (the day reset) until the 9:30 equity open,
 // then frozen for the day. Labeled ONH/ONL so nobody mistakes it.
+// Stocks with stkON (v2.2): the same overnight concept on equities —
+// a new overnight starts on the first extended-hours bar after RTH
+// (the 4:00 PM close), spans post + pre as one tape (weekends and the
+// 8PM-4AM bar gap crossed naturally by bar sequence, not by clock),
+// and freezes at the 9:30 open. Needs extended hours on the chart.
+useON = stkON and not isFut and not sess24 and intra
 var float pmH = na
 var float pmL = na
 var bool  rthSeen = false
 if isNewDay
-    pmH := na
-    pmL := na
     rthSeen := false
+    if not useON
+        pmH := na
+        pmL := na
 if inRTH
     rthSeen := true
-inON = isFut and intra and not inRTH and not rthSeen
-if isFut ? inON : inPre
+inExt = inPre or inPost
+onNew = useON and inExt and inRTH[1]
+if onNew
+    pmH := high
+    pmL := low
+inON  = isFut and intra and not inRTH and not rthSeen
+accum = isFut ? inON : useON ? (inExt and not onNew) : inPre
+if accum
     pmH := na(pmH) ? high : math.max(pmH, high)
     pmL := na(pmL) ? low  : math.min(pmL, low)
-pmHi = isFut ? "ONH" : "PMH"
-pmLo = isFut ? "ONL" : "PML"
+pmHi = isFut or useON ? "ONH" : "PMH"
+pmLo = isFut or useON ? "ONL" : "PML"
 
 orbEndT = timestamp("America/New_York", year, month, dayofmonth, 9, 30 + orbMin, 0)
 inORB   = inRTH and time < orbEndT and not sess24
