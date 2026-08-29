@@ -792,6 +792,18 @@ Rendering doctrine, same spirit as the rest of this file:
   NULLs — LEAST(fwd6m, 300) turns a data hole into +300% — so every
   capped aggregate guards NULL explicitly (the med-11.8-vs-7.7
   reconcile catch; numbers on one line must reconcile).
+  ROBUSTNESS (same day, Eric's 3W-chart question — a 3W bar is 15
+  trading days): the whole spec re-blocked at 15-day fixed-anchor
+  blocks (analysis/greendot_robust15.py, tables greendot_dots15,
+  find_dots/bucket imported never reimplemented) and the edge
+  SURVIVES — matched-ticker deep cohort med 6-mo +5.9/+12.8% by era
+  vs 16D's +7.4/+13.6%, win rates within 1.5pts, dip-to-low −20% on
+  both grids, and the depth throttle replicates (deep +7.4 vs
+  shallow +3.3). The signal is the ~3-week compression, not the
+  number 16; 3W and 16D charts are interchangeable reads. Individual
+  MARGINAL dots flicker between grids (ACHR's false signal) — deep
+  dots are grid-stable, one more reason cross ≤ −30 is the
+  load-bearing leg.
 
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
