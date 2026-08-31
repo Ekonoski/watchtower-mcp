@@ -958,6 +958,22 @@ Rendering doctrine, same spirit as the rest of this file:
   boot catch-up is this one's. The LEAST/GREATEST-ignores-NULLs
   trap fired again (ema21x r=NULL averaged as 10.0R) and was caught
   by this file's own note — the reconcile rule works.
+  SAME NIGHT, the hybrid-exit follow-up (Eric: "why can't we do the
+  hybrid test now?" — no reason; hybridexit_events, marker
+  hybridexit_v1, exits re-simulated on the SAME graded entries): the
+  TRAIL-AFTER-1R variants are the only exits positive in BOTH
+  year-halves on both bps and R at leader days (21-EMA-close trail
+  +19.6/+13.4 bps, +0.40/+0.27 R, ~40% win; 5m-low ratchet the
+  near-equal twin at 42-43% win), beating the fixed hold-to-close
+  (which flips negative in half 2 on R in this frame) and confirming
+  the stop grid's independent EMA-trail read. Breakeven-after-1R is
+  the graded TRAP of the family (17% win, half-2 negative — the
+  entry-level stop sits exactly where the normal afternoon pullback
+  prints), and the 2R bracket stays refused. The 🎯 alert carries the
+  full lifecycle verbatim: close-rule struct stop + 1% disaster
+  touch-cap, then at +1R the 21-EMA 5m-close trail, bell exit for
+  survivors. One live rule, one alternative (the ratchet), no
+  switching by feel.
 
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
