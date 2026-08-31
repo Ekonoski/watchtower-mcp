@@ -1894,6 +1894,24 @@ def start_scheduler():
             except Exception:
                 pass
 
+    # 🎯 morning tickets ping (2026-09-01, Eric after the chop day:
+    # "How do I make sure I don't miss these trades?"): today's armed
+    # gamma specs as bracket-ready tickets at 9:20, so resting orders
+    # get placed before the open. Zero armed states itself.
+    def _spec_ping():
+        try:
+            from alerts.spec_ping import run_spec_ping
+            run_spec_ping()
+        except Exception:
+            log.exception("[spec-ping] failed")
+
+    scheduler.add_job(
+        _spec_ping,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="20,24",
+                    timezone=et),
+        id="spec_ping", replace_existing=True,
+    )
+
     scheduler.add_job(
         _daybias_ping,
         CronTrigger(day_of_week="mon-fri", hour="9", minute="51,56",
