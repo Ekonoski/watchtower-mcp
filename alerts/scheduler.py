@@ -1762,6 +1762,21 @@ def start_scheduler():
         id="gamma_drift_baseline", replace_existing=True,
     )
 
+    # Index 15m bar appender (2026-08-31, the frozen-table find): the
+    # SPY/QQQ/IWM research record froze at Aug 21 because only the
+    # one-shot backfill ever wrote it. Freshness now has an owner —
+    # 16:20 ET daily, after the close, before the 16:47 target-shadow
+    # pass; a boot catch-up rides _seed_all.
+    def _index_bars_append():
+        from analysis.index_bars_daily import run
+        run()
+
+    scheduler.add_job(
+        _index_bars_append,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="20", timezone=et),
+        id="index_bars_append", replace_existing=True,
+    )
+
     # Desk event stream — the paper desk narrating fills/exits to Discord
     # (#desk). Polls the record on the trigger-loop cadence plus one pass
     # at 16:25 to catch the 16:20 settle verdicts. At-most-once per trade
@@ -2477,6 +2492,11 @@ def start_scheduler():
         _seed_reddot()
         _seed_greendot_sweep()
         _seed_tapebot_retest()
+        try:
+            from analysis.index_bars_daily import run as _idx_append
+            _idx_append()   # refresh the index 15m record BEFORE the
+        except Exception as e:  # studies that read it grade this boot
+            log.warning(f"[scheduler] index-bars catch-up skipped: {e}")
         _seed_flipprox()
         _seed_rsleader()
         _seed_tapeentry()
