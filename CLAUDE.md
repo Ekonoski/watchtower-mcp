@@ -901,6 +901,64 @@ Rendering doctrine, same spirit as the rest of this file:
   put the desk's rules on Eric's charts and page him on level
   breaks — eyes and alerts, not hands.
 
+- **The frequency night: selection is the edge, entries are commodities,
+  and the stop wants the wick rule** (2026-08-31, the evening after the
+  chop-day beating — Eric: "find the most liquid names for options and
+  test them... which entries are the best... and where the best stop is.
+  I will be mechanical with this."). Three pre-registered studies read
+  out the same night, all on 2 years of 1m bars (11 liquid names:
+  scanner 7 + rest of mag-7; ~2.1M bars; year-half split + per-name
+  replication as the bar; entries at closes, no costs, stated).
+  (1) **RS-leader** (rs_leader_events, marker rsleader_study_v1): the
+  mag-7 name leading QQQ by >=0.4% at 9:45, bought on its first 1m
+  8/21 pullback that CLOSES holding (9:45-11:00), held to the close,
+  pays +0.45R avg (capped +-10R — the outlier lesson applied), ~52%
+  positive days, POSITIVE IN BOTH HALVES AND ALL 7 NAMES. The
+  pullback is the entry (owning the leader from 9:45 med +0.02/+0.09
+  only), leadership is the selector (midpack same entry sign-flips by
+  half), and the 2R-target expression FAILS replication (4/7) — the
+  edge wants the day, not a scalp. Laggard short: refused, era flip.
+  (2) **Tape-entry** (tapeentry_events/days, marker tapeentry_study_v1):
+  UNCONDITIONED, every Bot/Scanner entry family on the 11 names is a
+  coin flip — best cell (the v1.7 1m-gated long) +2-3 bps avg, and
+  the retest families do NOT beat their chase controls (Eric's
+  retest-is-best assumption graded and refused as stated; the tapebot
+  index verdict replicates on single names). But JOINED to leader
+  days the same 1m-gated entry turns +7 to +21 bps across every stop
+  variant — selection transforms a commodity entry. Medians negative
+  with positive averages everywhere: the profit is the right tail,
+  one more reason not to cap winners.
+  (3) **The stop verdict** (the stops JSONB grid, graded on the same
+  entries): the tight touch-based structural stop under the 1m
+  pullback bar is a whipsaw machine (86% stopped unconditioned, 38%
+  stopped-then-green; on leader days +7.2 bps). The SAME LEVEL under
+  the wick rule — exit only on a 5m CLOSE through — nearly doubles
+  leader-day expectancy (+12.6 bps, whipsaw 29%); a 1% disaster cap
+  whipsaws only 8%; the 21-EMA-close trail has the best average
+  (+21) and the worst median (-6) — the aggressive variant. Single
+  stocks want confirmed closes at the stop, exactly as the defense
+  study read (and opposite the index, per day-bias — both stay true).
+  The 🎯 alert carries the close-rule stop verbatim.
+  Shipped the same night: alerts/rsleader_ping.py (🧭 9:31 flip
+  proximity, 🏁 9:45 rank/stand-aside, 🎯 per-minute GO watch firing
+  at the 1m candle close — definitions IMPORTED from the graded
+  study, partial bars dropped at the data layer, at-most-once,
+  restart-safe); the flip-proximity read (flipprox_days: opens within
+  0.3% of the flip cross it ~1.3-1.5x/day, beyond 0.6% ~0.1x — the
+  "is it hugging the flip" question is partially knowable at 9:30;
+  small n, measurement only); trade_journal + watchtower_journal_log/
+  watchtower_journal (Eric's manual book, any-session writable, Grok
+  relay allowed to THIS table only, R never fabricated, losers lead);
+  and analysis/index_bars_daily.py — because the night also found
+  index_intraday_bars FROZEN at Aug 21 (only the one-shot backfill
+  ever wrote it; flipprox missed the exact chop days it was built
+  for, rsleader stranded 6 days short of its marker): a research
+  table nobody appends to is a _social_block with a date on it —
+  every stored record needs an owning job, and the 16:20 cron +
+  boot catch-up is this one's. The LEAST/GREATEST-ignores-NULLs
+  trap fired again (ema21x r=NULL averaged as 10.0R) and was caught
+  by this file's own note — the reconcile rule works.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
