@@ -1,7 +1,7 @@
 //@version=5
 // ─────────────────────────────────────────────────────────────────────────────
 // WATCHTOWER TAPE SCANNER v1.7
-// v1.7 (2026-09-02, Eric's day-one live read): the 1M column speaks
+// v1.7 (2026-08-31, Eric's day-one live read): the 1M column speaks
 // the SAME language as the RETEST column (TEST 8/21, 8/21 BULL/BEAR,
 // WAIT) and is active ONLY while the row's scan-TF trend is on — and
 // only in that trend's direction (counter-trend 1m signals are
