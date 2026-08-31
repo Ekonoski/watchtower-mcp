@@ -1,8 +1,14 @@
 //@version=5
 // ─────────────────────────────────────────────────────────────────────────────
-// WATCHTOWER TAPE SCANNER v1.4
-// v1.4 (2026-08-31): retest lookback is an input, default 3 bars (was
-// hardcoded 5 — 25 minutes on the 5m scan; "that seems like a lot").
+// WATCHTOWER TAPE SCANNER v1.5
+// v1.5 (2026-08-31, Eric's spec — "I need to know when something is
+// retesting NOW"): RETEST is two explicit states. TEST 8/21 (amber) =
+// the CURRENT bar is straddling the EMA in a trend — the fight, live.
+// 8/21 BULL/BEAR (green/red) = the touch RESOLVED on the just-closed
+// bar (wick rule: the close held the level), looking back only rtLook
+// CONFIRMED bars (default 1 — the bar that just closed, nothing
+// older). READY requires the RESOLVED state, never the live test.
+// v1.4 (2026-08-31): retest lookback became an input (was hardcoded 5).
 // Seven symbols, one question: which chart deserves attention right now?
 // READY > BUILDING > NO SETUP, momentum tiebreak. Confirmed bars only.
 // The engine reads EXTENDED-session data (so it always knows what time it
@@ -28,7 +34,7 @@ indicator("Watchtower Tape Scanner", overlay = true)
 uni    = input.string("MAG 7", "Universe", options = ["MAG 7", "CUSTOM 7"])
 scanTF = input.string("5",  "Scan timeframe (minutes)", options = ["5", "15"])
 orbMin = input.int(30, "ORB minutes", options = [15, 30])
-rtLook = input.int(3, "Retest lookback (bars)", minval = 1, maxval = 10, tooltip = "How recent an EMA rejection wick must be to count as a RETEST. 3 bars on the 5m scan = 15 minutes. Was hardcoded 5 in v1.3; Eric tightened it 2026-08-31 (a 25-minute-old wick is a state, not a trigger).")
+rtLook = input.int(1, "Resolved-retest memory (confirmed bars)", minval = 1, maxval = 5, tooltip = "How many CONFIRMED bars a resolved 8/21 BULL/BEAR stays lit after the close that proved it. 1 = only the bar that just closed. The live TEST state is always current-bar-only.")
 nShow  = input.int(7, "Rows to show", minval = 1, maxval = 7)
 tblPos = input.string("Top right", "Table position",
      options = ["Top right", "Top left", "Middle right", "Bottom right", "Bottom left"])
@@ -97,11 +103,15 @@ f_scan() =>
     if rth and not inORB and not na(orbH)
         orbDone := true
     orb = not orbDone ? 9 : close > orbH ? 1 : close < orbL ? -1 : 0
+    // v1.5 — two-state retest. Live: is THIS bar straddling the EMA?
+    touch8  = low <= emaF and high >= emaF
+    touch21 = low <= emaS and high >= emaS
+    // Resolved: did a CONFIRMED bar (i >= 1) touch and CLOSE holding?
     r8b = false
     r21b = false
     r8s = false
     r21s = false
-    for i = 0 to rtLook - 1
+    for i = 1 to rtLook
         if session.ismarket[i]
             if trend == 1 and low[i] <= emaF[i] and close[i] > emaF[i]
                 r8b := true
@@ -115,7 +125,11 @@ f_scan() =>
          r8b  and close > emaF ? 1  :
          r21b and close > emaS ? 2  :
          r8s  and close < emaF ? -1 :
-         r21s and close < emaS ? -2 : 0
+         r21s and close < emaS ? -2 :
+         trend == 1  and touch8  ? 3  :
+         trend == -1 and touch8  ? -3 :
+         trend == 1  and touch21 ? 4  :
+         trend == -1 and touch21 ? -4 : 0
     rngX = ta.sma(high - low, 5) / ta.atr(14)
     dirRun = math.abs(math.sum(close > open ? 1 : -1, 6))
     volX = volume / ta.sma(volume, 20)
@@ -148,7 +162,7 @@ rtG = live ? rtG0 : 0
 // ── Row assembly, ranking, rendering ─────────────────────────────────────────
 f_ctlTxt(c) => c == 1 ? "CROSS UP" : c == 2 ? "BUYERS" : c == -1 ? "CROSS DN" : c == -2 ? "SELLERS" : "RANGE"
 f_orbTxt(o) => o == 9 ? "BUILDING" : o == 1 ? "ABOVE" : o == -1 ? "BELOW" : "INSIDE"
-f_rtTxt(r)  => r == 1 ? "8 BULL" : r == 2 ? "21 BULL" : r == -1 ? "8 BEAR" : r == -2 ? "21 BEAR" : "WAIT"
+f_rtTxt(r)  => r == 1 ? "8 BULL" : r == 2 ? "21 BULL" : r == -1 ? "8 BEAR" : r == -2 ? "21 BEAR" : r == 3 or r == -3 ? "TEST 8" : r == 4 or r == -4 ? "TEST 21" : "WAIT"
 f_momTxt(m, t) => m >= 3 ? "STRONG" : m == 2 ? "GOOD" : t == 0 and m <= 1 ? "SIDEWAYS" : "WEAK"
 f_lvl(cl, ph, pl, dh, dl) =>
     best = 10.0e10
@@ -167,7 +181,9 @@ f_lvl(cl, ph, pl, dh, dl) =>
         nm := cl > pl ? "PML ABOVE" : "PML BELOW"
     nm
 f_status(t, r, m) =>
-    aligned = (t == 1 and r > 0) or (t == -1 and r < 0)
+    // READY takes only a RESOLVED retest (codes 1/2, -1/-2) — a live,
+    // unresolved TEST never makes the verdict (the wick rule).
+    aligned = (t == 1 and (r == 1 or r == 2)) or (t == -1 and (r == -1 or r == -2))
     t != 0 and aligned and m >= 2 ? 2 : t != 0 ? 1 : 0
 
 f_name(s) => array.get(str.split(s, ":"), array.size(str.split(s, ":")) - 1)
@@ -196,7 +212,7 @@ cG = color.new(#0d8f6f, 15)
 cR = color.new(#c0392b, 15)
 cW = color.new(#c07a1f, 15)
 cN = color.new(#5a6373, 15)
-f_c(t) => str.contains(t, "BULL") or str.contains(t, "UP") or str.contains(t, "BUYERS") or str.contains(t, "ABOVE") or t == "STRONG" or t == "READY" ? cG : str.contains(t, "BEAR") or str.contains(t, "DN") or str.contains(t, "SELLERS") or str.contains(t, "BELOW") ? cR : t == "GOOD" or t == "BUILDING" or t == "WEAK" ? cW : cN
+f_c(t) => str.contains(t, "BULL") or str.contains(t, "UP") or str.contains(t, "BUYERS") or str.contains(t, "ABOVE") or t == "STRONG" or t == "READY" ? cG : str.contains(t, "BEAR") or str.contains(t, "DN") or str.contains(t, "SELLERS") or str.contains(t, "BELOW") ? cR : str.contains(t, "TEST") or t == "GOOD" or t == "BUILDING" or t == "WEAK" ? cW : cN
 f_stTxt(s) => s == 2 ? "READY" : s == 1 ? "BUILDING" : "NO SETUP"
 
 sessTxt = session.ismarket ? "RTH" : session.ispremarket ? "PRE" : session.ispostmarket ? "POST" : "CLOSED"
