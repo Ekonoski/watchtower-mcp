@@ -2383,6 +2383,32 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] fill audit seed skipped: {e}")
 
+    def _seed_rsleader():
+        """The RS-leader morning study (2026-09-01, the frequency ask):
+        mag-7 1m backfill then the graded TSLA-trade study. Both
+        marker-retired with resume."""
+        try:
+            from analysis.rsleader_bars import run as run_bars
+            from analysis.rsleader_study import run as run_study
+            for _ in range(3):
+                if run_bars():
+                    break
+            for _ in range(3):
+                if run_study():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] rsleader seed skipped: {e}")
+
+    def _seed_flipprox():
+        """Flip-proximity character study (2026-09-01, the chop-day
+        question): graded from recorded boards + stored 15m bars;
+        accumulates daily after the first pass."""
+        try:
+            from analysis.flipprox_study import run
+            run()
+        except Exception as e:
+            log.warning(f"[scheduler] flipprox seed skipped: {e}")
+
     def _seed_tapebot_retest():
         """The Tape Bot retest-machine study (2026-08-29, Eric: should
         the indicator's setups trade autonomously?) — the Pine state
@@ -2434,6 +2460,8 @@ def start_scheduler():
         _seed_reddot()
         _seed_greendot_sweep()
         _seed_tapebot_retest()
+        _seed_flipprox()
+        _seed_rsleader()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
