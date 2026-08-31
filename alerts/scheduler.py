@@ -2399,6 +2399,23 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] rsleader seed skipped: {e}")
 
+    def _seed_tapeentry():
+        """The tape-entry study (2026-09-02, Eric's best-entry/best-stop
+        ask): liquid-name 1m backfill (SPY/QQQ/IWM/AMD — the mag-7 ride
+        the RS-leader table) then the entry-family x stop-grid grade.
+        Marker-retired with resume."""
+        try:
+            from analysis.liquid_bars import run as run_bars
+            from analysis.tapeentry_study import run as run_study
+            for _ in range(3):
+                if run_bars():
+                    break
+            for _ in range(3):
+                if run_study():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] tapeentry seed skipped: {e}")
+
     def _seed_flipprox():
         """Flip-proximity character study (2026-09-01, the chop-day
         question): graded from recorded boards + stored 15m bars;
@@ -2462,6 +2479,7 @@ def start_scheduler():
         _seed_tapebot_retest()
         _seed_flipprox()
         _seed_rsleader()
+        _seed_tapeentry()
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 

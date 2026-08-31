@@ -640,6 +640,72 @@ def watchtower_cipher_exemplars() -> str:
 
 
 @mcp.tool()
+def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
+                           setup: str = "", timeframe: str = "",
+                           instrument: str = "", entered_at: str = "",
+                           exited_at: str = "", entry_px: float = None,
+                           exit_px: float = None, stop_px: float = None,
+                           target_px: float = None, qty: float = None,
+                           pnl_dollars: float = None, note: str = "",
+                           mistakes: str = "") -> str:
+    """
+    Log one of ERIC'S OWN trades into his journal — his manual book,
+    separate from the paper desk's ledger by design. Callable from any
+    session (Eric directly, or the Grok bot relaying his entries — set
+    source='grok' then).
+
+    Log every trade, winners and losers alike; the journal exists so
+    the record can be graded later (~30 trades per the small-n rule).
+    Only ticker and direction are required — log what is known and
+    leave the rest as holes rather than guessing. Prices are the
+    UNDERLYING's (log the underlying even on an options trade; put the
+    contract in `instrument` and the dollar result in `pnl_dollars`).
+    R is computed from entry/stop/exit when all three exist, never
+    fabricated.
+
+    Args:
+      ticker: symbol.  direction: 'long' or 'short'.
+      source: who is logging — 'eric' (default) or 'grok'.
+      setup: the Scanner/Bot vocabulary — "8 BULL retest", "1M gated
+        retest", "ORB break", "PML breakdown fade"…
+      timeframe: the chart the decision was made on ("1m", "5m"…).
+      instrument: shares / call / put / spread (contract detail fine).
+      entered_at / exited_at: ISO timestamps, ET assumed ("2026-09-02T10:35").
+        entered_at defaults to now. Leave exited_at empty while open.
+      entry_px / exit_px / stop_px / target_px: underlying prices.
+      qty / pnl_dollars: size and dollar result, if he wants them kept.
+      note: what the eye saw, verbatim.
+      mistakes: the honest column — what broke the plan, if anything.
+    """
+    try:
+        from analysis.trade_journal import log_trade
+        return log_trade(ticker, direction, source, setup, timeframe,
+                         instrument, entered_at, exited_at, entry_px,
+                         exit_px, stop_px, target_px, qty, pnl_dollars,
+                         note, mistakes)
+    except ValueError as e:
+        return f"Not logged: {e}"
+    except Exception as e:
+        return f"Journal write failed: {e}"
+
+
+@mcp.tool()
+def watchtower_journal(days: int = 90) -> str:
+    """
+    Read Eric's trade journal — worst R first (losers lead), running
+    realized R with the count beside it (below ~30 the record is
+    anecdote and says so), per-setup breakdown, open trades and R
+    holes rendered as such. Use it to review his manual trading the
+    same way the desk ledger reviews the paper books.
+    """
+    try:
+        from analysis.trade_journal import journal_summary
+        return journal_summary(days)
+    except Exception as e:
+        return f"Journal read failed: {e}"
+
+
+@mcp.tool()
 def watchtower_fair_value(ticker: str, discount_rate: float = 10.0,
                           growth_rate: float = 0.0, years: int = 10) -> str:
     """
