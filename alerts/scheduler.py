@@ -2549,6 +2549,13 @@ def start_scheduler():
         _seed_flipprox()
         _seed_rsleader()
         _seed_tapeentry()
+        try:
+            from analysis.hybrid_exit_study import run as _hybrid
+            for _ in range(3):
+                if _hybrid():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] hybrid-exit seed skipped: {e}")
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 
