@@ -1,5 +1,13 @@
 //@version=5
 // ─────────────────────────────────────────────────────────────────────────────
+// WATCHTOWER TAPE SCANNER v1.6
+// v1.6 (2026-08-31, Eric: the 1-minute trigger layer): a 1M column runs
+// the same two-state retest at 1 minute with its own trend gate —
+// TEST (live on the 1m 8/21) and GO UP/DN (the just-closed 1m candle
+// held it). Independent of the scan timeframe BY DESIGN — Eric is the
+// alignment check ("I can go look at the 5m; maybe I enter"). An
+// optional toggle (default OFF) pre-filters the column to rows whose
+// scan-TF trend agrees. The 1M column never touches READY.
 // WATCHTOWER TAPE SCANNER v1.5
 // v1.5 (2026-08-31, Eric's spec — "I need to know when something is
 // retesting NOW"): RETEST is two explicit states. TEST 8/21 (amber) =
@@ -34,6 +42,8 @@ indicator("Watchtower Tape Scanner", overlay = true)
 uni    = input.string("MAG 7", "Universe", options = ["MAG 7", "CUSTOM 7"])
 scanTF = input.string("5",  "Scan timeframe (minutes)", options = ["5", "15"])
 orbMin = input.int(30, "ORB minutes", options = [15, 30])
+use1m  = input.bool(true, "1M trigger column (TEST / GO on the 1-minute 8/21)")
+al1m   = input.bool(false, "1M column requires scan-TF trend agreement", tooltip = "OFF (default): the 1M column speaks whenever the 1-minute chart itself is trending - you do the 5m context check by eye. ON: the cell blanks unless the 1m trend direction matches the row's scan-TF trend.")
 rtLook = input.int(1, "Resolved-retest memory (confirmed bars)", minval = 1, maxval = 5, tooltip = "How many CONFIRMED bars a resolved 8/21 BULL/BEAR stays lit after the close that proved it. 1 = only the bar that just closed. The live TEST state is always current-bar-only.")
 nShow  = input.int(7, "Rows to show", minval = 1, maxval = 7)
 tblPos = input.string("Top right", "Table position",
@@ -136,6 +146,31 @@ f_scan() =>
     mom = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0)
     [ctl, trend, orb, rt, mom, close, pmH, pmL]
 
+// v1.6 — the 1-minute trigger engine: same trend gate, same two-state
+// retest, nothing else (levels/ORB/momentum stay on the scan TF).
+// Codes: 2/-2 = TEST (live bar on the 1m 8 or 21), 1/-1 = GO (the
+// just-closed 1m candle touched and HELD), 0 = quiet.
+f_trig() =>
+    emaF = ta.ema(close, 8)
+    emaS = ta.ema(close, 21)
+    cnt = 0
+    for i = 1 to 14
+        if (close[i] > emaS[i]) != (close[i + 1] > emaS[i + 1])
+            cnt += 1
+    choppy = cnt >= 4
+    bull = emaF > emaS
+    spread = math.abs(emaF - emaS)
+    expanding = spread > ta.sma(spread, 20)
+    trend = choppy ? 0 : bull and close > emaS and expanding ? 1 : (not bull) and close < emaS and expanding ? -1 : 0
+    touching = (low <= emaF and high >= emaF) or (low <= emaS and high >= emaS)
+    resd = 0
+    if session.ismarket[1]
+        if trend == 1 and ((low[1] <= emaF[1] and close[1] > emaF[1]) or (low[1] <= emaS[1] and close[1] > emaS[1])) and close > emaF
+            resd := 1
+        if trend == -1 and ((high[1] >= emaF[1] and close[1] < emaF[1]) or (high[1] >= emaS[1] and close[1] < emaS[1])) and close < emaF
+            resd := -1
+    not session.ismarket ? 0 : resd != 0 ? resd : trend == 1 and touching ? 2 : trend == -1 and touching ? -2 : 0
+
 tfStr = scanTF
 [ctlA, trA, orbA, rtA0, momA, clA, phA, plA] = request.security(x1, tfStr, f_scan())
 [ctlB, trB, orbB, rtB0, momB, clB, phB, plB] = request.security(x2, tfStr, f_scan())
@@ -144,6 +179,13 @@ tfStr = scanTF
 [ctlE, trE, orbE, rtE0, momE, clE, phE, plE] = request.security(x5, tfStr, f_scan())
 [ctlF, trF, orbF, rtF0, momF, clF, phF, plF] = request.security(x6, tfStr, f_scan())
 [ctlG, trG, orbG, rtG0, momG, clG, phG, plG] = request.security(x7, tfStr, f_scan())
+m1A = request.security(x1, "1", f_trig())
+m1B = request.security(x2, "1", f_trig())
+m1C = request.security(x3, "1", f_trig())
+m1D = request.security(x4, "1", f_trig())
+m1E = request.security(x5, "1", f_trig())
+m1F = request.security(x6, "1", f_trig())
+m1G = request.security(x7, "1", f_trig())
 pdA = request.security(s1, "D", high[1]), pdA2 = request.security(s1, "D", low[1])
 pdB = request.security(s2, "D", high[1]), pdB2 = request.security(s2, "D", low[1])
 pdC = request.security(s3, "D", high[1]), pdC2 = request.security(s3, "D", low[1])
@@ -158,10 +200,19 @@ live = session.ismarket
 rtA = live ? rtA0 : 0, rtB = live ? rtB0 : 0, rtC = live ? rtC0 : 0
 rtD = live ? rtD0 : 0, rtE = live ? rtE0 : 0, rtF = live ? rtF0 : 0
 rtG = live ? rtG0 : 0
+// 1M trigger gates: session, the enable toggle, and (optionally) the
+// scan-TF agreement filter. sign(code) carries the 1m direction.
+f_gate1m(t, tr) =>
+    g = live and use1m ? t : 0
+    al1m and g != 0 and (tr == 0 or (tr > 0) != (g > 0)) ? 0 : g
+t1A = f_gate1m(m1A, trA), t1B = f_gate1m(m1B, trB), t1C = f_gate1m(m1C, trC)
+t1D = f_gate1m(m1D, trD), t1E = f_gate1m(m1E, trE), t1F = f_gate1m(m1F, trF)
+t1G = f_gate1m(m1G, trG)
 
 // ── Row assembly, ranking, rendering ─────────────────────────────────────────
 f_ctlTxt(c) => c == 1 ? "CROSS UP" : c == 2 ? "BUYERS" : c == -1 ? "CROSS DN" : c == -2 ? "SELLERS" : "RANGE"
 f_orbTxt(o) => o == 9 ? "BUILDING" : o == 1 ? "ABOVE" : o == -1 ? "BELOW" : "INSIDE"
+f_1mTxt(t) => t == 1 ? "GO UP" : t == -1 ? "GO DN" : t == 2 or t == -2 ? "TEST" : ""
 f_rtTxt(r)  => r == 1 ? "8 BULL" : r == 2 ? "21 BULL" : r == -1 ? "8 BEAR" : r == -2 ? "21 BEAR" : r == 3 or r == -3 ? "TEST 8" : r == 4 or r == -4 ? "TEST 21" : "WAIT"
 f_momTxt(m, t) => m >= 3 ? "STRONG" : m == 2 ? "GOOD" : t == 0 and m <= 1 ? "SIDEWAYS" : "WEAK"
 f_lvl(cl, ph, pl, dh, dl) =>
@@ -217,15 +268,16 @@ f_stTxt(s) => s == 2 ? "READY" : s == 1 ? "BUILDING" : "NO SETUP"
 
 sessTxt = session.ismarket ? "RTH" : session.ispremarket ? "PRE" : session.ispostmarket ? "POST" : "CLOSED"
 pos = tblPos == "Top left" ? position.top_left : tblPos == "Middle right" ? position.middle_right : tblPos == "Bottom right" ? position.bottom_right : tblPos == "Bottom left" ? position.bottom_left : position.top_right
-var table scan = table.new(pos, 7, 8, border_width = 1, border_color = color.new(color.black, 60))
-f_row(r, nm, ctl, tr, orb, rt, mom, st, kl) =>
+var table scan = table.new(pos, 8, 8, border_width = 1, border_color = color.new(color.black, 60))
+f_row(r, nm, ctl, tr, orb, rt, t1, mom, st, kl) =>
     table.cell(scan, 0, r, nm, text_color = color.white, bgcolor = cHead)
     table.cell(scan, 1, r, f_ctlTxt(ctl), text_color = color.white, bgcolor = f_c(f_ctlTxt(ctl)))
     table.cell(scan, 2, r, kl, text_color = color.white, bgcolor = f_c(kl))
     table.cell(scan, 3, r, f_orbTxt(orb), text_color = color.white, bgcolor = f_c(f_orbTxt(orb)))
     table.cell(scan, 4, r, f_rtTxt(rt), text_color = color.white, bgcolor = f_c(f_rtTxt(rt)))
-    table.cell(scan, 5, r, f_momTxt(mom, tr), text_color = color.white, bgcolor = f_c(f_momTxt(mom, tr)))
-    table.cell(scan, 6, r, f_stTxt(st), text_color = color.white, bgcolor = st == 2 ? cG : st == 1 ? cW : cN)
+    table.cell(scan, 5, r, f_1mTxt(t1), text_color = color.white, bgcolor = f_1mTxt(t1) == "" ? cN : f_c(f_1mTxt(t1)))
+    table.cell(scan, 6, r, f_momTxt(mom, tr), text_color = color.white, bgcolor = f_c(f_momTxt(mom, tr)))
+    table.cell(scan, 7, r, f_stTxt(st), text_color = color.white, bgcolor = st == 2 ? cG : st == 1 ? cW : cN)
 
 if barstate.islast
     table.cell(scan, 0, 0, "WT · " + sessTxt, text_color = session.ismarket ? color.white : color.orange, bgcolor = cHead)
@@ -233,26 +285,27 @@ if barstate.islast
     table.cell(scan, 2, 0, "KEY LEVEL", text_color = color.white, bgcolor = cHead)
     table.cell(scan, 3, 0, "ORB", text_color = color.white, bgcolor = cHead)
     table.cell(scan, 4, 0, "RETEST", text_color = color.white, bgcolor = cHead)
-    table.cell(scan, 5, 0, "MOMENTUM", text_color = color.white, bgcolor = cHead)
-    table.cell(scan, 6, 0, "STATUS", text_color = color.white, bgcolor = cHead)
+    table.cell(scan, 5, 0, "1M", text_color = color.white, bgcolor = cHead)
+    table.cell(scan, 6, 0, "MOMENTUM", text_color = color.white, bgcolor = cHead)
+    table.cell(scan, 7, 0, "STATUS", text_color = color.white, bgcolor = cHead)
     shown = 0
     for k = 0 to 6
         if shown < nShow
             i = array.get(idx, k)
             if i == 0
-                f_row(shown + 1, sy1, ctlA, trA, orbA, rtA, momA, stA, f_lvl(clA, phA, plA, pdA, pdA2))
+                f_row(shown + 1, sy1, ctlA, trA, orbA, rtA, t1A, momA, stA, f_lvl(clA, phA, plA, pdA, pdA2))
             if i == 1
-                f_row(shown + 1, sy2, ctlB, trB, orbB, rtB, momB, stB, f_lvl(clB, phB, plB, pdB, pdB2))
+                f_row(shown + 1, sy2, ctlB, trB, orbB, rtB, t1B, momB, stB, f_lvl(clB, phB, plB, pdB, pdB2))
             if i == 2
-                f_row(shown + 1, sy3, ctlC, trC, orbC, rtC, momC, stC, f_lvl(clC, phC, plC, pdC, pdC2))
+                f_row(shown + 1, sy3, ctlC, trC, orbC, rtC, t1C, momC, stC, f_lvl(clC, phC, plC, pdC, pdC2))
             if i == 3
-                f_row(shown + 1, sy4, ctlD, trD, orbD, rtD, momD, stD, f_lvl(clD, phD, plD, pdD, pdD2))
+                f_row(shown + 1, sy4, ctlD, trD, orbD, rtD, t1D, momD, stD, f_lvl(clD, phD, plD, pdD, pdD2))
             if i == 4
-                f_row(shown + 1, sy5, ctlE, trE, orbE, rtE, momE, stE, f_lvl(clE, phE, plE, pdE, pdE2))
+                f_row(shown + 1, sy5, ctlE, trE, orbE, rtE, t1E, momE, stE, f_lvl(clE, phE, plE, pdE, pdE2))
             if i == 5
-                f_row(shown + 1, sy6, ctlF, trF, orbF, rtF, momF, stF, f_lvl(clF, phF, plF, pdF, pdF2))
+                f_row(shown + 1, sy6, ctlF, trF, orbF, rtF, t1F, momF, stF, f_lvl(clF, phF, plF, pdF, pdF2))
             if i == 6
-                f_row(shown + 1, sy7, ctlG, trG, orbG, rtG, momG, stG, f_lvl(clG, phG, plG, pdG, pdG2))
+                f_row(shown + 1, sy7, ctlG, trG, orbG, rtG, t1G, momG, stG, f_lvl(clG, phG, plG, pdG, pdG2))
             shown += 1
 
 // ── Alert: a symbol turned READY on a confirmed bar ──────────────────────────
