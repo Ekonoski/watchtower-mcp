@@ -1,6 +1,15 @@
 //@version=5
-// WATCHTOWER TAPE BOT v2.2
+// WATCHTOWER TAPE BOT v2.3
 // CONTROL > LEVEL > TREND > SETUP > MOMENTUM. Confirmed closes only.
+// v2.3 — the mixed-bar fix (2026-08-31, the TSLA 1h catch): bars above
+// 15m straddle the 9:30 open (a 1h chart's 9:00 bar is half premarket,
+// half RTH), which mislabeled the session at 9:57 AND polluted PMH
+// with the opening rip. Now: PM/ON levels on charts above 15m come
+// from a 15-minute feed running the SAME accumulation, so every
+// timeframe prints the identical level (session extremes are bar-size
+// invariant); and the session badge reads the actual clock (timenow),
+// not the current bar's start time. The setup machine still votes on
+// its own chart's confirmed bars — a mixed open bar never votes.
 // v2.2 — stock overnight range toggle (2026-08-29, the TSLA read):
 //   with "Stocks: overnight range" ON, the fuchsia pair becomes ONH/ONL
 //   on stocks too — accumulated from the 4:00 PM close through the next
@@ -81,7 +90,15 @@ inRTH  = intra and not na(time(timeframe.period, "0930-1600", "America/New_York"
 inPre  = intra and not sess24 and not na(time(timeframe.period, "0400-0930", "America/New_York"))
 inPost = intra and not na(time(timeframe.period, "1600-2000", "America/New_York"))
 canVote = not intra or sess24 or (isFut and fut24) or inRTH
-sessTxt = not intra ? "EOD" : sess24 ? "24H" : isFut ? (inRTH ? "RTH" : "GLOBEX") : inRTH ? "RTH" : inPre ? "PRE" : inPost ? "POST" : "CLOSED"
+// v2.3: the badge reads the actual clock, not the current bar's start
+// (a 1h chart's 9:00 bar showed PRE at 9:57). Bar-based flags above
+// still govern accumulation and voting; timenow governs the label.
+nyMin   = hour(timenow, "America/New_York") * 60 + minute(timenow, "America/New_York")
+rthNow  = nyMin >= 570 and nyMin < 960
+preNow  = nyMin >= 240 and nyMin < 570
+postNow = nyMin >= 960 and nyMin < 1200
+wkdayNow = dayofweek(timenow, "America/New_York") != dayofweek.saturday and dayofweek(timenow, "America/New_York") != dayofweek.sunday
+sessTxt = not intra ? "EOD" : sess24 ? "24H" : isFut ? (wkdayNow and rthNow ? "RTH" : "GLOBEX") : wkdayNow and rthNow ? "RTH" : wkdayNow and preNow ? "PRE" : wkdayNow and postNow ? "POST" : "CLOSED"
 isNewDay = intra and ta.change(time("D")) != 0
 isNewWk  = okPW and ta.change(time("W")) != 0
 
@@ -178,29 +195,46 @@ if okPW
 // (the 4:00 PM close), spans post + pre as one tape (weekends and the
 // 8PM-4AM bar gap crossed naturally by bar sequence, not by clock),
 // and freezes at the 9:30 open. Needs extended hours on the chart.
-useON = stkON and not isFut and not sess24 and intra
-var float pmH = na
-var float pmL = na
-var bool  rthSeen = false
-if isNewDay
-    rthSeen := false
-    if not useON
-        pmH := na
-        pmL := na
-if inRTH
-    rthSeen := true
-inExt = inPre or inPost
-onNew = useON and inExt and inRTH[1]
-if onNew
-    pmH := high
-    pmL := low
-inON  = isFut and intra and not inRTH and not rthSeen
-accum = isFut ? inON : useON ? (inExt and not onNew) : inPre
-if accum
-    pmH := na(pmH) ? high : math.max(pmH, high)
-    pmL := na(pmL) ? low  : math.min(pmL, low)
-pmHi = isFut or useON ? "ONH" : "PMH"
-pmLo = isFut or useON ? "ONL" : "PML"
+// v2.3: the whole accumulation lives in f_pm(), self-contained, so it
+// can run in a 15-minute security context. Charts at or below 15m use
+// their own bars; charts ABOVE 15m use the 15m feed — a 30m/1h/4h bar
+// straddles the 9:30 boundary and would otherwise swallow RTH prints
+// into the "premarket" (the TSLA 1h PMH at 360 vs the true 349).
+f_pm() =>
+    _inRTH  = not na(time(timeframe.period, "0930-1600", "America/New_York"))
+    _inPre  = not sess24 and not na(time(timeframe.period, "0400-0930", "America/New_York"))
+    _inPost = not na(time(timeframe.period, "1600-2000", "America/New_York"))
+    _newDay = ta.change(time("D")) != 0
+    _useON  = stkON and not isFut and not sess24
+    var float h = na
+    var float l = na
+    var bool  seen = false
+    if _newDay
+        seen := false
+        if not _useON
+            h := na
+            l := na
+    if _inRTH
+        seen := true
+    _inExt = _inPre or _inPost
+    _onNew = _useON and _inExt and _inRTH[1]
+    if _onNew
+        h := high
+        l := low
+    _inON = isFut and not _inRTH and not seen
+    _acc = isFut ? _inON : _useON ? (_inExt and not _onNew) : _inPre
+    if _acc
+        h := na(h) ? high : math.max(h, high)
+        l := na(l) ? low  : math.min(l, low)
+    [h, l]
+
+[pmH15, pmL15] = request.security(syminfo.tickerid, "15", f_pm())
+[pmHc, pmLc]   = f_pm()
+useLTF = intra and timeframe.in_seconds(timeframe.period) > 900
+float pmH = intra ? (useLTF ? pmH15 : pmHc) : na
+float pmL = intra ? (useLTF ? pmL15 : pmLc) : na
+pmHi = isFut or (stkON and not isFut and not sess24) ? "ONH" : "PMH"
+pmLo = isFut or (stkON and not isFut and not sess24) ? "ONL" : "PML"
 
 orbEndT = timestamp("America/New_York", year, month, dayofmonth, 9, 30 + orbMin, 0)
 inORB   = inRTH and time < orbEndT and not sess24
