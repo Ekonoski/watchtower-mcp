@@ -1,13 +1,15 @@
 //@version=5
 // ─────────────────────────────────────────────────────────────────────────────
-// WATCHTOWER TAPE SCANNER v1.6
-// v1.6 (2026-08-31, Eric: the 1-minute trigger layer): a 1M column runs
-// the same two-state retest at 1 minute with its own trend gate —
-// TEST (live on the 1m 8/21) and GO UP/DN (the just-closed 1m candle
-// held it). Independent of the scan timeframe BY DESIGN — Eric is the
-// alignment check ("I can go look at the 5m; maybe I enter"). An
-// optional toggle (default OFF) pre-filters the column to rows whose
-// scan-TF trend agrees. The 1M column never touches READY.
+// WATCHTOWER TAPE SCANNER v1.7
+// v1.7 (2026-09-02, Eric's day-one live read): the 1M column speaks
+// the SAME language as the RETEST column (TEST 8/21, 8/21 BULL/BEAR,
+// WAIT) and is active ONLY while the row's scan-TF trend is on — and
+// only in that trend's direction (counter-trend 1m signals are
+// suppressed). BLANK = not even looking (5m not trending); WAIT =
+// looking, nothing at the 1m EMAs. This reverses v1.6's independent
+// design at Eric's call: "the 1 min may give too many signals if we
+// are only looking for that trend." The 1M column never touches READY.
+// v1.6 (2026-08-31): the 1M column, first cut (independent, GO UP/DN).
 // WATCHTOWER TAPE SCANNER v1.5
 // v1.5 (2026-08-31, Eric's spec — "I need to know when something is
 // retesting NOW"): RETEST is two explicit states. TEST 8/21 (amber) =
@@ -42,8 +44,7 @@ indicator("Watchtower Tape Scanner", overlay = true)
 uni    = input.string("MAG 7", "Universe", options = ["MAG 7", "CUSTOM 7"])
 scanTF = input.string("5",  "Scan timeframe (minutes)", options = ["5", "15"])
 orbMin = input.int(30, "ORB minutes", options = [15, 30])
-use1m  = input.bool(true, "1M trigger column (TEST / GO on the 1-minute 8/21)")
-al1m   = input.bool(false, "1M column requires scan-TF trend agreement", tooltip = "OFF (default): the 1M column speaks whenever the 1-minute chart itself is trending - you do the 5m context check by eye. ON: the cell blanks unless the 1m trend direction matches the row's scan-TF trend.")
+use1m  = input.bool(true, "1M trigger column (1-minute 8/21 retest, active only while the scan-TF trend is on)")
 rtLook = input.int(1, "Resolved-retest memory (confirmed bars)", minval = 1, maxval = 5, tooltip = "How many CONFIRMED bars a resolved 8/21 BULL/BEAR stays lit after the close that proved it. 1 = only the bar that just closed. The live TEST state is always current-bar-only.")
 nShow  = input.int(7, "Rows to show", minval = 1, maxval = 7)
 tblPos = input.string("Top right", "Table position",
@@ -146,10 +147,10 @@ f_scan() =>
     mom = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0)
     [ctl, trend, orb, rt, mom, close, pmH, pmL]
 
-// v1.6 — the 1-minute trigger engine: same trend gate, same two-state
-// retest, nothing else (levels/ORB/momentum stay on the scan TF).
-// Codes: 2/-2 = TEST (live bar on the 1m 8 or 21), 1/-1 = GO (the
-// just-closed 1m candle touched and HELD), 0 = quiet.
+// v1.7 — the 1-minute trigger engine: identical state encoding to the
+// scan-TF retest (1/2 = 8/21 BULL, -1/-2 = 8/21 BEAR, 3/4 = TEST 8/21
+// bull-side, -3/-4 bear-side, 0 = WAIT), computed on 1m bars with the
+// 1m's own trend gate. The scan-TF gate is applied in the outer scope.
 f_trig() =>
     emaF = ta.ema(close, 8)
     emaS = ta.ema(close, 21)
@@ -162,14 +163,19 @@ f_trig() =>
     spread = math.abs(emaF - emaS)
     expanding = spread > ta.sma(spread, 20)
     trend = choppy ? 0 : bull and close > emaS and expanding ? 1 : (not bull) and close < emaS and expanding ? -1 : 0
-    touching = (low <= emaF and high >= emaF) or (low <= emaS and high >= emaS)
+    touch8  = low <= emaF and high >= emaF
+    touch21 = low <= emaS and high >= emaS
     resd = 0
     if session.ismarket[1]
-        if trend == 1 and ((low[1] <= emaF[1] and close[1] > emaF[1]) or (low[1] <= emaS[1] and close[1] > emaS[1])) and close > emaF
+        if trend == 1 and low[1] <= emaF[1] and close[1] > emaF[1] and close > emaF
             resd := 1
-        if trend == -1 and ((high[1] >= emaF[1] and close[1] < emaF[1]) or (high[1] >= emaS[1] and close[1] < emaS[1])) and close < emaF
+        else if trend == 1 and low[1] <= emaS[1] and close[1] > emaS[1] and close > emaS
+            resd := 2
+        if trend == -1 and high[1] >= emaF[1] and close[1] < emaF[1] and close < emaF
             resd := -1
-    not session.ismarket ? 0 : resd != 0 ? resd : trend == 1 and touching ? 2 : trend == -1 and touching ? -2 : 0
+        else if trend == -1 and high[1] >= emaS[1] and close[1] < emaS[1] and close < emaS
+            resd := -2
+    not session.ismarket ? 0 : resd != 0 ? resd : trend == 1 and touch8 ? 3 : trend == -1 and touch8 ? -3 : trend == 1 and touch21 ? 4 : trend == -1 and touch21 ? -4 : 0
 
 tfStr = scanTF
 [ctlA, trA, orbA, rtA0, momA, clA, phA, plA] = request.security(x1, tfStr, f_scan())
@@ -200,11 +206,12 @@ live = session.ismarket
 rtA = live ? rtA0 : 0, rtB = live ? rtB0 : 0, rtC = live ? rtC0 : 0
 rtD = live ? rtD0 : 0, rtE = live ? rtE0 : 0, rtF = live ? rtF0 : 0
 rtG = live ? rtG0 : 0
-// 1M trigger gates: session, the enable toggle, and (optionally) the
-// scan-TF agreement filter. sign(code) carries the 1m direction.
+// 1M trigger gate (v1.7): the column exists only while the row's
+// scan-TF trend is ON — 99 renders as BLANK ("not even looking").
+// While active, counter-trend 1m signals suppress to 0 (WAIT); only
+// signals in the 5m trend's direction print. sign(code) = direction.
 f_gate1m(t, tr) =>
-    g = live and use1m ? t : 0
-    al1m and g != 0 and (tr == 0 or (tr > 0) != (g > 0)) ? 0 : g
+    not (live and use1m) or tr == 0 ? 99 : t != 0 and (t > 0) != (tr > 0) ? 0 : t
 t1A = f_gate1m(m1A, trA), t1B = f_gate1m(m1B, trB), t1C = f_gate1m(m1C, trC)
 t1D = f_gate1m(m1D, trD), t1E = f_gate1m(m1E, trE), t1F = f_gate1m(m1F, trF)
 t1G = f_gate1m(m1G, trG)
@@ -212,7 +219,6 @@ t1G = f_gate1m(m1G, trG)
 // ── Row assembly, ranking, rendering ─────────────────────────────────────────
 f_ctlTxt(c) => c == 1 ? "CROSS UP" : c == 2 ? "BUYERS" : c == -1 ? "CROSS DN" : c == -2 ? "SELLERS" : "RANGE"
 f_orbTxt(o) => o == 9 ? "BUILDING" : o == 1 ? "ABOVE" : o == -1 ? "BELOW" : "INSIDE"
-f_1mTxt(t) => t == 1 ? "GO UP" : t == -1 ? "GO DN" : t == 2 or t == -2 ? "TEST" : ""
 f_rtTxt(r)  => r == 1 ? "8 BULL" : r == 2 ? "21 BULL" : r == -1 ? "8 BEAR" : r == -2 ? "21 BEAR" : r == 3 or r == -3 ? "TEST 8" : r == 4 or r == -4 ? "TEST 21" : "WAIT"
 f_momTxt(m, t) => m >= 3 ? "STRONG" : m == 2 ? "GOOD" : t == 0 and m <= 1 ? "SIDEWAYS" : "WEAK"
 f_lvl(cl, ph, pl, dh, dl) =>
@@ -275,7 +281,8 @@ f_row(r, nm, ctl, tr, orb, rt, t1, mom, st, kl) =>
     table.cell(scan, 2, r, kl, text_color = color.white, bgcolor = f_c(kl))
     table.cell(scan, 3, r, f_orbTxt(orb), text_color = color.white, bgcolor = f_c(f_orbTxt(orb)))
     table.cell(scan, 4, r, f_rtTxt(rt), text_color = color.white, bgcolor = f_c(f_rtTxt(rt)))
-    table.cell(scan, 5, r, f_1mTxt(t1), text_color = color.white, bgcolor = f_1mTxt(t1) == "" ? cN : f_c(f_1mTxt(t1)))
+    t1txt = t1 == 99 ? "" : f_rtTxt(t1)
+    table.cell(scan, 5, r, t1txt, text_color = color.white, bgcolor = t1txt == "" ? cN : f_c(t1txt))
     table.cell(scan, 6, r, f_momTxt(mom, tr), text_color = color.white, bgcolor = f_c(f_momTxt(mom, tr)))
     table.cell(scan, 7, r, f_stTxt(st), text_color = color.white, bgcolor = st == 2 ? cG : st == 1 ? cW : cN)
 
