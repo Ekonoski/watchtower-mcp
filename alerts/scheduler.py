@@ -1762,6 +1762,55 @@ def start_scheduler():
         id="gamma_drift_baseline", replace_existing=True,
     )
 
+    # Morning RS-leader + flip-proximity pings (2026-08-31, Eric: "it
+    # has to happen at that candle's close"). 🧭 9:31 flip distance;
+    # 🏁 9:45 the rank; 🎯 the GO watch runs at second :05 of every
+    # minute 9:46-11:00 so the alert lands seconds after the 1m candle
+    # that qualifies. All at-most-once via discord_notify_log; the
+    # definitions are IMPORTED from the graded study.
+    def _flipprox_ping():
+        from alerts.rsleader_ping import run_flipprox_open_ping
+        run_flipprox_open_ping()
+
+    def _rsl_rank_ping():
+        from alerts.rsleader_ping import run_rank_ping
+        run_rank_ping()
+
+    def _rsl_go_watch():
+        from alerts.rsleader_ping import run_go_watch
+        run_go_watch()
+
+    scheduler.add_job(
+        _flipprox_ping,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="31",
+                    second="20", timezone=et),
+        id="flipprox_open_ping", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_rank_ping,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="45",
+                    second="10", timezone=et),
+        id="rsl_rank_ping", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_go_watch,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="46-59",
+                    second="5", timezone=et),
+        id="rsl_go_watch_9", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_go_watch,
+        CronTrigger(day_of_week="mon-fri", hour="10", minute="*",
+                    second="5", timezone=et),
+        id="rsl_go_watch_10", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_go_watch,
+        CronTrigger(day_of_week="mon-fri", hour="11", minute="0",
+                    second="5", timezone=et),
+        id="rsl_go_watch_11", replace_existing=True,
+    )
+
     # Index 15m bar appender (2026-08-31, the frozen-table find): the
     # SPY/QQQ/IWM research record froze at Aug 21 because only the
     # one-shot backfill ever wrote it. Freshness now has an owner —
