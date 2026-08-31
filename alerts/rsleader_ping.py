@@ -240,9 +240,14 @@ def run_go_watch() -> str:
                    f"nearly doubled expectancy on leader days, 12.6 vs "
                    f"7.2 bps avg, whipsaw 29% vs 39%, n=377) · disaster "
                    f"cap −1% from entry on touch\n"
-                   f"Plan: hold to the close — graded +0.45R avg / 52% "
-                   f"positive days (n=446, capped, both halves, 7/7 "
-                   f"names); the 2R scalp version failed replication.")
+                   f"At entry +1R (one risk unit): switch to the TRAIL — "
+                   f"exit on a 5m CLOSE below the 5m 21 EMA; whatever "
+                   f"survives exits at the bell.\n"
+                   f"_Graded (hybrid-exit study, n=377 leader days): the "
+                   f"trail-after-1R is the only exit positive in both "
+                   f"year-halves (+0.40/+0.27 avg R, ~40% win). No profit "
+                   f"target — the 2R cap and breakeven-after-1R both "
+                   f"graded worse._")
             return claim_and_send(KIND_GO, today.isoformat(), CHANNEL, msg,
                                   conn=conn)
         if now.time() >= ENTRY_CUTOFF:
