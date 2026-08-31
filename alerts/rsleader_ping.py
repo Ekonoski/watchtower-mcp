@@ -45,6 +45,9 @@ CHANNEL = "desk"
 KIND_FLIP = "flipprox_open"
 KIND_RANK = "rsl_rank"
 KIND_GO = "rsl_go"
+KIND_ARM = "rsl_arm"
+KIND_EXIT = "rsl_exit"
+KIND_BELL = "rsl_bell"
 ET = "America/New_York"
 
 _rank_cache = {}     # date -> (leader, laggard, rs_dict); refetchable
@@ -185,9 +188,43 @@ def run_rank_ping() -> str:
         conn.close()
 
 
+def _find_go(client, today):
+    """Recompute today's leader + GO deterministically from the bars.
+    Returns ('go', leader, bars, i, entry, stop) | ('none', leader) |
+    a status string. Deterministic on the same bars, so the trade
+    watcher can rebuild state after any restart."""
+    cached = _rank_cache.get(today)
+    if cached is None:
+        got = _rank_now(client, today)
+        if got is None:
+            return "hole"
+        cached = (got[0][0], got[0][1], got[0][3])
+        _rank_cache[today] = cached
+    leader = cached[0]
+    if leader is None:
+        return "stand_aside"
+    bars = _today_1m(client, leader, today)
+    if len(bars) < 16:
+        return "warming"
+    closes = [b[4] for b in bars]
+    e8, e21 = ema(closes, 8), ema(closes, 21)
+    i945 = next((i for i, b in enumerate(bars)
+                 if b[0].time() >= MEASURE), None)
+    icut = next((i for i, b in enumerate(bars)
+                 if b[0].time() >= ENTRY_CUTOFF), len(bars))
+    if i945 is None:
+        return "warming"
+    got = find_go_entry(bars, e8, e21, i945, icut, "long")
+    if got is None:
+        return ("none", leader)
+    i, entry, stop = got
+    return ("go", leader, bars, i, entry, stop)
+
+
 def run_go_watch() -> str:
     """Every minute 9:46–11:00 ET: check the leader's just-closed 1m
-    bar for the study's GO entry; post at that candle's close."""
+    bar for the study's GO entry; post at that candle's close with
+    every number precomputed — Eric calculates NOTHING live."""
     from analysis.polygon_data import get_client
     from screen.reversal_screen import _conn
     from zoneinfo import ZoneInfo
@@ -204,58 +241,124 @@ def run_go_watch() -> str:
         client = get_client()
         if client is None:
             return "off"
-        cached = _rank_cache.get(today)
-        if cached is None:
-            got = _rank_now(client, today)
-            if got is None:
-                return "hole"
-            cached = (got[0][0], got[0][1], got[0][3])
-            _rank_cache[today] = cached
-        leader = cached[0]
-        if leader is None:
-            return "stand_aside"
-        bars = _today_1m(client, leader, today)
-        if len(bars) < 16:
-            return "warming"
-        closes = [b[4] for b in bars]
-        e8, e21 = ema(closes, 8), ema(closes, 21)
-        i945 = next((i for i, b in enumerate(bars)
-                     if b[0].time() >= MEASURE), None)
-        icut = next((i for i, b in enumerate(bars)
-                     if b[0].time() >= ENTRY_CUTOFF), len(bars))
-        if i945 is None:
-            return "warming"
-        got = find_go_entry(bars, e8, e21, i945, icut, "long")
-        if got is not None:
-            i, entry, stop = got
+        res = _find_go(client, today)
+        if isinstance(res, str):
+            return res
+        if res[0] == "go":
+            _, leader, bars, i, entry, stop = res
             bar_ts = bars[i][0]
             age = (now - bar_ts).total_seconds() / 60
             late = " *(late alert — bar printed earlier; entry is that "\
                    "bar's close)*" if age > 2.5 else ""
+            risk = entry - stop
+            arm = entry + risk
+            disaster = entry * (1 - 0.01)
+            per_ct = 0.70 * risk * 100
             msg = (f"🎯 **GO — {leader}** 1m {bar_ts:%H:%M} candle closed "
                    f"holding the 1m 8/21.{late}\n"
-                   f"Entry {entry:.2f} (that close) · stop level {stop:.2f} "
-                   f"(under the pullback bar) — exit on a **5m CLOSE** "
-                   f"through it, not a touch (graded: the close rule "
-                   f"nearly doubled expectancy on leader days, 12.6 vs "
-                   f"7.2 bps avg, whipsaw 29% vs 39%, n=377) · disaster "
-                   f"cap −1% from entry on touch\n"
-                   f"At entry +1R (one risk unit): switch to the TRAIL — "
-                   f"exit on a 5m CLOSE below the 5m 21 EMA; whatever "
-                   f"survives exits at the bell.\n"
-                   f"_Graded (hybrid-exit study, n=377 leader days): the "
-                   f"trail-after-1R is the only exit positive in both "
-                   f"year-halves (+0.40/+0.27 avg R, ~40% win). No profit "
-                   f"target — the 2R cap and breakeven-after-1R both "
-                   f"graded worse._")
+                   f"**Entry {entry:.2f}** · stop level **{stop:.2f}** "
+                   f"(5m CLOSE through = out; a touch is not a stop) · "
+                   f"disaster **{disaster:.2f}** (touch = out, no waiting)\n"
+                   f"**Trail switch at {arm:.2f}** (+1R): from there, out "
+                   f"on a 5m CLOSE below the 5m 21 EMA — I'll ping the "
+                   f"switch and the exit; you act, don't compute.\n"
+                   f"Options (0.70Δ): one contract ≈ **−${per_ct:.0f} at "
+                   f"the stop / +${per_ct:.0f} at the switch**. Contracts "
+                   f"= your $ risk ÷ {per_ct:.0f}.\n"
+                   f"_Graded: trail-after-1R, the only exit positive in "
+                   f"both year-halves (+0.40/+0.27 avg R, ~40% win, "
+                   f"n=377). No profit target._")
             return claim_and_send(KIND_GO, today.isoformat(), CHANNEL, msg,
                                   conn=conn)
         if now.time() >= ENTRY_CUTOFF:
             return claim_and_send(
                 KIND_GO, today.isoformat(), CHANNEL,
-                f"🎯 {leader}: no 1m 8/21 hold printed by 11:00 — window "
+                f"🎯 {res[1]}: no 1m 8/21 hold printed by 11:00 — window "
                 f"closed, NO TRADE today. The no-qualifier day is a "
                 f"recorded decision.", conn=conn)
         return "waiting"
+    finally:
+        conn.close()
+
+
+def run_trade_watch() -> str:
+    """Every minute after a GO until the close: rebuild the trade's
+    state from the bars (deterministic — restarts change nothing) and
+    ping only on STATE CHANGES: 📈 the +1R trail switch, 🚪 the exit
+    with its reason, 🔔 the 3:55 still-in bell reminder. The graded
+    lifecycle, executed by the desk; Eric's job is to act on pings."""
+    from analysis.hybrid_exit_study import _ema as ema5
+    from analysis.hybrid_exit_study import _res5 as res5
+    from analysis.polygon_data import get_client
+    from screen.reversal_screen import _conn
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo(ET)
+    now = dt.datetime.now(et)
+    today = now.date()
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT kind FROM discord_notify_log WHERE ref=%s AND "
+                      "kind IN (%s,%s,%s,%s)",
+                      (today.isoformat(), KIND_GO, KIND_ARM, KIND_EXIT,
+                       KIND_BELL))
+            kinds = {r[0] for r in c.fetchall()}
+        if KIND_GO not in kinds or KIND_EXIT in kinds:
+            return "idle"
+        client = get_client()
+        if client is None:
+            return "off"
+        res = _find_go(client, today)
+        if isinstance(res, str) or res[0] != "go":
+            return "hole"              # GO posted but bars disagree; retry
+        _, leader, bars, i_go, entry, stop = res
+        risk = entry - stop
+        if risk <= 0:
+            return "hole"
+        arm_px = entry + risk
+        disaster = entry * (1 - 0.01)
+        bars5, last5 = res5(bars)
+        e21_5 = ema5([b[4] for b in bars5], 21)
+        e21_by_min = {last5[j]: e21_5[j] for j in range(len(bars5))}
+        armed = False
+        exit_hit = None                # (reason, px)
+        stop_now = stop
+        for i in range(i_go + 1, len(bars)):
+            ts, o, h, l, c = bars[i]
+            if l <= disaster:
+                exit_hit = ("disaster cap touched", disaster)
+                break
+            if h >= arm_px:
+                armed = True
+            e21 = e21_by_min.get(i)
+            if e21 is not None:
+                if armed and c < e21:
+                    exit_hit = ("5m closed below the 21-EMA trail", c)
+                    break
+                if not armed and c < stop_now:
+                    exit_hit = ("5m closed through the stop", c)
+                    break
+        if exit_hit is not None:
+            reason, px = exit_hit
+            r = (px - entry) / risk
+            msg = (f"🚪 **EXIT — {leader}**: {reason} at {px:.2f} "
+                   f"({r:+.2f}R from entry {entry:.2f}). Close the "
+                   f"position now. Log it: `watchtower_journal_log`.")
+            return claim_and_send(KIND_EXIT, today.isoformat(), CHANNEL,
+                                  msg, conn=conn)
+        if armed and KIND_ARM not in kinds:
+            msg = (f"📈 **{leader} touched +1R ({arm_px:.2f}) — TRAIL "
+                   f"LIVE.** From here: out on a 5m CLOSE below the 5m "
+                   f"21 EMA (I'll ping it). The fixed stop no longer "
+                   f"applies; the disaster cap {disaster:.2f} still does.")
+            return claim_and_send(KIND_ARM, today.isoformat(), CHANNEL,
+                                  msg, conn=conn)
+        if now.time() >= dt.time(15, 55) and KIND_BELL not in kinds:
+            msg = (f"🔔 **{leader} still in at 3:55** — exit AT THE CLOSE. "
+                   f"The graded exit is the closing print; don't hold "
+                   f"overnight.")
+            return claim_and_send(KIND_BELL, today.isoformat(), CHANNEL,
+                                  msg, conn=conn)
+        return "holding"
     finally:
         conn.close()

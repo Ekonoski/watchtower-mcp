@@ -1811,6 +1811,28 @@ def start_scheduler():
         id="rsl_go_watch_11", replace_existing=True,
     )
 
+    # The trade watcher (2026-08-31, Eric: "how do I calculate that on
+    # the fly?" — he doesn't; the desk does): after a GO, every minute
+    # to the close, ping only on state changes — 📈 +1R trail switch,
+    # 🚪 exit with reason, 🔔 3:55 still-in bell. State rebuilt from
+    # bars each pass; restarts change nothing.
+    def _rsl_trade_watch():
+        from alerts.rsleader_ping import run_trade_watch
+        run_trade_watch()
+
+    scheduler.add_job(
+        _rsl_trade_watch,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="48-59",
+                    second="12", timezone=et),
+        id="rsl_trade_watch_9", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_trade_watch,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*",
+                    second="12", timezone=et),
+        id="rsl_trade_watch_day", replace_existing=True,
+    )
+
     # Index 15m bar appender (2026-08-31, the frozen-table find): the
     # SPY/QQQ/IWM research record froze at Aug 21 because only the
     # one-shot backfill ever wrote it. Freshness now has an owner —

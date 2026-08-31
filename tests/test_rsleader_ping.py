@@ -57,6 +57,35 @@ def test_partial_bar_guard():
     assert "cutoff" in src and "t < cutoff" in src
 
 
+
+
+def test_trade_watch_lifecycle_definitions():
+    import inspect
+
+    from alerts import rsleader_ping as rp
+    src = inspect.getsource(rp.run_trade_watch)
+    # the trail frame is the hybrid study's, imported never rewritten
+    assert "from analysis.hybrid_exit_study import" in src
+    # the three state pings exist with distinct claim kinds
+    assert rp.KIND_ARM == "rsl_arm" and rp.KIND_EXIT == "rsl_exit"
+    assert rp.KIND_BELL == "rsl_bell"
+    for needle in ("disaster cap touched", "21-EMA trail",
+                   "closed through the stop", "AT THE CLOSE"):
+        assert needle in src
+    # disaster is touch-based; stop/trail decisions are 5m closes
+    assert "l <= disaster" in src and "c < e21" in src
+
+
+def test_go_message_precomputes_the_numbers():
+    import inspect
+
+    from alerts import rsleader_ping as rp
+    src = inspect.getsource(rp.run_go_watch)
+    assert "arm = entry + risk" in src            # the +1R switch price
+    assert "0.70 * risk * 100" in src             # per-contract dollars
+    assert "Contracts" in src                     # the sizing division
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
