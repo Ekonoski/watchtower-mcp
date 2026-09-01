@@ -1,6 +1,18 @@
-//@version=5
+//@version=6
 // ─────────────────────────────────────────────────────────────────────────────
-// WATCHTOWER TAPE SCANNER v1.7
+// WATCHTOWER TAPE SCANNER v1.8
+// v1.8 (2026-09-01, the memory-error + one-truth session): Pine v6 with
+// calc_bars_count pinning EVERY hidden data stream to a fixed history
+// (5m/1m: 1500 bars; daily: 15). Two bugs die at once: the memory-limit
+// crash on big-timeframe charts (14 streams no longer inherit the host
+// chart's loaded range) and the label-flicker-by-chart-TF Eric caught
+// (same warmup everywhere -> same EMAs/ATR/thresholds -> identical
+// cells on any chart; the design's 'one 5m truth per symbol' is now
+// actually true). Momentum parity with Bot v2.4: completed-bar legs
+// (wick rule at the panel), a 4th IGNITION leg (3 closed bars netting
+// >1.5x ATR), labels 3-4 STRONG / 2 GOOD / 1 WEAK / 0 SIDEWAYS, and
+// hysteresis on the chop gate (enter >=4 crosses, exit <=2).
+// WATCHTOWER TAPE SCANNER v1.7 (history below)
 // v1.7 (2026-08-31, Eric's day-one live read): the 1M column speaks
 // the SAME language as the RETEST column (TEST 8/21, 8/21 BULL/BEAR,
 // WAIT) and is active ONLY while the row's scan-TF trend is on — and
@@ -82,7 +94,9 @@ f_scan() =>
     for i = 1 to 14
         if (close[i] > emaS[i]) != (close[i + 1] > emaS[i + 1])
             cnt += 1
-    choppy = cnt >= 4
+    var bool chopState = false
+    chopState := chopState ? cnt > 2 : cnt >= 4
+    choppy = chopState
     bull = emaF > emaS
     ctl = choppy ? 0 : xU ? 1 : xD ? -1 : bull ? 2 : -2
     spread = math.abs(emaF - emaS)
@@ -141,10 +155,12 @@ f_scan() =>
          trend == -1 and touch8  ? -3 :
          trend == 1  and touch21 ? 4  :
          trend == -1 and touch21 ? -4 : 0
-    rngX = ta.sma(high - low, 5) / ta.atr(14)
-    dirRun = math.abs(math.sum(close > open ? 1 : -1, 6))
-    volX = volume / ta.sma(volume, 20)
-    mom = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0)
+    atr14 = ta.atr(14)
+    rngX = ta.sma(high[1] - low[1], 5) / atr14[1]
+    dirRun = math.abs(math.sum(close[1] > open[1] ? 1 : -1, 6))
+    volX = volume[1] / ta.sma(volume[1], 20)
+    ignite = math.abs(close[1] - close[4]) > 1.5 * atr14[1]
+    mom = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0) + (ignite ? 1 : 0)
     [ctl, trend, orb, rt, mom, close, pmH, pmL]
 
 // v1.7 — the 1-minute trigger engine: identical state encoding to the
@@ -178,27 +194,27 @@ f_trig() =>
     not session.ismarket ? 0 : resd != 0 ? resd : trend == 1 and touch8 ? 3 : trend == -1 and touch8 ? -3 : trend == 1 and touch21 ? 4 : trend == -1 and touch21 ? -4 : 0
 
 tfStr = scanTF
-[ctlA, trA, orbA, rtA0, momA, clA, phA, plA] = request.security(x1, tfStr, f_scan())
-[ctlB, trB, orbB, rtB0, momB, clB, phB, plB] = request.security(x2, tfStr, f_scan())
-[ctlC, trC, orbC, rtC0, momC, clC, phC, plC] = request.security(x3, tfStr, f_scan())
-[ctlD, trD, orbD, rtD0, momD, clD, phD, plD] = request.security(x4, tfStr, f_scan())
-[ctlE, trE, orbE, rtE0, momE, clE, phE, plE] = request.security(x5, tfStr, f_scan())
-[ctlF, trF, orbF, rtF0, momF, clF, phF, plF] = request.security(x6, tfStr, f_scan())
-[ctlG, trG, orbG, rtG0, momG, clG, phG, plG] = request.security(x7, tfStr, f_scan())
-m1A = request.security(x1, "1", f_trig())
-m1B = request.security(x2, "1", f_trig())
-m1C = request.security(x3, "1", f_trig())
-m1D = request.security(x4, "1", f_trig())
-m1E = request.security(x5, "1", f_trig())
-m1F = request.security(x6, "1", f_trig())
-m1G = request.security(x7, "1", f_trig())
-pdA = request.security(s1, "D", high[1]), pdA2 = request.security(s1, "D", low[1])
-pdB = request.security(s2, "D", high[1]), pdB2 = request.security(s2, "D", low[1])
-pdC = request.security(s3, "D", high[1]), pdC2 = request.security(s3, "D", low[1])
-pdD = request.security(s4, "D", high[1]), pdD2 = request.security(s4, "D", low[1])
-pdE = request.security(s5, "D", high[1]), pdE2 = request.security(s5, "D", low[1])
-pdF = request.security(s6, "D", high[1]), pdF2 = request.security(s6, "D", low[1])
-pdG = request.security(s7, "D", high[1]), pdG2 = request.security(s7, "D", low[1])
+[ctlA, trA, orbA, rtA0, momA, clA, phA, plA] = request.security(x1, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlB, trB, orbB, rtB0, momB, clB, phB, plB] = request.security(x2, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlC, trC, orbC, rtC0, momC, clC, phC, plC] = request.security(x3, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlD, trD, orbD, rtD0, momD, clD, phD, plD] = request.security(x4, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlE, trE, orbE, rtE0, momE, clE, phE, plE] = request.security(x5, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlF, trF, orbF, rtF0, momF, clF, phF, plF] = request.security(x6, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlG, trG, orbG, rtG0, momG, clG, phG, plG] = request.security(x7, tfStr, f_scan(), calc_bars_count = 1500)
+m1A = request.security(x1, "1", f_trig(), calc_bars_count = 1500)
+m1B = request.security(x2, "1", f_trig(), calc_bars_count = 1500)
+m1C = request.security(x3, "1", f_trig(), calc_bars_count = 1500)
+m1D = request.security(x4, "1", f_trig(), calc_bars_count = 1500)
+m1E = request.security(x5, "1", f_trig(), calc_bars_count = 1500)
+m1F = request.security(x6, "1", f_trig(), calc_bars_count = 1500)
+m1G = request.security(x7, "1", f_trig(), calc_bars_count = 1500)
+pdA = request.security(s1, "D", high[1], calc_bars_count = 15), pdA2 = request.security(s1, "D", low[1], calc_bars_count = 15)
+pdB = request.security(s2, "D", high[1], calc_bars_count = 15), pdB2 = request.security(s2, "D", low[1], calc_bars_count = 15)
+pdC = request.security(s3, "D", high[1], calc_bars_count = 15), pdC2 = request.security(s3, "D", low[1], calc_bars_count = 15)
+pdD = request.security(s4, "D", high[1], calc_bars_count = 15), pdD2 = request.security(s4, "D", low[1], calc_bars_count = 15)
+pdE = request.security(s5, "D", high[1], calc_bars_count = 15), pdE2 = request.security(s5, "D", low[1], calc_bars_count = 15)
+pdF = request.security(s6, "D", high[1], calc_bars_count = 15), pdF2 = request.security(s6, "D", low[1], calc_bars_count = 15)
+pdG = request.security(s7, "D", high[1], calc_bars_count = 15), pdG2 = request.security(s7, "D", low[1], calc_bars_count = 15)
 
 // Outer-scope session gate: whatever the engine froze, nothing RETESTs or
 // READYs while the chart clock is outside regular hours.
@@ -220,7 +236,7 @@ t1G = f_gate1m(m1G, trG)
 f_ctlTxt(c) => c == 1 ? "CROSS UP" : c == 2 ? "BUYERS" : c == -1 ? "CROSS DN" : c == -2 ? "SELLERS" : "RANGE"
 f_orbTxt(o) => o == 9 ? "BUILDING" : o == 1 ? "ABOVE" : o == -1 ? "BELOW" : "INSIDE"
 f_rtTxt(r)  => r == 1 ? "8 BULL" : r == 2 ? "21 BULL" : r == -1 ? "8 BEAR" : r == -2 ? "21 BEAR" : r == 3 or r == -3 ? "TEST 8" : r == 4 or r == -4 ? "TEST 21" : "WAIT"
-f_momTxt(m, t) => m >= 3 ? "STRONG" : m == 2 ? "GOOD" : t == 0 and m <= 1 ? "SIDEWAYS" : "WEAK"
+f_momTxt(m, t) => m >= 3 ? "STRONG" : m == 2 ? "GOOD" : m == 1 ? "WEAK" : "SIDEWAYS"
 f_lvl(cl, ph, pl, dh, dl) =>
     best = 10.0e10
     nm = "—"

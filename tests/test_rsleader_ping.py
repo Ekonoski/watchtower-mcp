@@ -83,7 +83,7 @@ def test_go_message_precomputes_the_numbers():
     src = inspect.getsource(rp.run_go_watch)
     assert "arm = entry + risk" in src            # the +1R switch price
     assert "0.70 * risk * 100" in src             # per-contract dollars
-    assert "Contracts" in src                     # the sizing division
+    assert "size_line" in src                     # sizing done FOR Eric
 
 
 if __name__ == "__main__":

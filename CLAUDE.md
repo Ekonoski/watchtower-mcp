@@ -984,6 +984,50 @@ Rendering doctrine, same spirit as the rest of this file:
   against this baseline; a size that drifted from it is a `mistakes`
   entry, not a footnote.
 
+- **A new book must be BORN into the schema, and a placeholder is a
+  live number to every reader** (2026-09-01, the rs_leader book's
+  first live day). Three silent refusals in one morning, all the same
+  disease: the paper_specs book CHECK, then paper_trades fill_kind
+  and exit_reason allowlists — written for the incumbent books —
+  bounced the new book's writes with no error surfacing anywhere
+  (specs armed in code, refused at the door; the assert-admission
+  lesson at the schema layer). Then the inverse failure at 11:40: the
+  spec's PLACEHOLDER target (entry*1.02, written only to satisfy NOT
+  NULL) was executed by the generic trade poller — which manages real
+  targets for swing/gamma and was excluded for day_bias but not for
+  rs_leader — closing the live META trade at +12.62R under
+  exit_reason 'target', a reason the book's rulebook doesn't contain.
+  Eric caught it from his phone ("that doesn't seem right"), the
+  dashed line at 578.08 = entry*1.02 confirmed it, and the trade was
+  REOPENED same session per the AGMB retroactive-convention
+  precedent (decided on recorded bars; note in the row). The rules
+  that came out of it: new-book birth touches FOUR places (schema
+  allowlists via migration, poller exclusion, sentinel 999999 target
+  — never a plausible price — and tests/test_liveday_fixes.py pins
+  poller exclusion + sentinel by signature); and analysis/
+  ledger_audit.py re-earns "no defects" EVERY night — per-book
+  exit-reason legality, every entry AND exit price verified inside
+  its day's recorded bar range, holes counted as holes — quiet when
+  clean, loud in #desk when not. The first full audit (all books,
+  all history, same day) came back CLEAN: 27 closed + ~80 open
+  trades, zero anomalies — the incumbents co-evolved with their
+  schema; only the newborn was ever refused.
+  Same day, live-day upgrades from Eric's own reads: the 🎯 GO alert
+  now SIZES the trade (R_DOLLARS=250 baked in — contracts at 0.70Δ
+  ITM and ~0.55Δ ATM, round-down, SKIP line when one contract
+  exceeds budget); Scanner v1.8 (Pine v6, calc_bars_count pinning
+  all 28 hidden streams — kills both the big-chart memory crash and
+  the labels-differ-by-host-chart inconsistency he caught); Bot
+  v2.4 momentum honesty (completed-bar legs — the forming bar's
+  partial volume zeroed the volume leg at the top of every bar —
+  plus an IGNITION leg for fresh bursts and hysteresis on the chop
+  gate so TRENDING/RANGING stops flickering at the 4-cross
+  boundary). Day one's human-vs-machine reading, n=1, stated: his
+  manual META exit +9.4R at PDH resistance vs the trail still
+  holding into the afternoon; his two freelance trades (pre-rank
+  GOOGL put, mid-pack MSFT OTM call) −$216 vs the system trade
+  +$752 — selection was the edge, live, on real money.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
