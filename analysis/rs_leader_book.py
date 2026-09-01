@@ -221,7 +221,9 @@ def run_rsl_tick():
                                  entry_trigger=%s, stop=%s, target=%s
                                  WHERE id=%s""",
                               (round(entry, 4), round(stop, 4),
-                               round(entry * 1.02, 4), sid))
+                               999999, sid))  # sentinel: this book has NO target;
+                               # a plausible placeholder is a live number
+                               # to every reader (the 2026-09-01 phantom)
                 conn.commit()
                 log.info(f"[rsl-book] ENTER {ticker} @ {entry:.4f} "
                          f"({bars[i][0]})")

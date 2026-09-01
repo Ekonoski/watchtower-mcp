@@ -1860,6 +1860,21 @@ def start_scheduler():
         id="rsl_book_settle", replace_existing=True,
     )
 
+    # Nightly ledger-integrity audit (2026-09-01, the phantom-target
+    # day): exit-reason legality per book + every entry/exit price
+    # verified against recorded bars. Quiet when clean; anomalies post
+    # to #desk once per day.
+    def _ledger_audit():
+        from analysis.ledger_audit import run
+        run()
+
+    scheduler.add_job(
+        _ledger_audit,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="58",
+                    timezone=et),
+        id="ledger_audit", replace_existing=True,
+    )
+
     # Index 15m bar appender (2026-08-31, the frozen-table find): the
     # SPY/QQQ/IWM research record froze at Aug 21 because only the
     # one-shot backfill ever wrote it. Freshness now has an owner —
@@ -2605,6 +2620,26 @@ def start_scheduler():
                     break
         except Exception as e:
             log.warning(f"[scheduler] hybrid-exit seed skipped: {e}")
+        # 2026-09-01 live-day studies: rank ladder (the MSFT #2
+        # question), HOD/LOD time map (pass-2 scan), trail variants
+        # (chandelier + ER gate on the graded entries), and the
+        # ledger-integrity audit's boot pass.
+        for _name, _mod in (("rankladder", "analysis.rankladder_study"),
+                            ("hodlod", "analysis.hodlod_study"),
+                            ("trailvar", "analysis.trailvar_study")):
+            try:
+                import importlib
+                _run = importlib.import_module(_mod).run
+                for _ in range(3):
+                    if _run():
+                        break
+            except Exception as e:
+                log.warning(f"[scheduler] {_name} seed skipped: {e}")
+        try:
+            from analysis.ledger_audit import run as _laudit
+            _laudit()
+        except Exception as e:
+            log.warning(f"[scheduler] ledger audit skipped: {e}")
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 

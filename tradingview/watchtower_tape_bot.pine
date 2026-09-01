@@ -1,5 +1,19 @@
 //@version=5
-// WATCHTOWER TAPE BOT v2.3
+// WATCHTOWER TAPE BOT v2.4
+// v2.4 (2026-09-01, Eric's live-day reads — AAPL 'how is momentum
+// weak?' and the RANGING flicker): the judgment cells stop lying at
+// the edges. (1) MOMENTUM votes on COMPLETED bars only — the forming
+// bar's partial volume scored the volume leg zero at the top of every
+// bar no matter the move (the wick rule, applied to the panel).
+// (2) A fourth IGNITION leg: the last 3 closed bars netting > 1.5x
+// ATR scores immediately, so a fresh burst reads before persistence
+// catches up. Labels: 3-4 STRONG, 2 GOOD, 1 WEAK, 0 SIDEWAYS.
+// (3) HYSTERESIS on the chop gate: once trending, it takes >=6 EMA
+// crosses to flip back to choppy (entry stays at >=4 falling to <=2
+// to re-arm) — a count grazing the boundary no longer flickers
+// TRENDING/RANGING bar by bar. Same mechanism the P2 regime scripts
+// use; graded here as a display honesty fix, not a rule change.
+// WATCHTOWER TAPE BOT v2.3 (history below)
 // CONTROL > LEVEL > TREND > SETUP > MOMENTUM. Confirmed closes only.
 // v2.3 — the mixed-bar fix (2026-08-31, the TSLA 1h catch): bars above
 // 15m straddle the 9:30 open (a 1h chart's 9:00 bar is half premarket,
@@ -114,7 +128,11 @@ crossCnt = 0
 for i = 1 to 14
     if (close[i] > emaS[i]) != (close[i + 1] > emaS[i + 1])
         crossCnt += 1
-isChoppy = crossCnt >= 4
+// v2.4 hysteresis: enter choppy at >=4 crosses, leave only when the
+// count decays to <=2 — grazing the boundary cannot flicker the state.
+var bool chopState = false
+chopState := chopState ? crossCnt > 2 : crossCnt >= 4
+isChoppy = chopState
 
 ctlBull   = emaF > emaS
 ctlTxt    = xUp ? "CROSS UP" : xDn ? "CROSS DOWN" : isChoppy ? "RANGING" : ctlBull ? "BUYERS" : "SELLERS"
@@ -357,12 +375,16 @@ spreadAvg = ta.sma(spread, 20)
 expanding = spread > spreadAvg
 trendTxt  = ctlIsRng or isChoppy ? "RANGING" : ctlBull and close > emaS and expanding ? "TRENDING BULL" : (not ctlBull) and close < emaS and expanding ? "TRENDING BEAR" : "RANGING"
 
+// v2.4 — momentum votes on COMPLETED bars only (the wick rule at the
+// panel): every leg indexes [1], so the forming bar's partial volume
+// and unfinished range never dim the cell. Fourth leg = IGNITION.
 atr14   = ta.atr(14)
-rngX    = ta.sma(high - low, 5) / atr14
-dirRun  = math.abs(math.sum(close > open ? 1 : -1, 6))
-volX    = volume / ta.sma(volume, 20)
-score   = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0)
-momTxt  = not canVote ? "CLOSED" : trendTxt == "RANGING" and score <= 1 ? "SIDEWAYS" : score >= 3 ? "STRONG" : score == 2 ? "GOOD" : "WEAK"
+rngX    = ta.sma(high[1] - low[1], 5) / atr14[1]
+dirRun  = math.abs(math.sum(close[1] > open[1] ? 1 : -1, 6))
+volX    = volume[1] / ta.sma(volume[1], 20)
+ignite  = math.abs(close[1] - close[4]) > 1.5 * atr14[1]
+score   = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0) + (ignite ? 1 : 0)
+momTxt  = not canVote ? "CLOSED" : score >= 3 ? "STRONG" : score == 2 ? "GOOD" : score == 1 ? "WEAK" : "SIDEWAYS"
 
 cGood = color.new(#0d8f6f, 20)
 cBad  = color.new(#c0392b, 20)

@@ -48,6 +48,10 @@ KIND_GO = "rsl_go"
 KIND_ARM = "rsl_arm"
 KIND_EXIT = "rsl_exit"
 KIND_BELL = "rsl_bell"
+# Eric's manual R (set 2026-09-01, in CLAUDE.md doctrine): changes only
+# at a flat, scheduled, market-closed review — edit this line then, and
+# never intraday, never after a loss.
+R_DOLLARS = 250.0
 ET = "America/New_York"
 
 _rank_cache = {}     # date -> (leader, laggard, rs_dict); refetchable
@@ -254,6 +258,18 @@ def run_go_watch() -> str:
             arm = entry + risk
             disaster = entry * (1 - 0.01)
             per_ct = 0.70 * risk * 100
+            per_ct_atm = 0.55 * risk * 100
+            n_itm = int(R_DOLLARS // per_ct) if per_ct > 0 else 0
+            n_atm = int(R_DOLLARS // per_ct_atm) if per_ct_atm > 0 else 0
+            if n_itm >= 1:
+                size_line = (f"**Size for ${R_DOLLARS:.0f} R: "
+                             f"{n_itm} contract{'s' if n_itm != 1 else ''} "
+                             f"at 0.70Δ ITM · {n_atm} ATM (~0.55Δ).** "
+                             f"Round-down applied.")
+            else:
+                size_line = (f"**SKIP at ${R_DOLLARS:.0f} R** — one 0.70Δ "
+                             f"contract risks ~${per_ct:.0f} at the stop. "
+                             f"Pass; never tighten the stop to fit.")
             msg = (f"🎯 **GO — {leader}** 1m {bar_ts:%H:%M} candle closed "
                    f"holding the 1m 8/21.{late}\n"
                    f"**Entry {entry:.2f}** · stop level **{stop:.2f}** "
@@ -262,9 +278,9 @@ def run_go_watch() -> str:
                    f"**Trail switch at {arm:.2f}** (+1R): from there, out "
                    f"on a 5m CLOSE below the 5m 21 EMA — I'll ping the "
                    f"switch and the exit; you act, don't compute.\n"
-                   f"Options (0.70Δ): one contract ≈ **−${per_ct:.0f} at "
-                   f"the stop / +${per_ct:.0f} at the switch**. Contracts "
-                   f"= your $ risk ÷ {per_ct:.0f}.\n"
+                   f"{size_line}\n"
+                   f"_(One 0.70Δ contract ≈ ±${per_ct:.0f} at stop/switch — "
+                   f"the fallback division if you buy another strike.)_\n"
                    f"_Graded: trail-after-1R, the only exit positive in "
                    f"both year-halves (+0.40/+0.27 avg R, ~40% win, "
                    f"n=377). No profit target._")
