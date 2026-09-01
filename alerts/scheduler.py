@@ -1748,6 +1748,21 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # 🌅 Morning board to Discord — 8:05 ET (2026-09-01, Eric: the
+    # board premarket, changes through the session — the changes were
+    # already live via drift/prox; this is the missing premarket half).
+    # 8:05 gives the 7:30 sweep half an hour of slack; the claim makes
+    # the boot catch-up below idempotent.
+    def _gamma_board():
+        from alerts.gamma_board_ping import run_board_ping
+        run_board_ping()
+
+    scheduler.add_job(
+        _gamma_board,
+        CronTrigger(day_of_week="mon-fri", hour="8", minute="5", timezone=et),
+        id="gamma_board_morning", replace_existing=True,
+    )
+
     # Gamma drift baseline — 9:20 ET, before the 9:35 intraday upsert
     # overwrites gex_levels: capture the morning-board marks (the numbers
     # in Eric's TradingView slots) into gamma_drift_state. The drift
@@ -2640,6 +2655,11 @@ def start_scheduler():
             _laudit()
         except Exception as e:
             log.warning(f"[scheduler] ledger audit skipped: {e}")
+        try:
+            from alerts.gamma_board_ping import run_board_catchup
+            run_board_catchup()
+        except Exception as e:
+            log.warning(f"[scheduler] gamma board catch-up skipped: {e}")
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 

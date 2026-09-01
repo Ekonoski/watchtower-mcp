@@ -1,4 +1,12 @@
 //@version=5
+// WATCHTOWER TAPE BOT v2.5
+// v2.5 (2026-09-01, Eric's META 15:35 read — "how is this good
+// momentum?"): the MOMENTUM cell shows WHICH WAY the force points.
+// The legs are mostly direction-blind (a crash-and-bounce scores like
+// a clean run), so the label now carries the net direction of the six
+// scoring bars — GOOD ▲ / GOOD ▼ (▼ = the force is a bear flush).
+// Display only: thresholds, READY, and alert logic are untouched.
+// WATCHTOWER TAPE BOT v2.4 (history below)
 // WATCHTOWER TAPE BOT v2.4
 // v2.4 (2026-09-01, Eric's live-day reads — AAPL 'how is momentum
 // weak?' and the RANGING flicker): the judgment cells stop lying at
@@ -380,11 +388,16 @@ trendTxt  = ctlIsRng or isChoppy ? "RANGING" : ctlBull and close > emaS and expa
 // and unfinished range never dim the cell. Fourth leg = IGNITION.
 atr14   = ta.atr(14)
 rngX    = ta.sma(high[1] - low[1], 5) / atr14[1]
-dirRun  = math.abs(math.sum(close[1] > open[1] ? 1 : -1, 6))
+dirNet  = math.sum(close[1] > open[1] ? 1 : -1, 6)
+dirRun  = math.abs(dirNet)
 volX    = volume[1] / ta.sma(volume[1], 20)
 ignite  = math.abs(close[1] - close[4]) > 1.5 * atr14[1]
 score   = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0) + (ignite ? 1 : 0)
 momTxt  = not canVote ? "CLOSED" : score >= 3 ? "STRONG" : score == 2 ? "GOOD" : score == 1 ? "WEAK" : "SIDEWAYS"
+// v2.5: direction arrow on the DISPLAYED cell only — READY and momCol
+// keep reading the pure momTxt (an arrow inside the compared string
+// would silently kill the READY alert, the _social_block disease).
+momCell = momTxt + (canVote and score > 0 ? (dirNet > 0 ? " ▲" : dirNet < 0 ? " ▼" : "") : "")
 
 cGood = color.new(#0d8f6f, 20)
 cBad  = color.new(#c0392b, 20)
@@ -408,7 +421,7 @@ if dashOn and barstate.islast
     table.cell(dash, 0, 4, "ACTIVE SETUP", text_color = color.white, bgcolor = f_dir(setupTxt), text_size = txSz)
     table.cell(dash, 1, 4, setupTxt, text_color = color.white, bgcolor = f_dir(setupTxt), text_size = txSz)
     table.cell(dash, 0, 5, "MOMENTUM", text_color = color.white, bgcolor = cHead, text_size = txSz)
-    table.cell(dash, 1, 5, momTxt,   text_color = color.white, bgcolor = momCol,          text_size = txSz)
+    table.cell(dash, 1, 5, momCell,  text_color = color.white, bgcolor = momCol,          text_size = txSz)
 
 f_say(msg) =>
     m = syminfo.ticker + " " + timeframe.period + ": " + msg

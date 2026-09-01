@@ -94,6 +94,82 @@ def test_trailvar_sim_semantics():
     assert out3["chand_25"]["out"] == "disaster"
 
 
+def test_trail_decides_on_completed_5m_blocks():
+    """The 14:27 META exit (2026-09-01): a 1m close below the 5m e21
+    MID-BLOCK must not exit — only the completed block's close decides
+    (wick rule). The fix maps e21 only at completed-block bars."""
+    from analysis.rs_leader_book import lifecycle_state
+    t0 = dt.datetime(2026, 9, 1, 9, 45)
+
+    def mk(minutes, px):
+        # flat bars at px; (ts, o, h, l, c)
+        return [(t0 + dt.timedelta(minutes=m), px, px + 0.1, px - 0.1, px)
+                for m in minutes]
+
+    entry, stop = 100.0, 99.0
+    # 40 minutes climbing to 105 (arms at 101, e21 drags well below),
+    # then a sharp drop: 1m closes 101.5 at :40/:41 (mid-block, below
+    # nothing yet), then the block completes at :44 with a close BELOW
+    # the running e21 -> exit only at the completion bar.
+    bars = []
+    for m in range(40):
+        px = 100.0 + m * 0.125          # 100 -> 104.875
+        bars += mk([m], px)
+    bars += mk([40, 41, 42], 101.5)      # mid-block plunge, block open
+    out_mid = lifecycle_state(bars, 0, entry, stop)
+    assert out_mid["exit"] is None       # partial block never decides
+    bars_done = bars + mk([43, 44], 101.5)
+    out_done = lifecycle_state(bars_done, 0, entry, stop)
+    assert out_done["exit"] is not None
+    reason, ts, px = out_done["exit"]
+    assert reason == "trail"
+    assert ts.minute == (t0.minute + 44) % 60   # the block's FINAL bar
+    assert px == 101.5
+
+
+def test_rankladder_trend_gate_and_marker():
+    """The 2026-09-01 evening fixes: (1) trend1m_at answers None inside
+    its warmup — unknown is not False (the old 5m gate could never
+    fire inside the entry window); (2) the completion marker no longer
+    requires zero todo days — with the bars marker present, a day the
+    final record cannot grade is a hole, not pending work."""
+    from analysis.rankladder_study import run, trend1m_at
+    from analysis.rsleader_study import ema
+    closes = [100 + 0.3 * k for k in range(40)]   # clean uptrend
+    e8, e21 = ema(closes, 8), ema(closes, 21)
+    assert trend1m_at(closes, e8, e21, 10) is None     # warmup: unknown
+    assert trend1m_at(closes, e8, e21, 30) is True     # trending
+    down = [100 - 0.3 * k for k in range(40)]
+    assert trend1m_at(down, ema(down, 8), ema(down, 21), 30) is False
+    src = inspect.getsource(run)
+    assert "if bars_done:" in src and "not todo" not in src.split(
+        "if bars_done:")[1].split("return True")[0]
+    assert "ungradeable" in src
+
+
+def test_gamma_board_ping_contract():
+    """The 🌅 morning board (2026-09-01): read-only, claimed
+    at-most-once, holes named, inverted walls warned, per-row stamps."""
+    from alerts import gamma_board_ping as gb
+    src = inspect.getsource(gb)
+    assert "claim_and_send" in src
+    assert "INSERT INTO" not in src and "UPDATE " not in src
+    assert "DELETE FROM" not in src
+    assert gb.KIND_BOARD == "gamma_board" and gb.CHANNEL == "gamma"
+    assert gb.VENUES == ("SPY", "QQQ", "IWM")
+    # inverted-wall doctrine + hole rendering live in the formatter
+    row_hole = gb._fmt_row("IWM", (None,) * 7)
+    assert "unavailable" in row_hole
+    inv = gb._fmt_row("QQQ", (700.0, 690.0, 710.0, 705.0, -5.0,
+                              "slippery", None))
+    assert "put wall ABOVE spot" in inv and "call wall BELOW spot" in inv
+    clean = gb._fmt_row("SPY", (770.0, 775.0, 760.0, 768.0, 3.0,
+                                "pinned", None))
+    assert "⚠" not in clean
+    # boot catch-up is window-gated (weekday 8:05-16:00), else no-op
+    assert "8, 5" in inspect.getsource(gb.run_board_catchup)
+
+
 def test_hodlod_day_row():
     from analysis.hodlod_study import day_row
     t0 = dt.datetime(2026, 9, 1, 9, 30)

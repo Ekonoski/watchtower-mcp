@@ -1,6 +1,13 @@
 //@version=6
 // ─────────────────────────────────────────────────────────────────────────────
-// WATCHTOWER TAPE SCANNER v1.8
+// WATCHTOWER TAPE SCANNER v1.9
+// v1.9 (2026-09-01, Eric's META 15:35 read — "how is this good
+// momentum?"): the MOMENTUM cell shows WHICH WAY the force points.
+// The legs are mostly direction-blind (a crash-and-bounce scores like
+// a clean run), so the label now carries the net direction of the six
+// scoring bars — GOOD ▲ / GOOD ▼ (▼ = the force is a bear flush).
+// Display only: thresholds, READY, and status are untouched.
+// WATCHTOWER TAPE SCANNER v1.8 (history below)
 // v1.8 (2026-09-01, the memory-error + one-truth session): Pine v6 with
 // calc_bars_count pinning EVERY hidden data stream to a fixed history
 // (5m/1m: 1500 bars; daily: 15). Two bugs die at once: the memory-limit
@@ -157,11 +164,12 @@ f_scan() =>
          trend == -1 and touch21 ? -4 : 0
     atr14 = ta.atr(14)
     rngX = ta.sma(high[1] - low[1], 5) / atr14[1]
-    dirRun = math.abs(math.sum(close[1] > open[1] ? 1 : -1, 6))
+    dirNet = math.sum(close[1] > open[1] ? 1 : -1, 6)
+    dirRun = math.abs(dirNet)
     volX = volume[1] / ta.sma(volume[1], 20)
     ignite = math.abs(close[1] - close[4]) > 1.5 * atr14[1]
     mom = (rngX > 1.15 ? 1 : 0) + (dirRun >= 4 ? 1 : 0) + (volX > 1.2 ? 1 : 0) + (ignite ? 1 : 0)
-    [ctl, trend, orb, rt, mom, close, pmH, pmL]
+    [ctl, trend, orb, rt, mom, close, pmH, pmL, dirNet]
 
 // v1.7 — the 1-minute trigger engine: identical state encoding to the
 // scan-TF retest (1/2 = 8/21 BULL, -1/-2 = 8/21 BEAR, 3/4 = TEST 8/21
@@ -194,13 +202,13 @@ f_trig() =>
     not session.ismarket ? 0 : resd != 0 ? resd : trend == 1 and touch8 ? 3 : trend == -1 and touch8 ? -3 : trend == 1 and touch21 ? 4 : trend == -1 and touch21 ? -4 : 0
 
 tfStr = scanTF
-[ctlA, trA, orbA, rtA0, momA, clA, phA, plA] = request.security(x1, tfStr, f_scan(), calc_bars_count = 1500)
-[ctlB, trB, orbB, rtB0, momB, clB, phB, plB] = request.security(x2, tfStr, f_scan(), calc_bars_count = 1500)
-[ctlC, trC, orbC, rtC0, momC, clC, phC, plC] = request.security(x3, tfStr, f_scan(), calc_bars_count = 1500)
-[ctlD, trD, orbD, rtD0, momD, clD, phD, plD] = request.security(x4, tfStr, f_scan(), calc_bars_count = 1500)
-[ctlE, trE, orbE, rtE0, momE, clE, phE, plE] = request.security(x5, tfStr, f_scan(), calc_bars_count = 1500)
-[ctlF, trF, orbF, rtF0, momF, clF, phF, plF] = request.security(x6, tfStr, f_scan(), calc_bars_count = 1500)
-[ctlG, trG, orbG, rtG0, momG, clG, phG, plG] = request.security(x7, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlA, trA, orbA, rtA0, momA, clA, phA, plA, dmA] = request.security(x1, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlB, trB, orbB, rtB0, momB, clB, phB, plB, dmB] = request.security(x2, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlC, trC, orbC, rtC0, momC, clC, phC, plC, dmC] = request.security(x3, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlD, trD, orbD, rtD0, momD, clD, phD, plD, dmD] = request.security(x4, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlE, trE, orbE, rtE0, momE, clE, phE, plE, dmE] = request.security(x5, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlF, trF, orbF, rtF0, momF, clF, phF, plF, dmF] = request.security(x6, tfStr, f_scan(), calc_bars_count = 1500)
+[ctlG, trG, orbG, rtG0, momG, clG, phG, plG, dmG] = request.security(x7, tfStr, f_scan(), calc_bars_count = 1500)
 m1A = request.security(x1, "1", f_trig(), calc_bars_count = 1500)
 m1B = request.security(x2, "1", f_trig(), calc_bars_count = 1500)
 m1C = request.security(x3, "1", f_trig(), calc_bars_count = 1500)
@@ -237,6 +245,9 @@ f_ctlTxt(c) => c == 1 ? "CROSS UP" : c == 2 ? "BUYERS" : c == -1 ? "CROSS DN" : 
 f_orbTxt(o) => o == 9 ? "BUILDING" : o == 1 ? "ABOVE" : o == -1 ? "BELOW" : "INSIDE"
 f_rtTxt(r)  => r == 1 ? "8 BULL" : r == 2 ? "21 BULL" : r == -1 ? "8 BEAR" : r == -2 ? "21 BEAR" : r == 3 or r == -3 ? "TEST 8" : r == 4 or r == -4 ? "TEST 21" : "WAIT"
 f_momTxt(m, t) => m >= 3 ? "STRONG" : m == 2 ? "GOOD" : m == 1 ? "WEAK" : "SIDEWAYS"
+// v1.9: net direction of the six scoring bars, display only — SIDEWAYS
+// carries no arrow (zero force has no direction worth printing).
+f_momArrow(d, m) => m == 0 ? "" : d > 0 ? " ▲" : d < 0 ? " ▼" : ""
 f_lvl(cl, ph, pl, dh, dl) =>
     best = 10.0e10
     nm = "—"
@@ -291,7 +302,7 @@ f_stTxt(s) => s == 2 ? "READY" : s == 1 ? "BUILDING" : "NO SETUP"
 sessTxt = session.ismarket ? "RTH" : session.ispremarket ? "PRE" : session.ispostmarket ? "POST" : "CLOSED"
 pos = tblPos == "Top left" ? position.top_left : tblPos == "Middle right" ? position.middle_right : tblPos == "Bottom right" ? position.bottom_right : tblPos == "Bottom left" ? position.bottom_left : position.top_right
 var table scan = table.new(pos, 8, 8, border_width = 1, border_color = color.new(color.black, 60))
-f_row(r, nm, ctl, tr, orb, rt, t1, mom, st, kl) =>
+f_row(r, nm, ctl, tr, orb, rt, t1, mom, dm, st, kl) =>
     table.cell(scan, 0, r, nm, text_color = color.white, bgcolor = cHead)
     table.cell(scan, 1, r, f_ctlTxt(ctl), text_color = color.white, bgcolor = f_c(f_ctlTxt(ctl)))
     table.cell(scan, 2, r, kl, text_color = color.white, bgcolor = f_c(kl))
@@ -299,7 +310,8 @@ f_row(r, nm, ctl, tr, orb, rt, t1, mom, st, kl) =>
     table.cell(scan, 4, r, f_rtTxt(rt), text_color = color.white, bgcolor = f_c(f_rtTxt(rt)))
     t1txt = t1 == 99 ? "" : f_rtTxt(t1)
     table.cell(scan, 5, r, t1txt, text_color = color.white, bgcolor = t1txt == "" ? cN : f_c(t1txt))
-    table.cell(scan, 6, r, f_momTxt(mom, tr), text_color = color.white, bgcolor = f_c(f_momTxt(mom, tr)))
+    // arrow is display-only: color and READY still read the pure label
+    table.cell(scan, 6, r, f_momTxt(mom, tr) + f_momArrow(dm, mom), text_color = color.white, bgcolor = f_c(f_momTxt(mom, tr)))
     table.cell(scan, 7, r, f_stTxt(st), text_color = color.white, bgcolor = st == 2 ? cG : st == 1 ? cW : cN)
 
 if barstate.islast
@@ -316,19 +328,19 @@ if barstate.islast
         if shown < nShow
             i = array.get(idx, k)
             if i == 0
-                f_row(shown + 1, sy1, ctlA, trA, orbA, rtA, t1A, momA, stA, f_lvl(clA, phA, plA, pdA, pdA2))
+                f_row(shown + 1, sy1, ctlA, trA, orbA, rtA, t1A, momA, dmA, stA, f_lvl(clA, phA, plA, pdA, pdA2))
             if i == 1
-                f_row(shown + 1, sy2, ctlB, trB, orbB, rtB, t1B, momB, stB, f_lvl(clB, phB, plB, pdB, pdB2))
+                f_row(shown + 1, sy2, ctlB, trB, orbB, rtB, t1B, momB, dmB, stB, f_lvl(clB, phB, plB, pdB, pdB2))
             if i == 2
-                f_row(shown + 1, sy3, ctlC, trC, orbC, rtC, t1C, momC, stC, f_lvl(clC, phC, plC, pdC, pdC2))
+                f_row(shown + 1, sy3, ctlC, trC, orbC, rtC, t1C, momC, dmC, stC, f_lvl(clC, phC, plC, pdC, pdC2))
             if i == 3
-                f_row(shown + 1, sy4, ctlD, trD, orbD, rtD, t1D, momD, stD, f_lvl(clD, phD, plD, pdD, pdD2))
+                f_row(shown + 1, sy4, ctlD, trD, orbD, rtD, t1D, momD, dmD, stD, f_lvl(clD, phD, plD, pdD, pdD2))
             if i == 4
-                f_row(shown + 1, sy5, ctlE, trE, orbE, rtE, t1E, momE, stE, f_lvl(clE, phE, plE, pdE, pdE2))
+                f_row(shown + 1, sy5, ctlE, trE, orbE, rtE, t1E, momE, dmE, stE, f_lvl(clE, phE, plE, pdE, pdE2))
             if i == 5
-                f_row(shown + 1, sy6, ctlF, trF, orbF, rtF, t1F, momF, stF, f_lvl(clF, phF, plF, pdF, pdF2))
+                f_row(shown + 1, sy6, ctlF, trF, orbF, rtF, t1F, momF, dmF, stF, f_lvl(clF, phF, plF, pdF, pdF2))
             if i == 6
-                f_row(shown + 1, sy7, ctlG, trG, orbG, rtG, t1G, momG, stG, f_lvl(clG, phG, plG, pdG, pdG2))
+                f_row(shown + 1, sy7, ctlG, trG, orbG, rtG, t1G, momG, dmG, stG, f_lvl(clG, phG, plG, pdG, pdG2))
             shown += 1
 
 // ── Alert: a symbol turned READY on a confirmed bar ──────────────────────────

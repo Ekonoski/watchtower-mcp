@@ -1028,6 +1028,59 @@ Rendering doctrine, same spirit as the rest of this file:
   GOOGL put, mid-pack MSFT OTM call) −$216 vs the system trade
   +$752 — selection was the edge, live, on real money.
 
+- **A partial resample block is a forming bar wearing a completed
+  bar's clothes** (2026-09-01 afternoon, Eric's dotted line at
+  581.46): the rs_leader trail exited META at 14:27 — a mid-block 1m
+  close — because lifecycle_state mapped res5's trailing PARTIAL
+  block as if it were a 5m close; the rule-correct exit was the
+  completed 14:25-29 block (581.455 at 14:29, recomputed from
+  rsl_book_bars with the study's own code). Half a cent today; a
+  wick-rule violation always, and a live/backtest divergence (the
+  backtest read full days, so every block was complete — the live
+  per-minute port introduced it). Row corrected per the AGMB
+  retroactive precedent (+16.38R final); e21 now maps COMPLETED
+  blocks only (a later block proves completion; the trailing block
+  needs its final minute); tests/test_liveday_fixes.py pins the
+  mid-block refusal. Both of day one's phantoms were caught by Eric
+  reading a price line on his chart — the audit's cheapest layer is
+  a human asking "what printed at my line?".
+  Same evening, the day's study readouts: **rank-ladder** — a
+  QUALIFIED #2 grades exactly like #1 in aggregate (+0.40R, both
+  halves, n=281 vs 442) but fails per-name replication (4/7; AAPL/
+  AMZN/META negative) → candidate under observation, NOT a second
+  entry; the ladder cliffs at #3 (−0.38R, half-2 −1.04). MSFT-at-#2
+  is historically one of the BEST cells (+1.35R, 69%) — 9/1's
+  failure was its 31%, and the graded #2 trade is the 1m GO in
+  shares, not a 5m-retest OTM call. **Trail variants** — chandelier
+  (−0.06R) and ER-gated trail (+0.08R) both fail the both-halves bar
+  on leader days; the incumbent 21-EMA trail-after-1R (+0.40/+0.27)
+  beat its second and third informed challengers. **HOD/LOD map** —
+  day extremes live at the EDGES (U-shape): on open-above days the
+  LOD prints pre-10:30 at ~2.4x random and the HOD prints in the
+  LAST hour at ~2x random (close_pos 0.60) — the structural reason
+  trail-to-close keeps beating early exits. And **trend5_on was
+  vacuous by construction** — the 5m gate needs 21 completed 5m bars
+  (~11:15) while entries end at 11:00: all 3,465 rows read False
+  (the wma_touch disease in a study column). Redefined as the 1m
+  gate at the GO bar with NULL inside its own warmup (unknown is
+  never False), rows wiped and re-graded; and the study's completion
+  marker no longer demands zero todo days — with the bars marker
+  present, a day the final record cannot grade (five half-days) is
+  a HOLE, not pending work, else the marker literally could never
+  write. Smaller keeps: momentum cells on both Pine panels carry
+  direction arrows (GOOD ▲/▼ — the legs are force, mostly
+  direction-blind; arrow rides the DISPLAYED string only, never the
+  compared one, or the READY alert dies silently); a 9:45
+  prep-sizing range was built and REVERTED same hour at Eric's call
+  ("if it's not possible to know ahead of time I don't want to make
+  it more confusing") — the 🎯 stays the only sizer; the 🌅 morning
+  gamma board posts to Discord at 8:05 (7:30-sweep marks, inverted
+  walls warned, holes named, boot catch-up idempotent by claim); and
+  the first scheduled ledger audit ran clean — 107 trades, zero
+  anomalies. Eric's standing ruling on the swing book's 1-13 start:
+  "keep everything as is until we hit the gates" — no knob turns
+  before the ~30-resolution clauses decide.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that

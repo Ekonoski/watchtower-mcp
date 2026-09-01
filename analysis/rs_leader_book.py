@@ -55,7 +55,19 @@ def lifecycle_state(bars, i_go, entry, stop):
     disaster = entry * (1 - DISASTER_PCT)
     bars5, last5 = res5(bars)
     e21_5 = ema5([b[4] for b in bars5], 21)
-    e21_by_min = {last5[j]: e21_5[j] for j in range(len(bars5))}
+    # COMPLETED blocks only (2026-09-01, the 14:27 META exit): res5
+    # appends the trailing partial block, and mapping its running last
+    # bar lets a 1m close mid-block masquerade as a 5m close — the
+    # wick-rule violation. A non-trailing block is proven complete by
+    # the later block's existence; the trailing one only by its final
+    # minute (offset % 5 == 4) having printed.
+    e21_by_min = {}
+    for j in range(len(bars5)):
+        ts_j = bars[last5[j]][0]
+        done = (j < len(bars5) - 1
+                or ((ts_j.hour - 9) * 60 + ts_j.minute - 30) % 5 == 4)
+        if done:
+            e21_by_min[last5[j]] = e21_5[j]
     armed = False
     for i in range(i_go + 1, len(bars)):
         ts, o, h, l, c = bars[i]
