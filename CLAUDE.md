@@ -975,6 +975,15 @@ Rendering doctrine, same spirit as the rest of this file:
   survivors. One live rule, one alternative (the ratchet), no
   switching by feel.
 
+- **Eric's manual R is $250** (set 2026-09-01, the night the RS-leader
+  rule went live): fixed dollar risk on EVERY manual trade — system and
+  freelance alike — sized as risk / per-unit stop cost, rounded DOWN,
+  skip when one unit exceeds the budget. It changes only at a flat,
+  scheduled, market-closed review by a one-sentence reason, never
+  intraday and never after a loss. The journal grades outcomes in R
+  against this baseline; a size that drifted from it is a `mistakes`
+  entry, not a footnote.
+
 - **The measurement harness matches what the idea changes** (ratified
   by Eric 2026-08-22: "I will yield to your ideas on these... Let's do
   it"). Three harnesses, no more: a FULL SHADOW only for ideas that
