@@ -1833,6 +1833,33 @@ def start_scheduler():
         id="rsl_trade_watch_day", replace_existing=True,
     )
 
+    # The RS-leader audition book (2026-08-31 late, Eric: "Yes go build
+    # the paper book"): one spec/day trading the graded definition on
+    # persisted 1m bars (rsl_book_bars), idempotent per-minute ticks.
+    # The book grades the rule; Eric's journal grades the hand.
+    def _rsl_book_tick():
+        from analysis.rs_leader_book import run_rsl_tick
+        run_rsl_tick()
+
+    scheduler.add_job(
+        _rsl_book_tick,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="46-59",
+                    second="30", timezone=et),
+        id="rsl_book_9", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_book_tick,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*",
+                    second="30", timezone=et),
+        id="rsl_book_day", replace_existing=True,
+    )
+    scheduler.add_job(
+        _rsl_book_tick,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="0,1",
+                    second="30", timezone=et),
+        id="rsl_book_settle", replace_existing=True,
+    )
+
     # Index 15m bar appender (2026-08-31, the frozen-table find): the
     # SPY/QQQ/IWM research record froze at Aug 21 because only the
     # one-shot backfill ever wrote it. Freshness now has an owner —
