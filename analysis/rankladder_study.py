@@ -14,9 +14,12 @@ Per (trade_date, ticker) across the mag-7 1m record: rank_pos (1-7 by
 RS vs QQQ at 9:45), rs, qualified (rs >= RS_MIN), the GO entry if one
 printed, and two structure states AT ENTRY (knowable then, never
 later): orb_state (entry above/inside/below the 30-min opening range)
-and trend5_on (the Scanner trend gate on day-anchored 5m bars at the
-governing completed bar — frame DECLARED: day-anchored, not the
-chart's continuous EMA). Outcomes: eod_bps (entry -> day close, no
+and trend5_on — REDEFINED 2026-09-01: the column now holds the 1m
+trend gate (tapeentry's ema_1m_gated frame) at the GO bar, because
+the original 5m gate needed 21 completed 5m bars (~11:15) while the
+entry window ends at 11:00 — it could never fire (all 3,465 first-run
+rows read False; wiped and re-graded). NULL = the GO printed inside
+the 1m gate's own 21-bar warmup: unknown, never False. Outcomes: eod_bps (entry -> day close, no
 stop) and r_close (per struct risk; cap at readout — outlier rule).
 
 Readout bars, pre-registered: a rank cohort or structure cell is real
@@ -33,7 +36,7 @@ import time
 
 from analysis.rsleader_study import (ENTRY_CUTOFF, MEASURE, RS_MIN, TICKERS,
                                      ema, find_go_entry)
-from analysis.tapeentry_study import resample5, trend_series
+from analysis.tapeentry_study import trend_series
 
 log = logging.getLogger("watchtower.rankladder")
 
@@ -41,6 +44,18 @@ COMPLETE_MARKER = "rankladder_v1"
 BARS_MARKER = "rsleader_bars_v1"
 BUDGET_S = 15 * 60
 ORB_END = dt.time(10, 0)
+
+
+def trend1m_at(closes, e8, e21, i):
+    """The trend gate the entry window can actually KNOW (2026-09-01
+    rework): the original 5m gate needed 21 completed 5m bars (~11:15)
+    while entries end at 11:00, so trend5_on could never fire — a hole
+    wearing False, the wma_touch family. This is the 1m trend
+    (tapeentry's ema_1m_gated frame) at the GO bar; inside its own
+    21-bar warmup the answer is None — unknown is not False."""
+    if i < 21:
+        return None
+    return trend_series(closes, e8, e21)[i] == 1
 
 
 def _grade_day(conn, d, done_pairs):
@@ -103,16 +118,7 @@ def _grade_day(conn, d, done_pairs):
         orb_l = min(b[3] for b in bars if b[0].time() < ORB_END)
         orb_state = ("above" if entry > orb_h else
                      "below" if entry < orb_l else "inside")
-        bars5, last5 = resample5(bars)
-        c5 = [b[4] for b in bars5]
-        tr5 = trend_series(c5, ema(c5, 8), ema(c5, 21))
-        gov = None
-        for j in range(len(bars5)):
-            if last5[j] <= i:
-                gov = j
-            else:
-                break
-        trend_on = gov is not None and tr5[gov] == 1
+        trend_on = trend1m_at(closes, e8, e21, i)
         eod_bps = (bars[-1][4] / entry - 1) * 1e4
         risk = entry - stop
         r_close = (bars[-1][4] - entry) / risk if risk > 0 else None
@@ -160,7 +166,14 @@ def run() -> bool:
                 return False
             n += _grade_day(conn, d, done_pairs)
         log.info("[rankladder] graded %d rows across %d day(s).", n, len(todo))
-        if bars_done and not todo:
+        if bars_done:
+            # Every remaining day was attempted against the FINAL bar
+            # record (bars marker present): a day that still yields no
+            # rows — half-days, <300-bar sessions — is a permanently
+            # ungradeable hole, not pending work. Without this the
+            # marker could never write (2026-09-01: five half-days
+            # held it open forever — a completion test no run could
+            # ever pass, the class-that-can-never-fire disease).
             with conn.cursor() as c:
                 c.execute(
                     "INSERT INTO scheduler_job_claims (job_name, run_date) "
