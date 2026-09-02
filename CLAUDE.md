@@ -1079,6 +1079,30 @@ Rendering doctrine, same spirit as the rest of this file:
   same mistake with the sign flipped. The doctrine, restated: a
   lifecycle is entry × exit × population; grade the product, not the
   factors.
+  READOUT (same night, all 446 GO entries, R on the GO risk unit,
+  ±10R cap): HOLD is the only variant positive in BOTH halves and ALL
+  7 names (+0.38/+0.52R, 52% win, 7/7); every stop or trail structure
+  is negative in aggregate — book −0.21/−0.27 (3/7 names),
+  disaster+trail −0.07/−0.25, wide5 (stop under the 5-minute pullback
+  window) −0.13/−0.19, struct+bell −0.39/−0.27, disaster-only
+  −0.28/−0.40 — because the 1% "disaster" TOUCH fires on 46% of GO
+  entries. The reason is the risk UNIT, not the exits: the pullback-
+  bar stop is ~0.27% of price, while the trade's own median adverse
+  excursion held to the bell is −4R (≈ −90 bps) and its 5th
+  percentile close is −10 to −13R; the +0.45R headline is +13 bps
+  average / +10 bps median per day expressed in a stop the trade
+  never respected. Stated plainly: the RS-leader entry is a THIN,
+  replicating edge (+13 bps/day, 52% win, both halves, 7/7 names)
+  whose graded expression is hold-to-close with NO stop inside the
+  day — and sizing $250 on the 0.27% stop means a normal held day
+  swings ±$1,000 and the tail is −$3,000. No stop tested keeps the
+  edge; the honest choices are (a) size R on the trade's REAL
+  excursion (e.g. the 1% disaster as the unit, ~1/4 the contracts)
+  and hold to the bell, or (b) refuse the trade as too thin for
+  options friction. Eric rules; nothing changes by feel. The desk
+  rule that came out of it: an R unit is a CLAIM about where the
+  trade fails — grade the claim (MAE vs stop) before grading the
+  trade in R.
 
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
