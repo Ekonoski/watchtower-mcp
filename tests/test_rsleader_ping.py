@@ -64,16 +64,18 @@ def test_trade_watch_lifecycle_definitions():
 
     from alerts import rsleader_ping as rp
     src = inspect.getsource(rp.run_trade_watch)
-    # the trail frame is the hybrid study's, imported never rewritten
-    assert "from analysis.hybrid_exit_study import" in src
+    # ONE DEFINITION (2026-09-02, the 11:09 phantom exit ping): the
+    # watcher imports the BOOK's lifecycle_state — no local copy of the
+    # trail frame, so the ping can never diverge from the ledger again.
+    assert "from analysis.rs_leader_book import lifecycle_state" in src
+    assert "lifecycle_state(bars, i_go, entry, stop)" in src
+    assert "res5" not in src and "e21_by_min" not in src
     # the three state pings exist with distinct claim kinds
     assert rp.KIND_ARM == "rsl_arm" and rp.KIND_EXIT == "rsl_exit"
     assert rp.KIND_BELL == "rsl_bell"
     for needle in ("disaster cap touched", "21-EMA trail",
                    "closed through the stop", "AT THE CLOSE"):
         assert needle in src
-    # disaster is touch-based; stop/trail decisions are 5m closes
-    assert "l <= disaster" in src and "c < e21" in src
 
 
 def test_go_message_precomputes_the_numbers():

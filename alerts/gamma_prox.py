@@ -61,8 +61,23 @@ def prox_ref(trade_date, ticker: str, kind: str, level) -> str:
     return f"{trade_date}:{ticker}:{kind}:{float(level):.2f}"
 
 
+def strength_txt(kind: str, strength) -> str:
+    """Wall STRENGTH for the message (2026-09-02): weight, share of the
+    side's gamma, next-strongest strike. Empty when unknown (older rows
+    carry no blob) — a hole, never a guess."""
+    if not strength or kind not in ("call_wall", "put_wall"):
+        return ""
+    s = strength.get("call" if kind == "call_wall" else "put")
+    if not s or s.get("gex_bn") is None:
+        return ""
+    txt = f" · wall {s['gex_bn']:+.2f}bn = {s['share'] * 100:.0f}% of the side"
+    if s.get("next_strike") is not None:
+        txt += f" (next {s['next_strike']:g} at {s['next_bn']:+.2f}bn)"
+    return txt
+
+
 def format_prox(ticker: str, ts_et: str, spot: float, hit: dict,
-                net_gex, regime) -> str:
+                net_gex, regime, strength=None) -> str:
     spot, lv = float(spot), hit["level"]
     side = "above" if hit["dist_pct"] >= 0 else "below"
     inv = ""
@@ -78,7 +93,8 @@ def format_prox(ticker: str, ts_et: str, spot: float, hit: dict,
              if gex is not None and abs(gex) < DECOR_BN else "")
     return (f"📍 **{ticker}** AT LEVEL — {hit['label']} {lv:g} · spot {spot:g} "
             f"({hit['dist_pct']:+.2f}% {side}) · {gex_txt} · "
-            f"{regime or '?'}{inv}{decor}\n"
+            f"{regime or '?'}{inv}{decor}"
+            f"{strength_txt(hit['kind'], strength)}\n"
             f"({ts_et} ET board · watch prompt, not a signal · "
             f"one ping per level per day)")
 
@@ -107,7 +123,7 @@ def run_gamma_prox_check() -> dict:
                 cur.execute(
                     """
                     SELECT ts, spot, net_gex, gamma_flip, call_wall,
-                           put_wall, regime
+                           put_wall, regime, wall_strength
                     FROM gex_intraday
                     WHERE ticker = %s AND ts::date = CURRENT_DATE
                     ORDER BY ts DESC LIMIT 1
@@ -117,7 +133,7 @@ def run_gamma_prox_check() -> dict:
                 row = cur.fetchone()
             if not row:
                 continue
-            ts, spot, net_gex, flip, cw, pw, regime = row
+            ts, spot, net_gex, flip, cw, pw, regime, strength = row
             if ts is not None and ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             if ts is None or (now - ts) > timedelta(minutes=STALE_MAX_MIN):
@@ -128,7 +144,7 @@ def run_gamma_prox_check() -> dict:
                 ref = prox_ref(ts.astimezone(et).date(), ticker,
                                hit["kind"], hit["level"])
                 msg = format_prox(ticker, ts.astimezone(et).strftime("%H:%M"),
-                                  spot, hit, net_gex, regime)
+                                  spot, hit, net_gex, regime, strength)
                 res = claim_and_send("gamma_prox", ref, "gamma", msg, conn)
                 if res == "sent":
                     sent += 1

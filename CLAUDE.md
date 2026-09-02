@@ -666,6 +666,20 @@ Rendering doctrine, same spirit as the rest of this file:
   inside the hold), not a selector. tests/test_options_expression.py
   pins the picker, the named refusals, the tenor map, the write-only-
   its-own-table signature, and the writer's blindness.
+  QUEUED expression test (2026-09-02, Eric, off the @SPXVIX NBIS read
+  — "slipped under the 200 put wall, not selling puts here, that's how
+  you get run over"): **short puts at the put wall**, the premium
+  seller's expression of the same gamma map. Spec sketch, to be
+  pre-registered when the gate opens: sell a short-dated put at/just
+  below the put wall ONLY when the wall sits BELOW spot in a pinning
+  (positive-gamma) regime — a put wall above spot or a slippery board
+  is a hard VETO (the inverted-wall doctrine, now with a named
+  counterparty lesson); grade vs the shares-equivalent per the
+  expression scoreboard, refusals recorded (no_chain / illiquid /
+  regime_veto). Same gate as every expression test: ~30 clean
+  resolutions in the underlying first. Sits beside the gamma book's
+  own fade expression (short call spread above the wall) as the
+  second wall-located premium idea.
 
 - **Gamma expansion is replayed before it is armed, and targets are
   shadowed before they walk** (2026-08-28). Two questions from the same
@@ -983,6 +997,63 @@ Rendering doctrine, same spirit as the rest of this file:
   intraday and never after a loss. The journal grades outcomes in R
   against this baseline; a size that drifted from it is a `mistakes`
   entry, not a footnote.
+
+- **The pings and the ledger are one definition, and the audit checks
+  that they agree** (2026-09-02, the 11:09 phantom exit ping): the 9/1
+  partial-block fix cured the BOOK, but the Discord trade-watch
+  carried its own COPY of the lifecycle and the copy kept the bug —
+  it announced META's exit at 11:09 (mid-block) while the book's
+  rule-correct exit printed at 11:39 (593.73, +0.98R; the 11:35-11:39
+  block closed 97¢ under the day-anchored 21-EMA at 594.70). A second
+  definition is a second place for the same bug to live. Now: the
+  watcher IMPORTS rs_leader_book.lifecycle_state;
+  tests/test_one_definition.py forbids any alerts/ module from carrying
+  resample/trail math of its own; and ledger_audit.reconcile_pings
+  checks every 🚪 against the recorded exit bar nightly (a ping that
+  precedes the bar, a ping with no exit, an exit with no ping → 🚨).
+  The chart-line lesson rides with it: a continuous 21-EMA (yesterday's
+  and premarket bars included) sat several dollars BELOW the book's
+  day-anchored line all morning — Bot v2.7 draws the book's line (WT
+  TRAIL) so "did it close below?" has one answer on every screen.
+  Same evening's gamma slate (Eric, off the SPXVIX NBIS card: "help me
+  see where the strongest walls actually are"): compute_gex reports
+  each wall's weight, SHARE of its side, and next-strongest strike
+  (wall_strength JSONB beside every board row; the 🌅 board and 📍
+  prox alert print it — a wall holding half the side is a fortress,
+  15% is a label); a bounded strike x expiry grid persists for the
+  drift set at every sweep/re-price (gex_strike_expiry: ±6% of spot,
+  ≤60 DTE, cells ≥ $5M — absent = below floor, never zero); the 🌅
+  board carries a top-strike ladder; /dashboard/gamma renders the grid
+  with walls/flip/regime overlaid (a display of the board, never a
+  signal source; on-demand tickers are point-in-time and say so); and
+  the **wall-touch prior** (wall_touch_events, 16:50 nightly + boot
+  backfill, pre-registered: the day's first intraday board, levels
+  within 3%, touched = a completed bar containing the level, holes
+  NULL) answers Eric's 📍 question — "did the alert fire because we
+  were likely to get there?" (no: it fires on arrival) — with a per-
+  level touch rate + n on the morning board, small-n stated, record
+  since 2026-08-19. Also shipped: 📒 books scoreboard to #desk at
+  16:59 (running record per book, worst first, plus the morning-board
+  vs live-board gamma head-to-head and the day's disagreements —
+  Eric: "let's run both and see which wins", gate ~20-30 each); the
+  trailvar2 study (Kalman 5m level, MAD trail — research #11/P2-21)
+  and the chase-premium study (fills at GO close + 0/.10/.25/.50/1.0 x
+  risk, granted only where a bar traded there, R on the chaser's
+  wider risk — the 🎯 gets a stated tolerance instead of "the candle
+  looked far"); and the day's freelance journal rows. Slipped, stated:
+  VWAP band touch statistics (#19) — Thursday with the IB study.
+
+- **Eric's entry rule: let the trend identify itself** (2026-09-02, his
+  own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
+  mid-pack chase, QQQ put on an ANTICIPATED 15m lower high; winners
+  META (confirmed 1m hold) and SPY calls after 760 AND 765 were
+  reclaimed on closes): "so far my losers have all been when I don't
+  let the trend identify itself and try to get in early." The idea may
+  be early; the position may not. The desk's record says the same
+  from three directions — structure shorts retired (728 episodes, net
+  negative every regime), the 9:45 flush is chop while the post-10:30
+  retest wins, and unconfirmed retests lose to defended ones. The
+  journal grades this line at ~30 trades; n=6 today, 3-for-3 each way.
 
 - **A new book must be BORN into the schema, and a placeholder is a
   live number to every reader** (2026-09-01, the rs_leader book's

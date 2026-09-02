@@ -1763,6 +1763,32 @@ def start_scheduler():
         id="gamma_board_morning", replace_existing=True,
     )
 
+    # Wall-touch prior — 16:50 ET (2026-09-02): grade today's first
+    # board's levels against the recorded bars; the 🌅 board reads the
+    # accumulated priors each morning. Boot pass backfills the record.
+    def _wall_touch():
+        from analysis.wall_touch_study import run as _wt
+        _wt(day=dt.datetime.now(et).date())
+
+    scheduler.add_job(
+        _wall_touch,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="50", timezone=et),
+        id="wall_touch_daily", replace_existing=True,
+    )
+
+    # 📒 Books scoreboard — 16:59 ET (2026-09-02, "let's run both and see
+    # which wins"): running record per book + the morning-vs-live gamma
+    # head-to-head, to #desk once a day. Reads the ledger only.
+    def _books():
+        from alerts.desk_events import run_books_scoreboard
+        run_books_scoreboard()
+
+    scheduler.add_job(
+        _books,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="59", timezone=et),
+        id="books_scoreboard", replace_existing=True,
+    )
+
     # Gamma drift baseline — 9:20 ET, before the 9:35 intraday upsert
     # overwrites gex_levels: capture the morning-board marks (the numbers
     # in Eric's TradingView slots) into gamma_drift_state. The drift
@@ -2641,7 +2667,9 @@ def start_scheduler():
         # ledger-integrity audit's boot pass.
         for _name, _mod in (("rankladder", "analysis.rankladder_study"),
                             ("hodlod", "analysis.hodlod_study"),
-                            ("trailvar", "analysis.trailvar_study")):
+                            ("trailvar", "analysis.trailvar_study"),
+                            ("trailvar2", "analysis.trailvar2_study"),
+                            ("chase", "analysis.chase_study")):
             try:
                 import importlib
                 _run = importlib.import_module(_mod).run
@@ -2660,6 +2688,11 @@ def start_scheduler():
             run_board_catchup()
         except Exception as e:
             log.warning(f"[scheduler] gamma board catch-up skipped: {e}")
+        try:
+            from analysis.wall_touch_study import run as _wt_backfill
+            _wt_backfill()          # idempotent by PK; grades every board day
+        except Exception as e:
+            log.warning(f"[scheduler] wall-touch backfill skipped: {e}")
 
     threading.Thread(target=_seed_all, name="pattern-seed", daemon=True).start()
 

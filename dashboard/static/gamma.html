@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchtower · Gamma Board</title>
+<style>
+  :root { --bg:#0f1218; --panel:#161a22; --edge:#2a3040; --txt:#d8dee9; --dim:#7a8296;
+          --grn:#7ee787; --amb:#e3b341; --red:#f85149; --blu:#79c0ff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--txt); font-family:'Courier New', monospace; font-size:13px; }
+  header { padding:10px 12px; border-bottom:1px solid var(--edge); display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  h1 { font-size:15px; color:var(--grn); margin-right:8px; }
+  .strip { display:flex; flex-wrap:wrap; gap:6px; }
+  .strip button, .search button { background:var(--panel); color:var(--txt); border:1px solid var(--edge);
+          padding:6px 10px; font-family:inherit; font-size:13px; cursor:pointer; border-radius:4px; }
+  .strip button.on { border-color:var(--grn); color:var(--grn); }
+  .search { display:flex; gap:6px; }
+  .search input { background:var(--panel); color:var(--txt); border:1px solid var(--edge); padding:6px 8px;
+                  font-family:inherit; font-size:13px; width:90px; text-transform:uppercase; border-radius:4px; }
+  main { padding:12px; }
+  .board { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-bottom:12px; }
+  .card { background:var(--panel); border:1px solid var(--edge); border-radius:6px; padding:8px 10px; }
+  .card .k { color:var(--dim); font-size:11px; text-transform:uppercase; }
+  .card .v { font-size:18px; margin-top:2px; }
+  .card .s { color:var(--dim); font-size:11px; margin-top:2px; }
+  .regime { font-weight:bold; letter-spacing:1px; }
+  .regime.slippery { color:var(--red); } .regime.pinning { color:var(--grn); }
+  .warn { color:var(--amb); font-size:12px; margin:4px 0 10px; }
+  .note { color:var(--dim); font-size:11px; margin:6px 0 10px; }
+  .gridwrap { overflow-x:auto; border:1px solid var(--edge); border-radius:6px; }
+  table { border-collapse:collapse; font-size:12px; min-width:100%; }
+  th, td { padding:4px 6px; text-align:right; white-space:nowrap; border-bottom:1px solid #1d222c; }
+  th { color:var(--dim); font-weight:normal; position:sticky; top:0; background:var(--panel); }
+  td.strike { text-align:left; color:var(--txt); position:sticky; left:0; background:var(--panel); font-weight:bold; }
+  tr.spot td.strike { color:var(--blu); } tr.flip td.strike { color:var(--amb); }
+  tr.cw td.strike::after { content:" CW"; color:var(--grn); font-size:10px; }
+  tr.pw td.strike::after { content:" PW"; color:var(--red); font-size:10px; }
+  tr.spot td.strike::after { content:" ◀ spot"; color:var(--blu); font-size:10px; }
+  tr.flip td.strike::after { content:" flip"; color:var(--amb); font-size:10px; }
+  tr.net td { border-top:2px solid var(--edge); color:var(--txt); font-weight:bold; }
+  .stamp { color:var(--dim); font-size:11px; margin-top:8px; }
+  .hole { color:var(--amb); }
+</style></head>
+<body>
+<header>
+  <h1>WT · GAMMA</h1>
+  <div class="strip" id="strip"></div>
+  <div class="search"><input id="q" placeholder="TICKER"><button id="go">on-demand</button></div>
+</header>
+<main>
+  <div id="warn" class="warn"></div>
+  <div class="board" id="board"></div>
+  <div class="note" id="note"></div>
+  <div class="gridwrap"><table id="grid"></table></div>
+  <div class="stamp" id="stamp"></div>
+</main>
+<script>
+const LIVE = ["SPY","QQQ","IWM","DIA","META","MSFT","AMZN","TSLA","GOOGL","AAPL","NVDA"];
+const strip = document.getElementById('strip');
+let current = new URLSearchParams(location.search).get('t') || 'SPY';
+function fmt(x,d=2){ return (x===null||x===undefined)?'n/a':Number(x).toFixed(d); }
+function bn(x){ return (x===null||x===undefined)?'n/a':(Number(x)>=0?'+':'')+Number(x).toFixed(2)+'bn'; }
+function renderStrip(){
+  strip.innerHTML='';
+  LIVE.forEach(t=>{ const b=document.createElement('button'); b.textContent=t;
+    if(t===current) b.className='on'; b.onclick=()=>{current=t; load(false);}; strip.appendChild(b); });
+}
+async function load(live){
+  const warn=document.getElementById('warn'), board=document.getElementById('board'),
+        grid=document.getElementById('grid'), stamp=document.getElementById('stamp'), note=document.getElementById('note');
+  renderStrip(); warn.textContent=''; note.textContent=''; grid.innerHTML=''; board.innerHTML='<div class="card">loading '+current+'…</div>';
+  const r = await fetch('/api/gamma_grid?ticker='+encodeURIComponent(current)+(live?'&live=1':''));
+  if(r.status===401){ board.innerHTML='<div class="card">sign in at /dashboard first</div>'; return; }
+  const d = await r.json();
+  if(d.error){ board.innerHTML='<div class="card hole">'+d.error+'</div>'; return; }
+  const b=d.board||{};
+  const regimeCls=(b.regime||'').toLowerCase();
+  const ws=b.wall_strength||{}; const cs=ws.call||{}, ps=ws.put||{};
+  const share=s=> (s&&s.share!=null)? ' · '+Math.round(s.share*100)+'% of side' : '';
+  const nxt=s=> (s&&s.next_strike!=null)? ' · next '+s.next_strike+' at '+bn(s.next_bn) : '';
+  board.innerHTML = `
+    <div class="card"><div class="k">${d.ticker} spot</div><div class="v">${fmt(b.spot)}</div><div class="s">net GEX ${bn(b.net_gex)}</div></div>
+    <div class="card"><div class="k">regime</div><div class="v regime ${regimeCls}">${(b.regime||'n/a').toUpperCase()}</div><div class="s">flip ${fmt(b.gamma_flip)}</div></div>
+    <div class="card"><div class="k">call wall</div><div class="v">${fmt(b.call_wall,0)}</div><div class="s">${bn(cs.gex_bn)}${share(cs)}${nxt(cs)}</div></div>
+    <div class="card"><div class="k">put wall</div><div class="v">${fmt(b.put_wall,0)}</div><div class="s">${bn(ps.gex_bn)}${share(ps)}${nxt(ps)}</div></div>`;
+  const w=[];
+  if(b.put_wall!=null && b.spot!=null && b.put_wall>b.spot) w.push('⚠ put wall ABOVE spot — stranded protection overhead, not a floor');
+  if(b.call_wall!=null && b.spot!=null && b.call_wall<b.spot) w.push('⚠ call wall BELOW spot — stabilizer underneath, not a cap');
+  if(b.net_gex!=null && Math.abs(b.net_gex)<0.5) w.push('⚠ decoration magnitude (|net GEX| < 0.5bn) — trade the chart, not the walls');
+  warn.textContent=w.join('  ·  ');
+  const cells=d.cells||[];
+  if(!cells.length){ grid.innerHTML='<tr><td class="hole">no strike × expiry grid stored for this board (hole)</td></tr>'; }
+  else{
+    const exps=[...new Set(cells.map(c=>c.expiry))].sort();
+    const strikes=[...new Set(cells.map(c=>Number(c.strike)))].sort((a,b)=>b-a);
+    const m={}; cells.forEach(c=>{ m[c.expiry+'|'+Number(c.strike)]=Number(c.gex_bn); });
+    const maxAbs=Math.max(...cells.map(c=>Math.abs(Number(c.gex_bn))),1e-9);
+    const netByExp={}; exps.forEach(e=>netByExp[e]=0); cells.forEach(c=>netByExp[c.expiry]+=Number(c.gex_bn));
+    const spotRow = strikes.reduce((best,s)=> Math.abs(s-b.spot)<Math.abs(best-b.spot)?s:best, strikes[0]);
+    const flipRow = b.gamma_flip!=null ? strikes.reduce((best,s)=> Math.abs(s-b.gamma_flip)<Math.abs(best-b.gamma_flip)?s:best, strikes[0]) : null;
+    let h='<tr><th>strike</th>'+exps.map(e=>'<th>'+e.slice(5)+'<br><span style="font-size:10px">'+dte(e)+'d</span></th>').join('')+'<th>all</th></tr>';
+    strikes.forEach(s=>{
+      const cls=[]; if(s===Number(b.call_wall)) cls.push('cw'); if(s===Number(b.put_wall)) cls.push('pw');
+      if(s===spotRow) cls.push('spot'); if(flipRow!==null && s===flipRow) cls.push('flip');
+      let rowTot=0;
+      h+='<tr class="'+cls.join(' ')+'"><td class="strike">'+s+'</td>'+exps.map(e=>{
+        const v=m[e+'|'+s]; if(v===undefined) return '<td style="color:#333">·</td>';
+        rowTot+=v; const a=Math.min(1,Math.abs(v)/maxAbs); const col=v>=0?'126,231,135':'248,81,73';
+        return '<td style="background:rgba('+col+','+(0.12+0.75*a).toFixed(2)+')">'+(Math.abs(v)>=0.1?v.toFixed(2):v.toFixed(3))+'</td>'; }).join('')+
+        '<td>'+rowTot.toFixed(2)+'</td></tr>';
+    });
+    h+='<tr class="net"><td class="strike">net</td>'+exps.map(e=>'<td>'+netByExp[e].toFixed(2)+'</td>').join('')+'<td>'+Object.values(netByExp).reduce((a,c)=>a+c,0).toFixed(2)+'</td></tr>';
+    grid.innerHTML=h;
+    note.textContent='$bn of dealer gamma per 1% move · calls +, puts − · cells below $5M omitted (absent = below floor, not zero) · strikes within ±6% of spot, expiries ≤60d · the "all" column is the standing wall; a single column is that week\'s wall';
+  }
+  stamp.innerHTML = (d.source==='live' ? 'ON-DEMAND read at ' : 'stored board · ') + (d.ts||'?') + (d.live_set?'' : ' · <span class="hole">not in the live set — point-in-time only, no intraday tracking</span>');
+}
+function dte(e){ const t=new Date(); const x=new Date(e+'T00:00:00'); return Math.round((x-t)/86400000); }
+document.getElementById('go').onclick=()=>{ const v=document.getElementById('q').value.trim().toUpperCase(); if(v){ current=v; load(true);} };
+document.getElementById('q').addEventListener('keydown',e=>{ if(e.key==='Enter') document.getElementById('go').click(); });
+load(false);
+</script>
+</body></html>

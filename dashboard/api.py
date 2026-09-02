@@ -1887,6 +1887,99 @@ def register_routes(mcp) -> None:
             return HTMLResponse(f"<h1>Desk asset missing</h1><p>{e}</p>",
                                 status_code=500)
 
+    @mcp.custom_route("/dashboard/gamma", methods=["GET"])
+    async def gamma_page(request: Request):
+        # The gamma board (2026-09-02, Eric: "help me see where the
+        # strongest walls actually are"): strike x expiry heatmap from
+        # OUR chain data, walls/flip/regime overlaid in house language.
+        # A display of the board, never a signal source.
+        path = os.path.join(_STATIC_DIR, "gamma.html")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return HTMLResponse(f.read(),
+                                    headers={"Cache-Control": "no-cache"})
+        except OSError as e:
+            return HTMLResponse(f"<h1>Gamma asset missing</h1><p>{e}</p>",
+                                status_code=500)
+
+    @mcp.custom_route("/api/gamma_grid", methods=["GET"])
+    async def gamma_grid(request: Request):
+        if not _is_authed(request):
+            return JSONResponse({"error": "auth"}, status_code=401)
+        ticker = (request.query_params.get("ticker") or "SPY").upper()[:8]
+        live = request.query_params.get("live") == "1"
+
+        def _load():
+            from analysis.gex import DRIFT_TICKERS, compute_gex
+            from screen.reversal_screen import _conn
+            in_live_set = ticker in DRIFT_TICKERS
+            if live or not in_live_set:
+                # On demand: the same engine, point-in-time, not persisted
+                # for names outside the drift set (no intraday tracking).
+                g = compute_gex(ticker)
+                if not g:
+                    return {"error": f"{ticker}: chain too thin or no data "
+                                     f"(hole, not a reading)"}
+                return {"ticker": ticker, "source": "live",
+                        "live_set": in_live_set,
+                        "ts": datetime.now(timezone.utc).isoformat(timespec="minutes"),
+                        "board": {"spot": g["spot"], "call_wall": g["call_wall"],
+                                  "put_wall": g["put_wall"],
+                                  "gamma_flip": g["gamma_flip"],
+                                  "net_gex": g["net_gex_bn"], "regime": g["regime"],
+                                  "wall_strength": {"call": g["call_wall_strength"],
+                                                    "put": g["put_wall_strength"]}},
+                        "cells": g["by_expiry"]}
+            conn = _conn()
+            try:
+                with conn.cursor() as c:
+                    c.execute("""SELECT ts, spot, net_gex, gamma_flip, call_wall,
+                                        put_wall, regime, wall_strength
+                                 FROM gex_intraday WHERE ticker=%s
+                                 ORDER BY ts DESC LIMIT 1""", (ticker,))
+                    r = c.fetchone()
+                    if not r:
+                        c.execute("""SELECT computed_at, spot, net_gex, gamma_flip,
+                                            call_wall, put_wall, regime,
+                                            wall_strength
+                                     FROM gex_levels WHERE ticker=%s
+                                     ORDER BY computed_at DESC LIMIT 1""",
+                                  (ticker,))
+                        r = c.fetchone()
+                    if not r:
+                        return {"error": f"{ticker}: no stored board (hole)"}
+                    ts, spot, ng, gf, cw, pw, regime, ws = r
+                    c.execute("""SELECT ts FROM gex_strike_expiry WHERE ticker=%s
+                                 ORDER BY ts DESC LIMIT 1""", (ticker,))
+                    g = c.fetchone()
+                    cells = []
+                    grid_ts = None
+                    if g:
+                        grid_ts = g[0]
+                        c.execute("""SELECT expiry, strike, gex_bn, call_bn, put_bn
+                                     FROM gex_strike_expiry
+                                     WHERE ticker=%s AND ts=%s""", (ticker, grid_ts))
+                        cells = [{"expiry": e.isoformat(), "strike": float(k),
+                                  "gex_bn": float(v), "call_bn": float(cb),
+                                  "put_bn": float(pb)}
+                                 for e, k, v, cb, pb in c.fetchall()]
+                return {"ticker": ticker, "source": "stored", "live_set": True,
+                        "ts": (grid_ts or ts).isoformat(timespec="minutes"),
+                        "board": {"spot": float(spot) if spot is not None else None,
+                                  "call_wall": float(cw) if cw is not None else None,
+                                  "put_wall": float(pw) if pw is not None else None,
+                                  "gamma_flip": float(gf) if gf is not None else None,
+                                  "net_gex": float(ng) if ng is not None else None,
+                                  "regime": regime, "wall_strength": ws},
+                        "cells": cells}
+            finally:
+                conn.close()
+
+        try:
+            return JSONResponse(await asyncio.to_thread(_load))
+        except Exception as e:
+            return JSONResponse({"error": str(e)[:300]}, status_code=500)
+
     @mcp.custom_route("/api/deskfloor", methods=["GET"])
     async def deskfloor(request: Request):
         if not _is_authed(request):

@@ -1,4 +1,20 @@
 //@version=5
+// WATCHTOWER TAPE BOT v2.7
+// v2.7 (2026-09-02, the META "did it close below the 21?" morning and
+// the Banks V2 comparison): (1) WT TRAIL — the rs_leader book's exit
+// line drawn on ANY chart: the day-anchored 5m 21-EMA exactly as the
+// book computes it (RTH bars only, seeded at the 9:30 block's close,
+// reset every session — NOT the chart's continuous EMA, which drags
+// yesterday's and premarket bars and sat several dollars lower at the
+// 11:39 exit). The book exits on a completed 5m CLOSE below this line;
+// on sub-5m charts the line updates inside the forming 5m bar and
+// settles at its close. (2) SHORT-TERM PRESSURE — always the 1m frame
+// regardless of chart timeframe: 1m 8 vs 21, the net direction of the
+// last three completed 1m closes, and where the last close sits in
+// its 10-bar range → BUYERS / SELLERS / MIXED. TREND BEAR + PRESSURE
+// BUYERS = a bounce in progress = "not yet" (Eric's entry rule: let
+// the trend identify itself). Display only; no alert logic touched.
+// WATCHTOWER TAPE BOT v2.6 (history below)
 // WATCHTOWER TAPE BOT v2.6
 // v2.6 (2026-09-01 evening, the "break below LOD was the trade"
 // read): HOD/LOD become key levels — but only once they have STOOD.
@@ -113,6 +129,10 @@ alrtCt = input.bool(true, "Alert on 8/21 control flips", group = grpA)
 alrtSt = input.bool(true, "Alert on fresh setup states", group = grpA)
 dcFmt  = input.bool(true, "Format alerts for a Discord webhook", group = grpA)
 
+grpT   = "WT trail (rs_leader book's exit line)"
+useTr  = input.bool(true, "Plot WT TRAIL — day-anchored 5m 21-EMA, RTH only", group = grpT)
+colTr  = input.color(color.new(#ffd166, 0), "WT TRAIL color", group = grpT)
+
 grpD   = "Dashboard"
 dashOn = input.bool(true, "Show dashboard", group = grpD)
 dashSz = input.string("normal", "Text size", options = ["small", "normal", "large"], group = grpD)
@@ -145,6 +165,36 @@ emaF = ta.ema(close, lenF)
 emaS = ta.ema(close, lenS)
 plot(emaF, "EMA fast", color = color.new(color.aqua,   0), linewidth = 2)
 plot(emaS, "EMA slow", color = color.new(color.orange, 0), linewidth = 2)
+
+// v2.7 — WT TRAIL: the book's line. Runs in a 5-minute context; the
+// EMA is seeded at the first RTH 5m close of the day and reset every
+// session, so it matches analysis/hybrid_exit_study._ema over the
+// day's own blocks (seed = first value, then k = 2/22).
+f_trail() =>
+    _rth   = not na(time(timeframe.period, "0930-1600", "America/New_York"))
+    _first = _rth and not _rth[1]
+    var float e = na
+    if _first
+        e := close
+    else if _rth and not na(e)
+        e := close * (2.0 / 22.0) + e * (20.0 / 22.0)
+    e
+wtTrail = request.security(syminfo.tickerid, "5", f_trail())
+plot(useTr and intra ? wtTrail : na, "WT TRAIL (book's 5m 21-EMA)", color = colTr, linewidth = 2, style = plot.style_linebr)
+
+// v2.7 — SHORT-TERM PRESSURE on the 1m frame, completed bars only:
+// +1 BUYERS (1m 8 > 21, last 3 closes net up, close in the upper
+// third of its 10-bar range), -1 SELLERS (mirror), 0 MIXED.
+f_press() =>
+    _e8  = ta.ema(close, 8)
+    _e21 = ta.ema(close, 21)
+    _net = math.sum(close[1] > close[2] ? 1 : close[1] < close[2] ? -1 : 0, 3)
+    _hi  = ta.highest(high[1], 10)
+    _lo  = ta.lowest(low[1], 10)
+    _pos = _hi == _lo ? 0.5 : (close[1] - _lo) / (_hi - _lo)
+    _e8[1] > _e21[1] and _net > 0 and _pos >= 0.66 ? 1 : _e8[1] < _e21[1] and _net < 0 and _pos <= 0.34 ? -1 : 0
+pressCode = intra ? request.security(syminfo.tickerid, "1", f_press()) : 0
+pressTxt  = not canVote ? "CLOSED" : pressCode == 1 ? "BUYERS" : pressCode == -1 ? "SELLERS" : "MIXED"
 
 xUp = ta.crossover(emaF,  emaS)
 xDn = ta.crossunder(emaF, emaS)
@@ -444,7 +494,7 @@ f_dir(txt) => txt == "CROSS UP" or txt == "BUYERS" or txt == "TRENDING BULL" or 
 momCol = momTxt == "STRONG" ? cGood : momTxt == "GOOD" ? color.new(#2e7d32, 20) : momTxt == "WEAK" ? cWarn : cGray
 
 txSz = dashSz == "small" ? size.small : dashSz == "large" ? size.large : size.normal
-var table dash = table.new(position.top_right, 2, 6, border_width = 1, border_color = color.new(color.black, 60))
+var table dash = table.new(position.top_right, 2, 7, border_width = 1, border_color = color.new(color.black, 60))
 if dashOn and barstate.islast
     table.cell(dash, 0, 0, "WATCHTOWER", text_color = color.white, bgcolor = cHead, text_size = txSz)
     table.cell(dash, 1, 0, "WT - " + sessTxt, text_color = color.white, bgcolor = canVote ? cHead : cWarn, text_size = txSz)
@@ -458,6 +508,8 @@ if dashOn and barstate.islast
     table.cell(dash, 1, 4, setupTxt, text_color = color.white, bgcolor = f_dir(setupTxt), text_size = txSz)
     table.cell(dash, 0, 5, "MOMENTUM", text_color = color.white, bgcolor = cHead, text_size = txSz)
     table.cell(dash, 1, 5, momCell,  text_color = color.white, bgcolor = momCol,          text_size = txSz)
+    table.cell(dash, 0, 6, "ST PRESSURE (1m)", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 6, pressTxt, text_color = color.white, bgcolor = f_dir(pressTxt), text_size = txSz)
 
 f_say(msg) =>
     m = syminfo.ticker + " " + timeframe.period + ": " + msg
