@@ -303,9 +303,14 @@ def run_trade_watch() -> str:
     ping only on STATE CHANGES: 📈 the +1R trail switch, 🚪 the exit
     with its reason, 🔔 the 3:55 still-in bell reminder. The graded
     lifecycle, executed by the desk; Eric's job is to act on pings."""
-    from analysis.hybrid_exit_study import _ema as ema5
-    from analysis.hybrid_exit_study import _res5 as res5
+    # ONE DEFINITION (2026-09-02, the 11:09 phantom exit ping): the
+    # ping used to carry its own copy of the lifecycle and that copy
+    # kept the partial-5m-block bug the book was cured of the day
+    # before — it fired "EXIT" 30 minutes before the book's rule-
+    # correct 11:39 exit. The watcher now IMPORTS the book's own
+    # lifecycle_state; the ping and the ledger cannot disagree again.
     from analysis.polygon_data import get_client
+    from analysis.rs_leader_book import lifecycle_state
     from screen.reversal_screen import _conn
     from zoneinfo import ZoneInfo
     et = ZoneInfo(ET)
@@ -333,27 +338,15 @@ def run_trade_watch() -> str:
             return "hole"
         arm_px = entry + risk
         disaster = entry * (1 - 0.01)
-        bars5, last5 = res5(bars)
-        e21_5 = ema5([b[4] for b in bars5], 21)
-        e21_by_min = {last5[j]: e21_5[j] for j in range(len(bars5))}
-        armed = False
+        state = lifecycle_state(bars, i_go, entry, stop)
+        armed = state["armed"]
         exit_hit = None                # (reason, px)
-        stop_now = stop
-        for i in range(i_go + 1, len(bars)):
-            ts, o, h, l, c = bars[i]
-            if l <= disaster:
-                exit_hit = ("disaster cap touched", disaster)
-                break
-            if h >= arm_px:
-                armed = True
-            e21 = e21_by_min.get(i)
-            if e21 is not None:
-                if armed and c < e21:
-                    exit_hit = ("5m closed below the 21-EMA trail", c)
-                    break
-                if not armed and c < stop_now:
-                    exit_hit = ("5m closed through the stop", c)
-                    break
+        if state["exit"] is not None:
+            code, _ts, px = state["exit"]
+            reason = {"disaster": "disaster cap touched",
+                      "trail": "5m closed below the 21-EMA trail",
+                      "stop": "5m closed through the stop"}.get(code, code)
+            exit_hit = (reason, px)
         if exit_hit is not None:
             reason, px = exit_hit
             r = (px - entry) / risk

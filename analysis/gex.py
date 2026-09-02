@@ -35,7 +35,7 @@ import logging
 import math
 import os
 import time
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +52,13 @@ MIN_CONTRACTS = 50        # below this the chain is too thin to map
 MIN_TOTAL_OI = 5000       # chain-wide OI floor — walls from less are noise
 UNIVERSE_CAP = int(os.environ.get("GEX_UNIVERSE_CAP", "250"))
 RISK_FREE = 0.04
+# Strike x expiry grid bounds (2026-09-02): persisted per snapshot for the
+# drift set only. +/-6% of spot, <= 60 DTE, cells >= $5M net — a sparse,
+# few-hundred-row picture of WHERE the weight sits and in WHICH expiry.
+GRID_PCT = 0.06
+GRID_DTE = 60
+GRID_MIN_BN = 0.005
+GRID_RETENTION_DAYS = 45
 
 
 def _fetch_gex_chain(ticker: str) -> tuple:
@@ -104,6 +111,7 @@ def _fetch_gex_chain(ticker: str) -> tuple:
             except ValueError:
                 continue
             out.append({"strike": float(strike), "exp_days": max(exp_days, 0),
+                        "exp": exp,
                         "iv": float(iv) if iv else None,
                         "oi": int(oi),
                         "gamma": float(gamma) if gamma is not None else None,
@@ -152,24 +160,67 @@ def compute_gex(ticker: str, fallback_spot: float = None) -> dict:
     per_strike: dict = {}
     call_side: dict = {}
     put_side: dict = {}
+    grid: dict = {}          # (exp, strike) -> [call_g, put_g]  (2026-09-02)
     net = 0.0
     for c in contracts:
         if c["gamma"] is None:
             continue
         g = c["gamma"] * c["oi"] * 100.0 * spot * spot * 0.01
         k = c["strike"]
+        cell = grid.setdefault((c.get("exp", ""), k), [0.0, 0.0])
         if c["is_call"]:
             call_side[k] = call_side.get(k, 0.0) + g
             per_strike[k] = per_strike.get(k, 0.0) + g
+            cell[0] += g
             net += g
         else:
             put_side[k] = put_side.get(k, 0.0) + g
             per_strike[k] = per_strike.get(k, 0.0) - g
+            cell[1] += g
             net -= g
     if not per_strike:
         return {}
     call_wall = max(call_side, key=call_side.get) if call_side else None
     put_wall = max(put_side, key=put_side.get) if put_side else None
+
+    # Wall STRENGTH (2026-09-02, the SPXVIX-card comparison — "where the
+    # strongest walls actually are"): a wall's weight, its SHARE of its
+    # side's gamma, and the next-strongest strike. A wall holding half
+    # the side is a fortress; 15% is a label.
+    def _strength(side: dict, wall):
+        if wall is None or not side:
+            return None
+        tot = sum(side.values()) or 1.0
+        ranked = sorted(side.items(), key=lambda kv: kv[1], reverse=True)
+        nxt = ranked[1] if len(ranked) > 1 else None
+        return {"gex_bn": round(side[wall] / 1e9, 3),
+                "share": round(side[wall] / tot, 3),
+                "next_strike": nxt[0] if nxt else None,
+                "next_bn": round(nxt[1] / 1e9, 3) if nxt else None}
+    cw_strength = _strength(call_side, call_wall)
+    pw_strength = _strength(put_side, put_wall)
+
+    # Strike x expiry grid, bounded so persistence stays sane: strikes
+    # within +/-GRID_PCT of spot, expiries within GRID_DTE days, cells
+    # with |net| >= GRID_MIN_BN. Sparse by construction; a strike/expiry
+    # absent from the grid is "below the floor", never "zero gamma".
+    by_expiry = []
+    for (exp, k), (cg, pg) in grid.items():
+        if not exp or abs(k / spot - 1) > GRID_PCT:
+            continue
+        try:
+            dte = (date.fromisoformat(exp) - date.today()).days
+        except ValueError:
+            continue
+        if dte > GRID_DTE:
+            continue
+        netc = (cg - pg) / 1e9
+        if abs(netc) < GRID_MIN_BN:
+            continue
+        by_expiry.append({"expiry": exp, "strike": k,
+                          "gex_bn": round(netc, 4),
+                          "call_bn": round(cg / 1e9, 4),
+                          "put_bn": round(pg / 1e9, 4)})
 
     # Flip: sweep +/-15% around spot, find where net re-priced GEX
     # crosses zero nearest to spot (linear interpolation between grid pts).
@@ -202,7 +253,37 @@ def compute_gex(ticker: str, fallback_spot: float = None) -> dict:
         "top_strikes": [{"strike": k, "gex_bn": round(v / 1e9, 3)}
                         for k, v in top],
         "contracts": len(contracts),
+        "call_wall_strength": cw_strength,
+        "put_wall_strength": pw_strength,
+        "by_expiry": by_expiry,
     }
+
+
+def _strength_blob(g: dict) -> dict:
+    """The wall_strength JSONB stored beside the board row."""
+    return {"call": g.get("call_wall_strength"),
+            "put": g.get("put_wall_strength")}
+
+
+def persist_strike_grid(conn, ticker: str, g: dict, ts=None) -> int:
+    """Write compute_gex's by_expiry grid to gex_strike_expiry for one
+    ticker at one timestamp (2026-09-02). Returns rows written. The
+    grid is what the heatmap page and the per-expiry studies read; the
+    aggregate board (gex_levels/gex_intraday) is unchanged."""
+    cells = g.get("by_expiry") or []
+    if not cells:
+        return 0
+    from datetime import datetime as _dt
+    ts = ts or _dt.now(timezone.utc)
+    with conn.cursor() as cur:
+        cur.executemany("""
+            INSERT INTO gex_strike_expiry
+                (ticker, ts, expiry, strike, gex_bn, call_bn, put_bn)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (ticker, ts, expiry, strike) DO NOTHING
+        """, [(ticker, ts, c["expiry"], c["strike"], c["gex_bn"],
+               c["call_bn"], c["put_bn"]) for c in cells])
+    return len(cells)
 
 
 def _gex_universe(conn) -> list:
@@ -371,34 +452,49 @@ def run_gex_intraday() -> dict:
             cur.executemany("""
                 INSERT INTO gex_intraday
                     (ticker, spot, net_gex, gamma_flip, call_wall,
-                     put_wall, regime)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                     put_wall, regime, wall_strength)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
             """, [(t, g["spot"], g["net_gex_bn"], g["gamma_flip"],
-                   g["call_wall"], g["put_wall"], g["regime"])
+                   g["call_wall"], g["put_wall"], g["regime"],
+                   json.dumps(_strength_blob(g)))
                   for t, g in results.items()])
             cur.executemany("""
                 INSERT INTO gex_levels
                     (ticker, as_of, spot, call_wall, put_wall,
-                     gamma_flip, net_gex, regime, top_strikes, contracts)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                     gamma_flip, net_gex, regime, top_strikes, contracts,
+                     wall_strength)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb)
                 ON CONFLICT (ticker, as_of) DO UPDATE SET
                     spot=EXCLUDED.spot, call_wall=EXCLUDED.call_wall,
                     put_wall=EXCLUDED.put_wall,
                     gamma_flip=EXCLUDED.gamma_flip,
                     net_gex=EXCLUDED.net_gex, regime=EXCLUDED.regime,
                     top_strikes=EXCLUDED.top_strikes,
-                    contracts=EXCLUDED.contracts, computed_at=now()
+                    contracts=EXCLUDED.contracts,
+                    wall_strength=EXCLUDED.wall_strength, computed_at=now()
             """, [(t, session, g["spot"], g["call_wall"], g["put_wall"],
                    g["gamma_flip"], g["net_gex_bn"], g["regime"],
-                   json.dumps(g["top_strikes"]), g["contracts"])
+                   json.dumps(g["top_strikes"]), g["contracts"],
+                   json.dumps(_strength_blob(g)))
                   for t, g in results.items()])
             cur.execute("DELETE FROM gex_intraday "
                         "WHERE ts < now() - interval '14 days'")
+            cur.execute("DELETE FROM gex_strike_expiry WHERE ts < now() - "
+                        f"interval '{GRID_RETENTION_DAYS} days'")
+        # strike x expiry grid, same timestamp for every name this tick
+        from datetime import datetime as _dt
+        grid_ts = _dt.now(timezone.utc)
+        grid_rows = 0
+        for t, g in results.items():
+            try:
+                grid_rows += persist_strike_grid(conn, t, g, grid_ts)
+            except Exception as e:
+                log.warning(f"[gex] strike grid {t} failed: {e}")
         conn.commit()
     finally:
         conn.close()
     log.info(f"[gex] intraday: {len(results)}/{len(names)} indexes "
-             f"in {time.time()-t0:.0f}s")
+             f"in {time.time()-t0:.0f}s; grid rows {grid_rows}")
     return {"stored": len(results), "session": str(session)}
 
 
@@ -448,6 +544,7 @@ def run_gex_scan(as_of=None) -> dict:
     as_of = as_of or iv_session_date()
     stored, thin = 0, []
     rows = []
+    grids = []          # (ticker, g) for the drift set — strike x expiry
     log.info(f"[gex] scanning {len(names)} candidates...")
     with ThreadPoolExecutor(max_workers=4) as ex:
         futs = {ex.submit(compute_gex, t, closes.get(t)): t for t in names}
@@ -463,16 +560,27 @@ def run_gex_scan(as_of=None) -> dict:
                 continue
             rows.append((t, as_of, g["spot"], g["call_wall"], g["put_wall"],
                          g["gamma_flip"], g["net_gex_bn"], g["regime"],
-                         json.dumps(g["top_strikes"]), g["contracts"]))
+                         json.dumps(g["top_strikes"]), g["contracts"],
+                         json.dumps(_strength_blob(g))))
+            if t in DRIFT_TICKERS:
+                grids.append((t, g))
     if rows:
         conn = _conn()
         try:
+            from datetime import datetime as _dt
+            grid_ts = _dt.now(timezone.utc)
+            for t, g in grids:
+                try:
+                    persist_strike_grid(conn, t, g, grid_ts)
+                except Exception as e:
+                    log.warning(f"[gex] sweep strike grid {t} failed: {e}")
             with conn.cursor() as cur:
                 cur.executemany("""
                     INSERT INTO gex_levels
                         (ticker, as_of, spot, call_wall, put_wall,
-                         gamma_flip, net_gex, regime, top_strikes, contracts)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                         gamma_flip, net_gex, regime, top_strikes, contracts,
+                         wall_strength)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb)
                     ON CONFLICT (ticker, as_of) DO UPDATE SET
                         spot=EXCLUDED.spot, call_wall=EXCLUDED.call_wall,
                         put_wall=EXCLUDED.put_wall,
@@ -480,6 +588,7 @@ def run_gex_scan(as_of=None) -> dict:
                         net_gex=EXCLUDED.net_gex, regime=EXCLUDED.regime,
                         top_strikes=EXCLUDED.top_strikes,
                         contracts=EXCLUDED.contracts,
+                        wall_strength=EXCLUDED.wall_strength,
                         computed_at=now()
                 """, rows)
             conn.commit()

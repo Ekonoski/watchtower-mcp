@@ -64,6 +64,42 @@ def audit(rows, bar_ranges):
     return anomalies, holes, len(rows)
 
 
+PING_EARLIEST_S = 30      # a block completes at bar_ts+60s; watcher runs ~:12
+PING_LATEST_S = 240       # later than this = the ping missed a cycle
+
+
+def reconcile_pings(trades, pings):
+    """Pure (2026-09-02, the 11:09 phantom exit ping): the Discord pings
+    and the ledger must describe the SAME trade. trades =
+    [(ticker, exited_at_utc | None, exit_reason)], pings =
+    [(created_at_utc)] for the day's 🚪 exit pings. Anomalies:
+      - a ping with no exited trade (phantom);
+      - a ping BEFORE the recorded exit bar (the partial-block family);
+      - a ping later than PING_LATEST_S after the exit bar (missed);
+      - an exited trade (trail/stop/disaster) with no ping (silent).
+    eod_flat exits carry the 🔔 bell, not a 🚪 — excluded here."""
+    out = []
+    exits = [(tk, ts) for tk, ts, reason in trades
+             if ts is not None and reason in ("trail", "stop", "disaster")]
+    if pings and not exits:
+        out.append(f"rs_leader: {len(pings)} exit ping(s) with NO exited "
+                   f"trade — phantom ping")
+        return out
+    for tk, ts in exits:
+        matched = [p for p in pings
+                   if PING_EARLIEST_S <= (p - ts).total_seconds()
+                   <= PING_LATEST_S + 60]
+        early = [p for p in pings if (p - ts).total_seconds() < PING_EARLIEST_S]
+        if early:
+            out.append(f"rs_leader/{tk}: exit ping at "
+                       f"{min(early):%H:%M:%S}Z PRECEDES the recorded exit "
+                       f"bar {ts:%H:%M}Z — phantom/partial-block ping")
+        elif not matched:
+            out.append(f"rs_leader/{tk}: exited {ts:%H:%M}Z with no exit "
+                       f"ping inside {PING_LATEST_S}s — silent exit")
+    return out
+
+
 def run() -> str:
     from alerts.discord_notify import claim_and_send
     from screen.reversal_screen import _conn
@@ -92,6 +128,16 @@ def run() -> str:
                 else:
                     ranges[(tk, d)] = (float(lo), float(hi))
         anomalies, holes, n = audit(rows, ranges)
+        # ping-vs-record reconciliation for today's rs_leader trade(s)
+        with conn.cursor() as c:
+            c.execute("""SELECT s.ticker, t.exited_at, t.exit_reason
+                         FROM paper_trades t JOIN paper_specs s ON s.id=t.spec_id
+                         WHERE s.book='rs_leader' AND s.trade_date=CURRENT_DATE""")
+            trades = c.fetchall()
+            c.execute("""SELECT created_at FROM discord_notify_log
+                         WHERE kind='rsl_exit' AND ref=CURRENT_DATE::text""")
+            pings = [r[0] for r in c.fetchall()]
+        anomalies += reconcile_pings(trades, pings)
         today = dt.date.today().isoformat()
         if anomalies:
             msg = ("🚨 **Ledger audit: " + str(len(anomalies)) +

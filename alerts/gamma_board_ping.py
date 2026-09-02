@@ -29,15 +29,42 @@ ET = "America/New_York"
 VENUES = ("SPY", "QQQ", "IWM")
 
 
-def _fmt_row(tk, row):
+def _wall_bits(nm, px, strength_side):
+    """'CW 765' plus, when the row carries strength (2026-09-02):
+    ' (+2.2bn · 41%)' — weight and share of the side's gamma."""
+    if px is None:
+        return f"{nm} *n/a*"
+    txt = f"{nm} {px:.0f}"
+    s = strength_side or {}
+    if s.get("gex_bn") is not None and s.get("share") is not None:
+        txt += f" ({s['gex_bn']:+.1f}bn · {s['share'] * 100:.0f}%)"
+    return txt
+
+
+def _ladder(top_strikes, n=6):
+    """The strike ladder (2026-09-02, Eric: 'where the strongest walls
+    actually are'): the top-N strikes by |net gamma|, sorted by price,
+    puts negative. Empty when the row has none — rendered as a hole."""
+    if not top_strikes:
+        return ""
+    rows = sorted(top_strikes, key=lambda x: abs(float(x["gex_bn"])),
+                  reverse=True)[:n]
+    rows = sorted(rows, key=lambda x: float(x["strike"]), reverse=True)
+    return "  ".join(f"{float(r['strike']):g}:{float(r['gex_bn']):+.1f}"
+                     for r in rows)
+
+
+def _fmt_row(tk, row, strength=None, top_strikes=None):
     """One board line. row = (spot, call_wall, put_wall, gamma_flip,
-    net_gex, regime, computed_at_et) with any element possibly None."""
+    net_gex, regime, computed_at_et) with any element possibly None;
+    strength = the wall_strength blob; top_strikes = the ladder source."""
     spot, cw, pw, gf, ng, regime, ts = row
     if spot is None:
         return f"{tk}: *unavailable* (no board row)"
+    st = strength or {}
     bits = [f"**{tk}** {spot:.2f}"]
-    bits.append(f"CW {cw:.0f}" if cw is not None else "CW *n/a*")
-    bits.append(f"PW {pw:.0f}" if pw is not None else "PW *n/a*")
+    bits.append(_wall_bits("CW", cw, st.get("call")))
+    bits.append(_wall_bits("PW", pw, st.get("put")))
     bits.append(f"flip {gf:.2f}" if gf is not None else "flip *n/a*")
     if ng is not None:
         bits.append(f"netGEX {ng:+.1f}")
@@ -55,6 +82,9 @@ def _fmt_row(tk, row):
         line += "\n  " + " · ".join(warns)
     if ts is not None:
         line += f"  _({ts:%H:%M})_"
+    lad = _ladder(top_strikes)
+    if lad:
+        line += f"\n  ladder: {lad}"
     return line
 
 
@@ -65,29 +95,72 @@ def run_board_ping() -> str:
     today = dt.datetime.now(ZoneInfo(ET)).date()
     conn = _conn()
     try:
-        rows = {}
+        rows, extra = {}, {}
         for tk in VENUES + tuple(t for t in DRIFT_TICKERS
                                  if t not in VENUES):
             with conn.cursor() as c:
                 c.execute(
                     """SELECT spot, call_wall, put_wall, gamma_flip,
                               net_gex, regime,
-                              computed_at AT TIME ZONE 'America/New_York'
+                              computed_at AT TIME ZONE 'America/New_York',
+                              wall_strength, top_strikes
                        FROM gex_levels
                        WHERE ticker = %s AND computed_at::date = %s
                        ORDER BY computed_at DESC LIMIT 1""", (tk, today))
                 r = c.fetchone()
-            rows[tk] = (tuple(float(v) if i < 5 and v is not None else v
-                              for i, v in enumerate(r))
-                        if r else (None,) * 7)
+            if r:
+                rows[tk] = tuple(float(v) if i < 5 and v is not None else v
+                                 for i, v in enumerate(r[:7]))
+                extra[tk] = (r[7], r[8])
+            else:
+                rows[tk] = (None,) * 7
+                extra[tk] = (None, None)
         lines = [f"🌅 **Morning gamma board — {today:%a %b %-d}** "
                  f"(the 7:30 sweep; these are the marks the drift "
-                 f"alerts measure against)"]
+                 f"alerts measure against — walls carry weight · share "
+                 f"of side; ladder = top strikes, $bn, puts negative)"]
         lines.append("__Venues__")
-        lines += [_fmt_row(tk, rows[tk]) for tk in VENUES]
+        lines += [_fmt_row(tk, rows[tk], *extra[tk]) for tk in VENUES]
         lines.append("__Mega-caps (eyes only — never armed)__")
-        lines += [_fmt_row(tk, rows[tk]) for tk in DRIFT_TICKERS
+        lines += [_fmt_row(tk, rows[tk], *extra[tk]) for tk in DRIFT_TICKERS
                   if tk not in VENUES]
+        # Touch priors (2026-09-02, the wall-touch study): for each venue
+        # level within 3% of this board's spot, how often a level at
+        # this distance / regime / kind got touched by the close — n
+        # beside every number, holes counted separately, small-n stated.
+        try:
+            from analysis.wall_touch_study import prior as _prior
+            pl = []
+            for tk in VENUES:
+                spot, cw, pw, gf, ng, regime, ts = rows[tk]
+                if spot is None:
+                    continue
+                parts = []
+                for kind, lvl, nm in (("call_wall", cw, "CW"),
+                                      ("put_wall", pw, "PW"),
+                                      ("gamma_flip", gf, "flip")):
+                    if lvl is None or lvl <= 0:
+                        continue
+                    dist = (spot - lvl) / lvl * 100.0
+                    if abs(dist) > 3.0:
+                        continue
+                    p = _prior(conn, kind, regime, dist)
+                    if p is None:
+                        parts.append(f"{nm} {abs(dist):.2f}% away: *no prior yet*")
+                    else:
+                        pct, n, holes = p
+                        parts.append(f"{nm} {abs(dist):.2f}% away: touched "
+                                     f"{pct:.0f}% (n={n}"
+                                     f"{', holes ' + str(holes) if holes else ''})")
+                if parts:
+                    pl.append(f"{tk}: " + " · ".join(parts))
+            if pl:
+                lines.append("__Touch priors by the close__ (same kind, "
+                             "regime, distance bucket — small-n, record "
+                             "since 2026-08-19)")
+                lines += pl
+        except Exception as e:
+            lines.append(f"__Touch priors__: *unavailable* ({e})")
         lines.append("_Walls re-price every 15 min through the session; "
                      "material moves ping here as they happen._")
         return claim_and_send(KIND_BOARD, today.isoformat(), CHANNEL,
