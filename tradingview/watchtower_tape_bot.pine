@@ -1,4 +1,18 @@
 //@version=5
+// WATCHTOWER TAPE BOT v2.6
+// v2.6 (2026-09-01 evening, the "break below LOD was the trade"
+// read): HOD/LOD become key levels — but only once they have STOOD.
+// A naive HOD alert fires on every bar of a trending morning (each
+// bar IS a new high); the level worth hearing about is the day
+// extreme that held for N bars while price consolidated inside it,
+// then got CLOSED through (wick rule, same as every Bot level). So:
+// the reference is the day's extreme as it stood BEFORE this bar,
+// it qualifies only after the ORB completes and only when it was
+// set >= N bars ago (input, default 3), and a fresh extreme retires
+// it for N bars (no repeat-firing up a straight run). Eyes, not
+// hands: an LOD break is ungraded as a trade here — the alert says
+// the level broke, nothing more.
+// WATCHTOWER TAPE BOT v2.5 (history below)
 // WATCHTOWER TAPE BOT v2.5
 // v2.5 (2026-09-01, Eric's META 15:35 read — "how is this good
 // momentum?"): the MOMENTUM cell shows WHICH WAY the force points.
@@ -68,6 +82,8 @@ usePM  = input.bool(true,  "Premarket / overnight high-low", group = grpL)
 stkON  = input.bool(false, "Stocks: overnight range ONH/ONL (4PM close to 9:30 open) instead of premarket", group = grpL)
 useORB = input.bool(true,  "Opening range (ORB)",           group = grpL)
 orbMin = input.int(30, "ORB minutes", options = [15, 30], group = grpL)
+useHL  = input.bool(true,  "Day high/low (HOD/LOD) once they have stood", group = grpL)
+hlBars = input.int(3, "HOD/LOD must stand N bars before it counts", minval = 1, maxval = 20, group = grpL)
 
 grpF   = "Futures"
 fut24  = input.bool(true, "Futures vote 24H (Globex bars arm setups and alerts)", group = grpF)
@@ -88,6 +104,7 @@ colPD  = input.color(color.orange,  "PDH/PDL", group = grpS)
 colPW  = input.color(color.lime,    "PWH/PWL", group = grpS)
 colPM  = input.color(color.fuchsia, "PMH/PML or ONH/ONL", group = grpS)
 colORB = input.color(color.aqua,    "ORB",     group = grpS)
+colHL  = input.color(color.white,   "HOD/LOD", group = grpS)
 colWT  = input.color(color.yellow,  "Watchtower slots", group = grpS)
 
 grpA   = "Alerts"
@@ -277,6 +294,21 @@ if inORB
 if inRTH and not inORB and not na(orbH)
     orbDone := true
 
+// v2.6 — HOD/LOD that have STOOD. Age counts bars since the day
+// extreme was last set; the level is the extreme as it stood before
+// THIS bar (cDh[1]/cDl[1]), so a close through it is a real break and
+// the bar that sets a new extreme retires the level for hlBars bars.
+// The qualification reads the PRIOR bar's age, so the breakout bar
+// itself still carries the level for the alert to fire on.
+var int hodAge = 0
+var int lodAge = 0
+newHi = intra and not isNewDay and high > cDh[1]
+newLo = intra and not isNewDay and low  < cDl[1]
+hodAge := (isNewDay or newHi) ? 0 : hodAge + 1
+lodAge := (isNewDay or newLo) ? 0 : lodAge + 1
+hodStood = intra and orbDone and not isNewDay and hodAge[1] >= hlBars
+lodStood = intra and orbDone and not isNewDay and lodAge[1] >= hlBars
+
 var string[] lvlNames  = array.new_string()
 var float[]  lvlPrices = array.new_float()
 array.clear(lvlNames)
@@ -297,6 +329,10 @@ if usePM and intra and not sess24
 if useORB and orbDone and intra
     f_add("ORB H", orbH)
     f_add("ORB L", orbL)
+if useHL and hodStood
+    f_add("HOD", cDh[1])
+if useHL and lodStood
+    f_add("LOD", cDl[1])
 if useWT
     f_add("CW",  cwPx)
     f_add("PW",  pwPx)
@@ -317,7 +353,7 @@ if array.size(lvlPrices) > 0
             nearNm := array.get(lvlNames, i)
 
 f_lvlCol(nm) =>
-    nm == "PDH" or nm == "PDL" ? colPD : nm == "PWH" or nm == "PWL" ? colPW : nm == "PMH" or nm == "PML" or nm == "ONH" or nm == "ONL" ? colPM : nm == "ORB H" or nm == "ORB L" ? colORB : colWT
+    nm == "PDH" or nm == "PDL" ? colPD : nm == "PWH" or nm == "PWL" ? colPW : nm == "PMH" or nm == "PML" or nm == "ONH" or nm == "ONL" ? colPM : nm == "ORB H" or nm == "ORB L" ? colORB : nm == "HOD" or nm == "LOD" ? colHL : colWT
 
 var line[]  lvlLines  = array.new_line()
 var label[] lvlLabels = array.new_label()
