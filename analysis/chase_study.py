@@ -26,6 +26,15 @@ SPEC (frozen before any number):
             fills, no costs, 2-year record.
 Writes ONLY chase_events. Marker chase_v1 when rsleader_study_v1 exists
 and nothing is ungraded.
+
+CORRECTION (same evening, first readout): the first pass graded every
+leader row, and half of rs_leader_events' leader rows are the study's
+`no_pullback_945` control (own-the-leader-from-9:45, no GO, risk ~1.5%)
+— NOT the trade. The population is `entry_kind='go_pullback'` only;
+the 446 no-pullback rows were deleted. And the f=0 baseline is the
+BOOK'S OWN LIFECYCLE on its own entries — which this study was the
+first to grade: -0.21/-0.27R by half vs hold-to-close +0.38/+0.52R on
+the same entries. That finding has its own study (rsl_exit_study).
 """
 import json
 import logging
@@ -93,7 +102,8 @@ def run() -> bool:
             c.execute("""SELECT e.id, e.ticker, e.trade_date, e.entry_ts,
                                 e.entry_px, e.stop_px
                          FROM rs_leader_events e
-                         WHERE e.role='leader' AND e.entry_ts IS NOT NULL
+                         WHERE e.role='leader' AND e.entry_kind='go_pullback'
+                           AND e.entry_ts IS NOT NULL
                            AND e.stop_px IS NOT NULL
                            AND NOT EXISTS (SELECT 1 FROM chase_events v
                                            WHERE v.event_id = e.id)

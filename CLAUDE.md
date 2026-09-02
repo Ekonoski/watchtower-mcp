@@ -1043,6 +1043,43 @@ Rendering doctrine, same spirit as the rest of this file:
   looked far"); and the day's freelance journal rows. Slipped, stated:
   VWAP band touch statistics (#19) — Thursday with the IB study.
 
+- **The book's exits were graded on someone else's entries** (2026-09-02
+  late, found by the chase study's f=0 baseline — the first time the
+  live rs_leader lifecycle was ever run on the rs_leader GO population).
+  The RS-leader study graded HOLD-TO-CLOSE on GO-pullback entries
+  (+0.45R); the stop grid and hybrid-exit study graded the exits on the
+  tape-entry study's 1m-gated entries (+0.40/+0.27R for the 21-EMA
+  trail); the book shipped the first population's entry with the
+  second's exits and nobody asserted the join. Graded on the 446 GO
+  entries (2-year 1m record, closes as fills, no costs, ±10R cap): the
+  live lifecycle — struct stop on 5m closes + 1% disaster touch + trail
+  after +1R — is **−0.21/−0.27R by year-half, 35% win**, while
+  hold-to-close on the SAME entries is **+0.38/+0.52R**. Every exit
+  rule loses to holding on this population: stopped trades average
+  −1.86R at the stop vs −0.83R held to the bell (a 5m close through a
+  0.27%-wide stop is where the normal 9:50 shakeout prints, not where
+  the day is decided), disasters −3.4R vs −1.06R held (a 1% cap on a
+  0.27% risk unit is a −3.7R exit, not a −1R one), and trail exits
+  +0.86R vs +1.18R held. The same exit on the tape-entry population's
+  pre-10:00 entries grades +0.60R — the exits are not broken, the
+  transfer was. Same-evening fix to the chase study's population
+  (`no_pullback_945` control rows were half its sample — deleted; the
+  query now says `entry_kind='go_pullback'`). The exit re-grade
+  (`analysis/rsl_exit_study.py`, table `rsl_exit_events`, marker
+  `rsl_exit_v1`) runs six DECLARED variants through the book's own
+  `lifecycle_state` with keyword switches (`struct_stop`, `trail`,
+  `arm_px` — research-only, defaults are the live book, disaster never
+  switchable; tests/test_rsl_exit_study.py pins each switch): book,
+  hold, disaster-only, disaster+trail (no struct stop), struct+bell (no
+  trail), and wide5 (stop under the five-minute window ending at the
+  GO bar). Every variant
+  reports R on the GO risk unit so they compare on one scale. NO LIVE
+  CHANGE until it reads out and Eric rules — the book is paper, the 🎯
+  is what he trades, and a rule that changes tonight by feel is the
+  same mistake with the sign flipped. The doctrine, restated: a
+  lifecycle is entry × exit × population; grade the product, not the
+  factors.
+
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
   mid-pack chase, QQQ put on an ANTICIPATED 15m lower high; winners
