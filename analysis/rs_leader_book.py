@@ -45,13 +45,22 @@ DISASTER_PCT = 0.01
 EOD = dt.time(15, 59)
 
 
-def lifecycle_state(bars, i_go, entry, stop):
+def lifecycle_state(bars, i_go, entry, stop, *, arm_px=None, trail=True,
+                    struct_stop=True):
     """Pure: the live trade's state from persisted 1m bars after the
     GO bar. Returns {'armed': bool, 'exit': (reason, ts, px) | None}.
     Wick rule: stop/trail decide on completed 5m closes; only the
-    disaster cap exits on touch."""
+    disaster cap exits on touch.
+
+    The keyword switches exist for RESEARCH (analysis/rsl_exit_study,
+    2026-09-02) so exit variants grade through this one definition
+    instead of a copy: `struct_stop=False` ignores a 5m close through
+    the stop, `trail=False` ignores the trail, `arm_px` overrides the
+    +1R switch. Defaults are the live book; the disaster touch is never
+    switchable."""
     risk = entry - stop
-    arm_px = entry + risk
+    if arm_px is None:
+        arm_px = entry + risk
     disaster = entry * (1 - DISASTER_PCT)
     bars5, last5 = res5(bars)
     e21_5 = ema5([b[4] for b in bars5], 21)
@@ -77,9 +86,9 @@ def lifecycle_state(bars, i_go, entry, stop):
             armed = True
         e21 = e21_by_min.get(i)
         if e21 is not None:
-            if armed and c < e21:
+            if trail and armed and c < e21:
                 return {"armed": True, "exit": ("trail", ts, c)}
-            if not armed and c < stop:
+            if struct_stop and not armed and c < stop:
                 return {"armed": False, "exit": ("stop", ts, c)}
     return {"armed": armed, "exit": None}
 
