@@ -68,7 +68,18 @@ def sim_variants(bars, i_entry, entry):
     return out
 
 
-def _grade(conn, source, todo, bars_table, et, t0):
+MAG7 = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA")
+
+
+def _bars_table(ticker):
+    """The 1m record is split by name: mag7_1m_bars holds the seven,
+    liquid_1m_bars holds the other four liquid names (first pass
+    2026-09-03 read liquid_1m_bars for everything and silently graded
+    only 6,349 of 16,876 tape entries — the mag-7 rows had no bars)."""
+    return "mag7_1m_bars" if ticker in MAG7 else "liquid_1m_bars"
+
+
+def _grade(conn, source, todo, et, t0):
     cur_key, bars = None, []
     n = 0
     for eid, tk, d, ets, entry in todo:
@@ -78,7 +89,7 @@ def _grade(conn, source, todo, bars_table, et, t0):
         if (tk, d) != cur_key:
             with conn.cursor() as c:
                 c.execute(f"""SELECT ts, open, high, low, close
-                              FROM {bars_table}
+                              FROM {_bars_table(tk)}
                               WHERE ticker=%s AND trade_date=%s
                               ORDER BY ts""", (tk, d))
                 bars = [(ts.astimezone(et), float(o), float(h), float(l),
@@ -139,10 +150,10 @@ def run() -> bool:
                               "ON CONFLICT DO NOTHING", (COMPLETE_MARKER,))
                 conn.commit()
             return True
-        n1, ok = _grade(conn, "rsl_go", todo_go, "mag7_1m_bars", et, t0)
+        n1, ok = _grade(conn, "rsl_go", todo_go, et, t0)
         n2 = 0
         if ok:
-            n2, ok = _grade(conn, "tapeentry", todo_tape, "liquid_1m_bars", et, t0)
+            n2, ok = _grade(conn, "tapeentry", todo_tape, et, t0)
         log.info("[riskmgmt] graded %d GO + %d tape entries this pass.", n1, n2)
         return False
     finally:
