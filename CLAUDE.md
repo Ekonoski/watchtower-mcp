@@ -1103,6 +1103,38 @@ Rendering doctrine, same spirit as the rest of this file:
   rule that came out of it: an R unit is a CLAIM about where the
   trade fails — grade the claim (MAE vs stop) before grading the
   trade in R.
+  THE CONFIRMED-RUNNER CUT (2026-09-03, 8:07 AM, Eric: "I thought we
+  were entering these when the tape is confirming a runner" — he was
+  applying the confirmation by eye; the graded rule never had it;
+  `analysis/rsl_confirm_study.py`, table `rsl_confirm_events`,
+  marker `rsl_confirm_v1`, six legs read at the GO bar from stored 1m
+  bars, hold-to-close bps, and a MODELED 0.70Δ call — Black-Scholes
+  on a realized-vol proxy, Friday expiry, spread a declared hole).
+  The read: (1) the 1m TREND gate is UNKNOWABLE at the GO on 80% of
+  entries — 356 of 446 GOs fire inside its 21-bar warmup (median GO
+  9:47) — and where it IS readable, OFF is a knife (−54/−35 bps,
+  37-39% win, n=33/27) and ON pays +40/+29 bps with the modeled
+  option positive (+$35/+$80 per contract, n=14/16, tiny); (2) BELOW
+  VWAP at the GO is negative in both halves (−25/−4 bps, n=29/30) —
+  the one veto that replicates, small n; (3) the higher-high and
+  strong-RS legs (≥1.0%) each add real edge in half 1 (+32/+36 bps)
+  and NOTHING in half 2 (+13/+12, the base rate) — they fail the
+  both-halves bar as selectors; (4) the best stack (above VWAP +
+  5m higher high + RS ≥ 1%) grades +46/+14 bps, 58%/52% win — and
+  its modeled option P&L is +$14/−$26 per contract, median NEGATIVE
+  in both halves. The theta arithmetic that decides it: the average
+  0.70Δ weekly call carries ~$900 of premium and the day's decay +
+  gamma drag averages ~$47 per contract, while the shares-equivalent
+  of the average GO day is $6-$28. No cut lifts the average day above
+  the drag. VERDICT: the GO is a SELECTION read and an early-entry
+  signal, not a mechanical options trade — Eric's own framing at
+  8:07 ("which stocks to focus on quickly… getting in early is an
+  edge as long as a trend has started"), now with the number: the
+  option wins only on the right-tail days, and no leg readable at
+  9:47 sorts them out in both halves. Below-VWAP and 1m-trend-OFF
+  are the two knives worth a warning line on the 🎯; neither is a
+  gate until n grows. No live change (Eric: "I don't wanna change
+  anything in the system").
 
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
