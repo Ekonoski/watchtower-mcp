@@ -1162,15 +1162,45 @@ Rendering doctrine, same spirit as the rest of this file:
   average trade gives back >1% from its high in EVERY bucket. The
   21-EMA trail gives it back too (+9/+2 bps). Timing (high early
   and bleed vs dip then rally) is NOT stored — queued below.
+  THE DAY TRADER'S FRAME (2026-09-03, Eric: "You're running these
+  intraday trades like swing trades on common shares and that is just
+  not feasible or profitable… take profit at areas of resistance
+  including our bot levels… then move our SL to break even… As
+  runners move up we can move our SL up"). He is right about the
+  frame: every intraday exit graded so far was a swing playbook
+  shrunk to one day, and the give-back read says the money is at the
+  intraday high, not the close. The practitioner and academic
+  literature is summarized in
+  `docs/research/options_daytrading_practice.md` (read it before
+  designing any intraday options exit): population base rates
+  (Taiwan <1% predictably profitable; retail options lose to a
+  ~12.6% spread and back-loaded decay), the morning-momentum
+  evidence (Gao et al.; Da–Goyenko–Zhang), the 0DTE decay curve
+  (collapses in the last 90 minutes), and the convergent process
+  rules (targets at levels, scale out, breakeven after a banked
+  partial, ratchet the runner's stop, time stops, hard initial stop,
+  daily loss limit). Stated there and here: the full-position
+  breakeven (`be_1r`, 17% win) is NOT Eric's rule — his banks half
+  first — and grades separately. And the targets are NOT just
+  PDH/PMH: the take-profit locations are the desk's own multi-touch
+  shelves (`analysis/levels.py` — pivots clustered across
+  timeframes, touches × confluence × recency), recomputed AS OF
+  each trade date from stored bars with no lookahead; the naive
+  levels ride beside them for comparison.
   QUEUED FOR TONIGHT (2026-09-03, Eric: "let's set this up for
   tonight"): the EXIT-SHAPE STUDY — path map from the 1m bars
   (time of MFE/MAE, which prints first, minutes to the high,
-  give-back by bucket) plus exit-into-strength variants on the same
-  entries: first-touch targets +50/100/150/200 bps, scale-out half
-  at +100 then trail, tighter 8-EMA trail after +1%, HOD/PDH-touch
-  exits, time exits 11:00/12:00/14:00, incumbents beside them —
-  graded in bps AND the modeled option frame, where theta rewards
-  taking the +25-50% rather than waiting for a trailing close. And
+  give-back by bucket) plus the day trader's exits on the same
+  entries: TP1 at the first multi-touch shelf (and, as a second
+  family, PDH/ORH/HOD/round strikes; premarket high once the
+  premarket 1m backfill lands), full-exit and half-at-TP1 +
+  breakeven flavors (touch and 5m-close), the runner's stop
+  ratcheted under each new higher low / cleared level, TP2 at the
+  next shelf; fixed targets +50/100/150/200 bps; time stops 30/60
+  min; time exits 11:00/12:00/14:00; tighter 8-EMA trail; the
+  incumbents beside them — graded in bps AND the modeled option
+  frame (0.55/0.70/0.85Δ), where theta rewards taking the +25-50%
+  rather than waiting for a trailing close. And
   the DAY-STATE CONDITIONING GRID. Every study so far
   graded entries across all days; if intraday persistence exists it
   lives in a subset of days. Pre-registered: the same entry
