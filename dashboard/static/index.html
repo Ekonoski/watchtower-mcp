@@ -2200,8 +2200,12 @@ async function loadRotation() {
   $("rot-flows").innerHTML = inHtml + outHtml;
   const nar = $("rot-narrative");
   if (d.narrative) {
-    nar.style.display = ""; nar.classList.remove("data-only");
-    nar.innerHTML = `<span class="rn-tag">Grok rotation read</span>${esc(d.narrative)}`;
+    // 2026-09-03: the source column says who wrote the paragraph — the
+    // table itself (data) or Grok's live-X read; never label one as the other
+    const fromGrok = d.source === "grok";
+    nar.style.display = "";
+    nar.classList.toggle("data-only", !fromGrok);
+    nar.innerHTML = `<span class="rn-tag">${fromGrok ? "Grok rotation read" : "Rotation read (data, no catalyst)"}</span>${esc(d.narrative)}`;
   } else if (ins.length || outs.length) {
     nar.style.display = ""; nar.classList.add("data-only");
     const inN = ins.map(s => s.sector).join(", ") || "none";
