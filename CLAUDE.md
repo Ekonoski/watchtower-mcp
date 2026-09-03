@@ -1135,8 +1135,43 @@ Rendering doctrine, same spirit as the rest of this file:
   are the two knives worth a warning line on the 🎯; neither is a
   gate until n grows. No live change (Eric: "I don't wanna change
   anything in the system").
+  RISK MANAGEMENT AS THE EDGE (2026-09-03, ~8:40 AM, Eric: "if the
+  coin flip is a 50% ratio then isn't the bigger edge in risk
+  management?" — `analysis/riskmgmt_study.py`, `riskmgmt_events`,
+  marker `riskmgmt_v1`; the first pass silently graded only the four
+  non-mag-7 names because the 1m record is split across
+  mag7_1m_bars/liquid_1m_bars — fixed same hour, table chosen per
+  ticker). Exits with the unit at the real excursion — hold, 1%
+  disaster touch only, disaster + 21-EMA trail after +0.5/1.0/1.5%,
+  no struct stop — R on one 1% unit. On the 446 GOs every managed
+  variant is positive in BOTH halves (dt_050 +7.6/+5.5 bps, 51% win;
+  dis1 +11/+3.4) where the tight-stop book never was, and every one
+  gives back roughly half the mean to buy the tail (worst-5% day
+  −2.4R → −1.0R; hold +13.3/+12.8). On the 16,876 unconditioned long
+  tape entries (11 names) hold is +1.2/+1.2 bps and every managed
+  variant sits between −2.9 and +2.1 — no exit turns a coin flip
+  positive; the closest cell (ema_1m_gated + dt_050, +1.3/+3.5 bps,
+  7/11 names) is noise. The math, confirmed: exits reshape the
+  distribution, they cannot create a mean; risk management is
+  insurance (tail, survival, sizing) and selection is the edge.
+  The give-back read that came out of it (Eric: "if our options are
+  hitting 20/30/50% and we end up negative the failure is how we
+  exit"): half of all GOs reach +1% intraday, only 35% keep half
+  their best gain to the bell, the +100-200 bps bucket (28% of GOs =
+  option +25-50%) closes at +12 bps average with 35% red, and the
+  average trade gives back >1% from its high in EVERY bucket. The
+  21-EMA trail gives it back too (+9/+2 bps). Timing (high early
+  and bleed vs dip then rally) is NOT stored — queued below.
   QUEUED FOR TONIGHT (2026-09-03, Eric: "let's set this up for
-  tonight"): the DAY-STATE CONDITIONING GRID. Every study so far
+  tonight"): the EXIT-SHAPE STUDY — path map from the 1m bars
+  (time of MFE/MAE, which prints first, minutes to the high,
+  give-back by bucket) plus exit-into-strength variants on the same
+  entries: first-touch targets +50/100/150/200 bps, scale-out half
+  at +100 then trail, tighter 8-EMA trail after +1%, HOD/PDH-touch
+  exits, time exits 11:00/12:00/14:00, incumbents beside them —
+  graded in bps AND the modeled option frame, where theta rewards
+  taking the +25-50% rather than waiting for a trailing close. And
+  the DAY-STATE CONDITIONING GRID. Every study so far
   graded entries across all days; if intraday persistence exists it
   lives in a subset of days. Pre-registered: the same entry
   populations (446 GOs, the long tape-entry families, the day-bias
