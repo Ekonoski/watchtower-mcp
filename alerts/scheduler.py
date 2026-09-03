@@ -2672,7 +2672,10 @@ def start_scheduler():
                             ("chase", "analysis.chase_study"),
                             ("rsl_exit", "analysis.rsl_exit_study"),
                             ("rsl_confirm", "analysis.rsl_confirm_study"),
-                            ("riskmgmt", "analysis.riskmgmt_study")):
+                            ("riskmgmt", "analysis.riskmgmt_study"),
+                            ("premarket", "analysis.premarket_backfill"),
+                            ("exit_shape", "analysis.exit_shape_study"),
+                            ("daystate", "analysis.daystate_study")):
             try:
                 import importlib
                 _run = importlib.import_module(_mod).run
