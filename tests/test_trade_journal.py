@@ -16,16 +16,20 @@ from analysis import trade_journal  # noqa: E402
 from analysis.trade_journal import _num, _parse_ts  # noqa: E402
 
 
-def test_r_math_is_underlying_and_signed():
-    # long: in 100, stop 99, out 102 -> +2R; short mirrors
-    sign = 1.0
-    r = sign * (102.0 - 100.0) / abs(100.0 - 99.0)
-    assert r == 2.0
-    sign = -1.0
-    r = sign * (98.0 - 100.0) / abs(100.0 - 101.0)
-    assert r == 2.0
+def test_r_math_two_readings():
+    from analysis.trade_journal import R_DOLLARS, r_readings
+    assert R_DOLLARS == 250.0
+    # dollar P&L present: baseline R on $250 and real-risk R on the stop's dollars
+    assert r_readings(412.0, 200.0, "long", None, None, None) == (1.65, 2.06)
+    # no risk_dollars -> real-risk R is a hole, never zero
+    assert r_readings(-192.0, None, "long", None, None, None) == (-0.77, None)
+    # no dollar P&L: underlying-price R, sign-correct for shorts; all three or nothing
+    assert r_readings(None, None, "long", 100.0, 102.0, 99.0) == (2.0, None)
+    assert r_readings(None, None, "short", 100.0, 98.0, 101.0) == (2.0, None)
+    assert r_readings(None, None, "long", 100.0, 102.0, None) == (None, None)
     src = inspect.getsource(trade_journal.log_trade)
-    assert "e_px and x_px and s_px" in src      # all three or no R
+    assert "r_readings(pnl, risk, direction, e_px, x_px, s_px)" in src
+    assert "risk_dollars, r_actual" in src        # both columns written
 
 
 def test_validation_refuses_junk():

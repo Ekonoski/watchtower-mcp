@@ -647,7 +647,7 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
                            exit_px: float = None, stop_px: float = None,
                            target_px: float = None, qty: float = None,
                            pnl_dollars: float = None, note: str = "",
-                           mistakes: str = "") -> str:
+                           mistakes: str = "", risk_dollars: float = None) -> str:
     """
     Log one of ERIC'S OWN trades into his journal — his manual book,
     separate from the paper desk's ledger by design. Callable from any
@@ -674,6 +674,10 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
         entered_at defaults to now. Leave exited_at empty while open.
       entry_px / exit_px / stop_px / target_px: underlying prices.
       qty / pnl_dollars: size and dollar result, if he wants them kept.
+      risk_dollars: the dollar risk his stop defined (delta x stop
+        distance x 100 x contracts, or shares x stop distance). Two R
+        readings are kept: r_multiple on the $250 baseline (the
+        yardstick) and r_actual on this figure; missing = a hole.
       note: what the eye saw, verbatim.
       mistakes: the honest column — what broke the plan, if anything.
     """
@@ -682,7 +686,7 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
         return log_trade(ticker, direction, source, setup, timeframe,
                          instrument, entered_at, exited_at, entry_px,
                          exit_px, stop_px, target_px, qty, pnl_dollars,
-                         note, mistakes)
+                         note, mistakes, risk_dollars)
     except ValueError as e:
         return f"Not logged: {e}"
     except Exception as e:
