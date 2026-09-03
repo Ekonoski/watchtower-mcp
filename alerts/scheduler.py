@@ -2670,7 +2670,8 @@ def start_scheduler():
                             ("trailvar", "analysis.trailvar_study"),
                             ("trailvar2", "analysis.trailvar2_study"),
                             ("chase", "analysis.chase_study"),
-                            ("rsl_exit", "analysis.rsl_exit_study")):
+                            ("rsl_exit", "analysis.rsl_exit_study"),
+                            ("rsl_confirm", "analysis.rsl_confirm_study")):
             try:
                 import importlib
                 _run = importlib.import_module(_mod).run
