@@ -1135,6 +1135,20 @@ Rendering doctrine, same spirit as the rest of this file:
   are the two knives worth a warning line on the 🎯; neither is a
   gate until n grows. No live change (Eric: "I don't wanna change
   anything in the system").
+  QUEUED FOR TONIGHT (2026-09-03, Eric: "let's set this up for
+  tonight"): the DAY-STATE CONDITIONING GRID. Every study so far
+  graded entries across all days; if intraday persistence exists it
+  lives in a subset of days. Pre-registered: the same entry
+  populations (446 GOs, the long tape-entry families, the day-bias
+  PDH-retest days), read in BOTH frames (hold-to-close bps and the
+  dt_050 managed exit), cut by day-states readable by 9:45 with no
+  lookahead — open vs prior range, gap bucket, prior close position,
+  VIX level/change, SPY trend state, the name's sector-RS state
+  (from 2024-08), and the gamma regime (2026-07-15 on only, stated
+  exploratory). Bar: both halves AND per-name replication; cells
+  under n=40 render small-n. A surviving state becomes a STAND-ASIDE
+  candidate — the kind of edge that survives theta because the other
+  days are simply not traded — never a chase signal.
 
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
