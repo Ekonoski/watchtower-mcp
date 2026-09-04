@@ -72,6 +72,17 @@ def test_writes_own_table_only():
         assert forbidden not in src
 
 
+def test_scheduler_daily_pass_imports_its_clock():
+    # 2026-09-03 16:50: the cron body used `dt` without importing it and
+    # died with NameError on its first scheduled fire; the boot backfill
+    # masked it. The job must carry its own import.
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "alerts", "scheduler.py")).read()
+    i = src.index("def _wall_touch():")
+    body = src[i:i + 500]
+    assert "import datetime as _dt" in body and "_dt.datetime.now(et).date()" in body
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

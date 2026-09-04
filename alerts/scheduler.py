@@ -1767,8 +1767,12 @@ def start_scheduler():
     # board's levels against the recorded bars; the 🌅 board reads the
     # accumulated priors each morning. Boot pass backfills the record.
     def _wall_touch():
+        # 2026-09-03 16:50: NameError — `dt` was never imported in this
+        # module, so the daily pass died on its first scheduled fire (the
+        # boot backfill masked it: idempotent, it grades every board day).
+        import datetime as _dt
         from analysis.wall_touch_study import run as _wt
-        _wt(day=dt.datetime.now(et).date())
+        _wt(day=_dt.datetime.now(et).date())
 
     scheduler.add_job(
         _wall_touch,
