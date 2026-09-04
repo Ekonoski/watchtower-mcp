@@ -2101,6 +2101,23 @@ def start_scheduler():
         id="index_1m_live", replace_existing=True,
     )
 
+    # Premarket range, daily (2026-09-04): the table's owning job — the
+    # one-shot backfill left every session after 9/3 a hole. 9:31 with a
+    # 9:41 retry (an unclaimed day retries; a claimed day is a no-op).
+    def _premarket_today():
+        try:
+            from analysis.premarket_backfill import run_today
+            run_today()
+        except Exception:
+            log.exception("[premarket] daily range failed")
+
+    scheduler.add_job(
+        _premarket_today,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="31,41",
+                    second="30", timezone=et),
+        id="premarket_range_daily", replace_existing=True,
+    )
+
     # 📐 early verdict (2026-09-04, Eric: "why does it take until 9:51?
     # ... early is better"): the verdict needs only the 9:30 OPEN, so it
     # goes out the minute that bar completes; 9:51 stays as the fallback.
@@ -2720,6 +2737,20 @@ def start_scheduler():
                         break
             except Exception as e:
                 log.warning(f"[scheduler] {_name} seed skipped: {e}")
+        # 2026-09-04 holes with owners: the premarket range catches up every
+        # missed weekday, and any stored 4h/1h oscillator row whose bar is
+        # stale by its timeframe's own rule is re-fetched (SPY's 1h sat on
+        # a Tuesday bar all Friday, stamped as current).
+        try:
+            from analysis.premarket_backfill import run_catchup as _pm_catchup
+            _pm_catchup()
+        except Exception as e:
+            log.warning(f"[scheduler] premarket catch-up skipped: {e}")
+        try:
+            from analysis.oscillator import refresh_stale_intraday as _rsi_sweep
+            _rsi_sweep()
+        except Exception as e:
+            log.warning(f"[scheduler] stale intraday sweep skipped: {e}")
         try:
             from analysis.ledger_audit import run as _laudit
             _laudit()

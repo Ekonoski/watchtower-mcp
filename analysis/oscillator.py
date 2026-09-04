@@ -361,16 +361,41 @@ def fetch_intraday_confirmed(ticker: str, tf: str = "4h",
 
 # A confirmed intraday series whose last bar is older than this is stale —
 # the fetch was truncated (CP's 4h series came back ending June 23 while its
-# 1h was current). 4 calendar days rides out any weekend + holiday.
+# 1h was current). 4 calendar days rides out any weekend + holiday for the
+# 4h. The 1h gets its OWN bar (2026-09-04: SPY's 1h series came back ending
+# Tuesday 5 AM and passed the 4-day guard on Friday at 14:06 — a three-day-
+# old reading stamped as today's, beside a QQQ 1h row that was current).
+# Staleness is measured in the timeframe's own units: a 1h series may be
+# at most ONE weekday behind (Friday's bars are current on Monday, and on
+# a Tuesday after a Monday holiday); two or more missing weekdays is a
+# truncated fetch, never a quiet market.
 STALE_MAX_DAYS = 4
+STALE_MAX_WEEKDAYS_1H = 1
+STALE_RETRY_DAYS = {"4h": 45, "1h": 20}
 
 
-def _is_stale(df: pd.DataFrame) -> bool:
+def _weekdays_between(a, b) -> int:
+    """Weekdays strictly between dates a and b (a < b)."""
+    n, d = 0, a + pd.Timedelta(days=1)
+    while d < b:
+        if d.weekday() < 5:
+            n += 1
+        d += pd.Timedelta(days=1)
+    return n
+
+
+def _is_stale(df: pd.DataFrame, tf: str = "4h", now=None) -> bool:
     if not len(df):
         return True
     from datetime import timezone
-    age = pd.Timestamp.now(tz=timezone.utc) - df.index[-1]
-    return age > pd.Timedelta(days=STALE_MAX_DAYS)
+    now = now or pd.Timestamp.now(tz=timezone.utc)
+    last = df.index[-1]
+    if tf == "1h":
+        et = "America/New_York"
+        return _weekdays_between(last.tz_convert(et).normalize().tz_localize(None),
+                                 now.tz_convert(et).normalize().tz_localize(None)) \
+            > STALE_MAX_WEEKDAYS_1H
+    return (now - last) > pd.Timedelta(days=STALE_MAX_DAYS)
 
 
 def fetch_intraday_fresh(ticker: str, tf: str) -> pd.DataFrame:
@@ -379,13 +404,65 @@ def fetch_intraday_fresh(ticker: str, tf: str) -> pd.DataFrame:
     clipped the long request); still-stale series come back empty so callers
     skip the ticker instead of storing weeks-old readings as current."""
     df = fetch_intraday_confirmed(ticker, tf)
-    if _is_stale(df):
-        df = fetch_intraday_confirmed(ticker, tf, days=45)
-        if _is_stale(df):
-            log.debug(f"[oscillator] {tf} {ticker}: series stale after retry "
-                      f"(last bar {df.index[-1] if len(df) else 'none'}) — skipped")
+    if _is_stale(df, tf):
+        df = fetch_intraday_confirmed(ticker, tf, days=STALE_RETRY_DAYS.get(tf, 45))
+        if _is_stale(df, tf):
+            log.warning(f"[oscillator] {tf} {ticker}: series stale after retry "
+                        f"(last bar {df.index[-1] if len(df) else 'none'}) — "
+                        f"skipped, stored row NOT re-stamped (hole)")
             return df.iloc[0:0]
     return df
+
+
+def stale_intraday_rows(conn) -> list:
+    """(ticker, timeframe, bar_ts) for stored 4h/1h rows whose bar is stale
+    by the timeframe's own rule — the census that makes a re-stamped old
+    reading visible instead of invisible."""
+    from datetime import timezone
+    with conn.cursor() as cur:
+        cur.execute("SELECT ticker, timeframe, bar_ts FROM oscillator_scan "
+                    "WHERE timeframe IN ('4h','1h')")
+        rows = cur.fetchall()
+    now = pd.Timestamp.now(tz=timezone.utc)
+    out = []
+    for t, tf, bts in rows:
+        ts = pd.Timestamp(bts)
+        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+        probe = pd.DataFrame({"close": [0.0]}, index=[ts])
+        if _is_stale(probe, tf, now):
+            out.append((t, tf, bts))
+    return out
+
+
+def refresh_stale_intraday() -> dict:
+    """Boot-time sweep: re-fetch every stale stored 4h/1h row through the
+    guarded fetch and re-store the ones that come back current. Rows still
+    stale after the retry stay as they are (their old bar_ts is the
+    evidence) and are logged by name. Returns counts."""
+    from screen.reversal_screen import _conn
+    conn = _conn()
+    fixed, still = 0, []
+    try:
+        pctx = _pattern_context(conn)
+        for t, tf, bts in stale_intraday_rows(conn):
+            try:
+                df = fetch_intraday_fresh(t, tf)
+                if len(df) < 70:
+                    still.append(f"{t} {tf} (bar {bts})")
+                    continue
+                dfo = compute_oscillator(df)
+                _store(conn, t, tf, dfo, evaluate_signals(
+                    dfo, pctx.get((t, "4h")) if tf == "4h" else None))
+                fixed += 1
+            except Exception as e:
+                still.append(f"{t} {tf} ({e})")
+        conn.commit()
+    finally:
+        conn.close()
+    if still:
+        log.warning(f"[oscillator] stale intraday rows still unresolved: {', '.join(still)}")
+    log.info(f"[oscillator] stale-row sweep: {fixed} refreshed, {len(still)} unresolved")
+    return {"refreshed": fixed, "unresolved": len(still)}
 
 
 def fetch_4h_confirmed(ticker: str, days: int = 200) -> pd.DataFrame:

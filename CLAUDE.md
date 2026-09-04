@@ -1021,6 +1021,21 @@ Rendering doctrine, same spirit as the rest of this file:
   fat-finger (SPY 2005-05-27 high 1120.2 on a 120 close) — flagged,
   not hand-edited; any SPY all-time-high query reads it until the
   vendor row is re-fetched.
+  Two holes the debrief surfaced, both the every-record-needs-an-owner
+  disease: (1) **staleness is measured in the timeframe's own units** —
+  the intraday oscillator guard was a flat 4 calendar days, so SPY's 1h
+  series (truncated at Tuesday 05:00 ET) passed on Friday at 14:06 and
+  was stamped as today's reading beside a current QQQ row; a 1h row may
+  now be at most ONE weekday behind (Friday's bars are current Monday
+  and on a Tuesday after a holiday), the retry window is per-tf, a
+  still-stale series logs at WARNING and leaves the stored row un-
+  re-stamped, and a boot sweep (`refresh_stale_intraday`) re-fetches
+  every stale stored row and names the ones it cannot fix
+  (`tests/test_intraday_staleness.py`); (2) **`premarket_range` had no
+  daily writer** — only the one-shot backfill, so every session after
+  9/3 was a hole for the exit-shape premarket-high target family and
+  the journal's PML/PMH checks; `run_today` at 9:31/9:41 plus a boot
+  catch-up own it now, a day is claimed only when every ticker fetched.
 
 - **The pings and the ledger are one definition, and the audit checks
   that they agree** (2026-09-02, the 11:09 phantom exit ping): the 9/1
