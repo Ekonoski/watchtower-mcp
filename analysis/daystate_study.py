@@ -48,6 +48,7 @@ COMPLETE_MARKER = "daystate_v1"
 SOURCE_MARKER = "riskmgmt_v1"
 BUDGET_S = 12 * 60
 INDEX_NAMES = ("SPY", "QQQ", "IWM", "DIA")
+DAYBIAS_SLOT = {"SPY": 0, "QQQ": 1}
 GAMMA_FROM = dt.date(2026, 7, 15)
 
 
@@ -213,7 +214,11 @@ def _daybias_days(ctx, tk):
             outc.update({"fill_px": pdh, "exit_px": exit_px,
                          "eod_bps": round((exit_px / pdh - 1) * 1e4, 1),
                          "fill_at": res["at"].strftime("%H:%M")})
-        out.append((int(d.strftime("%Y%m%d")), d, outc))
+        # event_id must be unique per (source, event_id): date x 10 + a
+        # ticker slot. First pass used the bare date for both names and
+        # QQQ's rows collided with SPY's (ON CONFLICT DO NOTHING ate
+        # every one — a silent hole, 2026-09-04).
+        out.append((int(d.strftime("%Y%m%d")) * 10 + DAYBIAS_SLOT[tk], d, outc))
     return out
 
 
@@ -236,9 +241,10 @@ def run() -> bool:
                                            WHERE v.source=r.source AND v.event_id=r.event_id)
                          ORDER BY r.ticker, r.trade_date""")
             todo = c.fetchall()
-            c.execute("SELECT count(*) FROM daystate_legs WHERE source='daybias'")
-            have_daybias = c.fetchone()[0] > 0
-        if not todo and have_daybias:
+            c.execute("SELECT ticker, count(*) FROM daystate_legs WHERE source='daybias' GROUP BY ticker")
+            daybias_have = dict(c.fetchall())
+            missing_daybias = [tk for tk in DAYBIAS_SLOT if not daybias_have.get(tk)]
+        if not todo and not missing_daybias:
             if src_done:
                 with conn.cursor() as c:
                     c.execute("INSERT INTO scheduler_job_claims (job_name, run_date) "
@@ -260,9 +266,9 @@ def run() -> bool:
             if n % 500 == 0:
                 conn.commit()
         conn.commit()
-        if not have_daybias:
+        if missing_daybias:
             m = 0
-            for tk in ("SPY", "QQQ"):
+            for tk in missing_daybias:
                 for eid, d, outc in _daybias_days(ctx, tk):
                     legs = ctx.legs(tk, d)
                     with conn.cursor() as c:

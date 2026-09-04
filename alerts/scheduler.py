@@ -2085,6 +2085,55 @@ def start_scheduler():
         id="spec_ping", replace_existing=True,
     )
 
+    # Index 1m tape, live (2026-09-04): SPY/QQQ/IWM/AMD completed 1m bars
+    # persisted every minute of the session, first-seen wins.
+    def _index_1m_live():
+        try:
+            from analysis.index_1m_live import run_tick
+            run_tick()
+        except Exception:
+            log.exception("[index-1m] tick failed")
+
+    scheduler.add_job(
+        _index_1m_live,
+        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*", second="20",
+                    timezone=et),
+        id="index_1m_live", replace_existing=True,
+    )
+
+    # Premarket range, daily (2026-09-04): the table's owning job — the
+    # one-shot backfill left every session after 9/3 a hole. 9:31 with a
+    # 9:41 retry (an unclaimed day retries; a claimed day is a no-op).
+    def _premarket_today():
+        try:
+            from analysis.premarket_backfill import run_today
+            run_today()
+        except Exception:
+            log.exception("[premarket] daily range failed")
+
+    scheduler.add_job(
+        _premarket_today,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="31,41",
+                    second="30", timezone=et),
+        id="premarket_range_daily", replace_existing=True,
+    )
+
+    # 📐 early verdict (2026-09-04, Eric: "why does it take until 9:51?
+    # ... early is better"): the verdict needs only the 9:30 OPEN, so it
+    # goes out the minute that bar completes; 9:51 stays as the fallback.
+    def _daybias_early():
+        try:
+            from alerts.day_bias_ping import run_daybias_early_verdict
+            run_daybias_early_verdict()
+        except Exception:
+            log.exception("[day-bias-ping] early verdict failed")
+
+    scheduler.add_job(
+        _daybias_early,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="31,33",
+                    second="40", timezone=et),
+        id="daybias_ping_early", replace_existing=True,
+    )
     scheduler.add_job(
         _daybias_ping,
         CronTrigger(day_of_week="mon-fri", hour="9", minute="51,56",
@@ -2679,7 +2728,8 @@ def start_scheduler():
                             ("riskmgmt", "analysis.riskmgmt_study"),
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
-                            ("daystate", "analysis.daystate_study")):
+                            ("daystate", "analysis.daystate_study"),
+                            ("price_sanity", "analysis.price_sanity")):
             try:
                 import importlib
                 _run = importlib.import_module(_mod).run
@@ -2688,6 +2738,20 @@ def start_scheduler():
                         break
             except Exception as e:
                 log.warning(f"[scheduler] {_name} seed skipped: {e}")
+        # 2026-09-04 holes with owners: the premarket range catches up every
+        # missed weekday, and any stored 4h/1h oscillator row whose bar is
+        # stale by its timeframe's own rule is re-fetched (SPY's 1h sat on
+        # a Tuesday bar all Friday, stamped as current).
+        try:
+            from analysis.premarket_backfill import run_catchup as _pm_catchup
+            _pm_catchup()
+        except Exception as e:
+            log.warning(f"[scheduler] premarket catch-up skipped: {e}")
+        try:
+            from analysis.oscillator import refresh_stale_intraday as _rsi_sweep
+            _rsi_sweep()
+        except Exception as e:
+            log.warning(f"[scheduler] stale intraday sweep skipped: {e}")
         try:
             from analysis.ledger_audit import run as _laudit
             _laudit()

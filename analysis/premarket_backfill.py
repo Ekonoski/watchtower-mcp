@@ -40,6 +40,91 @@ def premarket_ranges(rows, et):
     return out
 
 
+def _day_claim(d) -> str:
+    return f"premarket_day_{d.isoformat()}"
+
+
+def run_today(day=None) -> bool:
+    """The table's OWNING JOB (2026-09-04: the backfill was one-shot, so
+    every session after 9/3 was a hole — the exit-shape premarket-high
+    target family and the journal's PML/PMH checks read nothing). Writes
+    ONE day's premarket range for every study name from that day's 1m
+    aggregates (04:00-09:29 ET), claims the day only when every ticker
+    fetched; a failed ticker logs and leaves the day unclaimed so the
+    next pass retries. pm_bars=0 is a recorded quiet premarket; a
+    missing row is a hole. Returns True when the day is claimed."""
+    from zoneinfo import ZoneInfo
+    from analysis.polygon_data import get_client
+    from screen.reversal_screen import _conn
+    et = ZoneInfo("America/New_York")
+    day = day or dt.datetime.now(et).date()
+    if day.weekday() >= 5:
+        return True
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s", (_day_claim(day),))
+            if c.fetchone():
+                return True
+        client = get_client()
+        if client is None:
+            log.warning("[premarket] no Polygon client; today's range not written (hole).")
+            return False
+        complete = True
+        for tk in TICKERS:
+            try:
+                aggs = client.get_aggs(tk, 1, "minute", day.isoformat(), day.isoformat(), limit=50000)
+                rows = [(x.timestamp, float(x.high), float(x.low)) for x in aggs]
+            except Exception as e:
+                log.warning(f"[premarket] {tk} {day} fetch failed: {e}")
+                complete = False
+                continue
+            r = premarket_ranges(rows, et).get(day)
+            with conn.cursor() as c:
+                c.execute("""INSERT INTO premarket_range (ticker, trade_date, pm_high, pm_low, pm_bars)
+                             VALUES (%s,%s,%s,%s,%s)
+                             ON CONFLICT (ticker, trade_date) DO UPDATE SET
+                               pm_high=EXCLUDED.pm_high, pm_low=EXCLUDED.pm_low,
+                               pm_bars=EXCLUDED.pm_bars""",
+                          (tk, day, r[0] if r else None, r[1] if r else None, r[2] if r else 0))
+            conn.commit()
+        if complete:
+            with conn.cursor() as c:
+                c.execute("INSERT INTO scheduler_job_claims (job_name, run_date) VALUES (%s, CURRENT_DATE) "
+                          "ON CONFLICT DO NOTHING", (_day_claim(day),))
+            conn.commit()
+            log.info(f"[premarket] {day}: range written for {len(TICKERS)} names.")
+        return complete
+    finally:
+        conn.close()
+
+
+def run_catchup(max_days: int = 10) -> int:
+    """Boot: write every unclaimed weekday from the day after the newest
+    stored row through today (bounded). Returns days written."""
+    from zoneinfo import ZoneInfo
+    from screen.reversal_screen import _conn
+    et = ZoneInfo("America/New_York")
+    now = dt.datetime.now(et)
+    today = now.date()
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT max(trade_date) FROM premarket_range")
+            newest = c.fetchone()[0]
+    finally:
+        conn.close()
+    start = (newest + dt.timedelta(days=1)) if newest else today
+    start = max(start, today - dt.timedelta(days=max_days))
+    n, d = 0, start
+    while d <= today:
+        if d.weekday() < 5 and not (d == today and now.time() < PM_END):
+            if run_today(d):
+                n += 1
+        d += dt.timedelta(days=1)
+    return n
+
+
 def _windows(end):
     d = START
     while d <= end:

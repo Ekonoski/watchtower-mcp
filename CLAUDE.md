@@ -998,6 +998,89 @@ Rendering doctrine, same spirit as the rest of this file:
   against this baseline; a size that drifted from it is a `mistakes`
   entry, not a footnote.
 
+- **The journal records skips** (2026-09-04, Eric, on the NVDA 🎯 GO he
+  declined into all-time highs on NFP day: "the skip is data, and the
+  reason for the skip is also data. So I think that needs to be
+  journaled… the more data we have, the more I can learn from you, and
+  you can learn from my trades"). `watchtower_journal_skip(ticker,
+  reason, …, spec_id)` writes `kind='skip'` — a DECISION with a
+  required reason, no P&L, no R (migration 051's CHECK refuses an R on
+  a skip), excluded from every R aggregate by kind and rendered in its
+  own section of `watchtower_journal` beside the DESK'S OWN OUTCOME on
+  the declined spec (linked by `spec_id`; unfilled / unlinked render as
+  such, never as zero). The scoreboard it builds: "desk's realized R
+  on the alerts skipped" with n — negative means the eye avoided a
+  loss, positive means it missed a winner; the gate is the usual ~30.
+  Row 1: NVDA 9/4 — the book trailed out −0.13R and the name was −4R
+  on the GO unit by 14:00; Eric's stated reason (chop into highs)
+  matched three day-state grid stand-aside candidates lit at
+  Thursday's close (VIX contango, prior day up, prior close top-fifth)
+  — one day, measurement only, no gate. `tests/test_trade_journal.py`
+  pins that a skip writes no R columns and the R math reads
+  `kind='trade'` only. Same session: `daily_prices` carries a vendor
+  fat-finger (SPY 2005-05-27 high 1120.2 on a 120 close) — flagged,
+  not hand-edited; any SPY all-time-high query reads it until the
+  vendor row is re-fetched.
+  **The charts are not logged unless they are linked** (same debrief,
+  Eric: "are you also logging the charts that I put in here… so that
+  you could use them later to potentially train yourself off of?").
+  Plain answer, kept here: a pasted screenshot lives only in the chat
+  session — nothing stores it, the container forgets it, and no model
+  learns from a session in a way that persists. What persists is what
+  is WRITTEN: journal rows with the eye's legs in the vocabulary, the
+  bar-stamped state tables, this file. So the row carries
+  `chart_urls` — links into the Drive folder "Watchtower — journal
+  charts" (folder id 143ZYimpiXRpfAj_yNXmPjNWqVGuln2lu, Eric's) —
+  and a later session opens the picture beside the row. The learning
+  loop Eric is describing is the exemplar-museum mechanism applied to
+  his own book: label every take, skip, partial, and runner decision
+  with the legs the eye used; grade each leg against outcomes at n;
+  promote a leg to a rule only when it clears the same bar every
+  study clears (both halves, replication). Rules come out of the
+  labeled set, never out of one remembered chart.
+  BUILT the same day (Eric: "That list works, build it"): `legs text[]`
+  on every journal row, the FIXED vocabulary in
+  `analysis/journal_legs.py` (entry / context / exit / skip groups, each
+  tag marked record-checkable or eye-only; unknown tags refused by name;
+  the list changes only at a flat review, never after a loss), and a
+  "By leg" block in `watchtower_journal` — with vs without each tag,
+  both sides always stated, small-n stated. The week's eleven rows were
+  back-tagged from the debriefs. First read, n=10 closed, anecdote by
+  the file's own rule: `confirmed` 6W/0L +2.21R avg vs `anticipated`
+  0W/4L −0.56R — the losing feature of every loser is the same leg
+  (Eric's own Tuesday diagnosis, "I don't let the trend identify
+  itself"); `no_partial` is the only green trade that ended red.
+  `tests/test_journal_legs.py` pins the vocabulary shape, the refusal,
+  and the both-sides grade.
+  Two holes the debrief surfaced, both the every-record-needs-an-owner
+  disease: (1) **staleness is measured in the timeframe's own units** —
+  the intraday oscillator guard was a flat 4 calendar days, so SPY's 1h
+  series (truncated at Tuesday 05:00 ET) passed on Friday at 14:06 and
+  was stamped as today's reading beside a current QQQ row; a 1h row may
+  now be at most ONE weekday behind (Friday's bars are current Monday
+  and on a Tuesday after a holiday), the retry window is per-tf, a
+  still-stale series logs at WARNING and leaves the stored row un-
+  re-stamped, and a boot sweep (`refresh_stale_intraday`) re-fetches
+  every stale stored row and names the ones it cannot fix
+  (`tests/test_intraday_staleness.py`); (2) **`premarket_range` had no
+  daily writer** — only the one-shot backfill, so every session after
+  9/3 was a hole for the exit-shape premarket-high target family and
+  the journal's PML/PMH checks; `run_today` at 9:31/9:41 plus a boot
+  catch-up own it now, a day is claimed only when every ticker fetched.
+  And the fat-finger itself (Eric: "are you gonna refetch that?"):
+  `analysis/price_sanity.py` — every stored daily bar whose open/high/
+  low sits >2x from its close is RE-FETCHED from the vendor and replaced
+  with the vendor's bar, never hand-edited; verdicts in `price_sanity`
+  (corrected / confirmed / no_vendor_bar). The census before the sweep:
+  758 suspect rows across 345 tickers, most of them REAL prints on
+  warrants and penny names (a 0.38→12.06 warrant day is a print, not a
+  typo — so the sweep verifies, it does not purge), and five decimal-
+  shift errors on the liquid set: SPY 2005-05-27 (high 1120.2),
+  2006-01-26 (low 57.29), 2008-09-29 (low 11.85), IWM 2008-09-19 (high
+  152.01), 2009-06-16 (high 512.7). Any study that read those days'
+  highs/lows (day-state prior-close-position on the following days)
+  carried the error; small, stated, re-gradeable.
+
 - **The pings and the ledger are one definition, and the audit checks
   that they agree** (2026-09-02, the 11:09 phantom exit ping): the 9/1
   partial-block fix cured the BOOK, but the Discord trade-watch
@@ -1214,6 +1297,44 @@ Rendering doctrine, same spirit as the rest of this file:
   under n=40 render small-n. A surviving state becomes a STAND-ASIDE
   candidate — the kind of edge that survives theta because the other
   days are simply not traded — never a chase signal.
+  READOUT (2026-09-04 AM — the session-scoped after-close trigger died
+  overnight, so both studies ran at the 9:00 boot instead; a durable
+  Routine, never a session timer, from now on). EXIT-SHAPE, 446 GOs,
+  option frame at 0.70Δ, both halves: the ONLY exits positive in both
+  halves in option dollars are Eric's rule with the NAIVE levels —
+  all-off at the first of PDH / premarket high / ORB high / HOD /
+  strike (+$4/+$5 per contract, median +$65, 61% win, 5/7 names) and
+  half at TP1 + rest at TP2 on the 270 GOs that had two levels
+  (+$5/+$28, median +$69, 66% win, 5/7). Everything swing-shaped
+  loses money on the option: disaster-only −$17/−$14, tgt_200
+  −$19/−$9, the 21-EMA trail −$7/−$14, momentum fades −$1..−$13,
+  time stops −$19/−$10. The LEVEL KIND decides it: PDH (+$33, 57%
+  hit), premarket high (+$24, 69%), ORB high (+$17, 68%) pay; the
+  strike-grid line (244 of 446 TP1s, +$−6, 44% hit) and HOD-at-entry
+  (−$12) do not — a strike is not resistance. And the multi-touch
+  SHELVES as parameterized were TOO FAR: median 5-star, ~2.2% above
+  entry, so the shelf family graded like hold (median −$79) — the
+  intraday trade wants intraday-scale levels; a 5m/15m-only shelf
+  variant is queued. Path map: highs print U-shaped (35% before
+  10:30, 29% after 14:00), high-first 49%, median 96 min to the high,
+  126 bps average give-back. The tape-entry population stays a coin
+  flip under every exit (best cell tx_1100 −$4/+$8). META is the
+  one name negative under every exit (−$82 on the level exit).
+  DAY-STATE GRID, first survivor of the both-halves AND per-name bar:
+  **VIX backwardated (VIX > VIX3M) at the prior close** — the
+  coin-flip tape entries hold +35.0/+10.3 bps (n=1,063/420) and are
+  POSITIVE ON ALL 11 NAMES (9/11 under the managed exit); VIX ≥ 30
+  echoes it (+35/+59, 9/11, n=421/70); the GOs agree in direction
+  (+94/+91, n=25/9, tiny). Inverted term structure = the days
+  intraday persistence exists; a STAND-ASIDE/selector candidate,
+  measurement only. Weaker both-halves cells on the GOs: prior day
+  DOWN (+22/+29, 5/7 names) vs UP (+7/−1); prior close in the top
+  fifth of its range −12/−1 (a stand-aside candidate); the leader
+  from a BOTTOM-ranked sector +52/+20 (6/7) — the washout-turn echo
+  at the daily scale; Thursday −26/−3 (3/7). Day-bias re-decision
+  through day_bias.decide on 5,451 SPY days replicates the study
+  (filled days +51/+33 bps, 80%/73% win by era); QQQ's rows were
+  lost to an event_id collision (fixed, regrades tonight).
 
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
@@ -1455,6 +1576,46 @@ Rendering doctrine, same spirit as the rest of this file:
   The heavy one-time history backfills ran on POLYGON, not FMP — the
   FMP burn was the news loop, so restoring the firehose is a data-
   quality question, never a backfill hangover.
+
+- **The external review, and what it found** (2026-09-04, Eric had a
+  separate Claude Code session review the system read-only). Verified
+  and acted on the same evening, in Eric's order: (1) **the data-API
+  roles held every privilege on all 127 public tables** — 41 tables
+  (trade_journal, cipher_exemplars, fill_audit, options_expression among
+  them) had no row-level security, so the project's anon key alone could
+  read or truncate them through REST; nothing Watchtower runs uses those
+  roles (everything connects via DATABASE_URL), so migration 055 REVOKEs
+  all of it plus default privileges for future tables — zero grants
+  remain; (2) **the hidden-gems enrichment had never worked** — the
+  screen queried columns that do not exist (`price_target_avg` /
+  `price_target_high` / `date`; revenue and earnings growth) behind a
+  bare `except: pass`, so the analyst-upside and fundamental-
+  acceleration scores were zero for every ticker since the screen
+  shipped, and the aborted transaction broke the next query on the
+  connection (the review saw both errors in the live Postgres logs).
+  Now `target_consensus` / `target_high` / `as_of_date`, rollback +
+  WARNING on failure, and the growth legs are declared HOLES — no stored
+  table carries them (`tests/test_upcomer_enrichment.py` pins the
+  column names against the live schema). The `_social_block` family, in
+  a scorer: a bare except is a section that can never fire. (3) **the
+  MCP OAuth flow, CONTAINED the same evening** (the reviewer's follow-up
+  ruling, relayed by Eric: containment before the weekend design) —
+  `/authorize` auto-approved any allowlisted callback prefix with no
+  login, the token is one shared HMAC value good for ten years, and the
+  wrapper skipped auth entirely when MCP_AUTH_TOKEN was unset. Now:
+  token ISSUANCE is off unless `OAUTH_ISSUANCE=on` (both endpoints
+  refuse with the how-to-reconnect message; every held token keeps
+  working; to connect a new client flip the Railway var on for the
+  minute it takes, then off), and the `/mcp` wrapper fails CLOSED with
+  the secret unset (`tests/test_mcp_auth_containment.py`). The
+  permanent flow is QUEUED for Eric's approval on the design: a login
+  step before the code, PKCE required, short-lived rotating tokens,
+  refuse to start without the secret, then rotate MCP_AUTH_TOKEN to
+  invalidate every token minted under the old flow. Also queued: a
+  GitHub Actions workflow that runs `tests/*.py`
+  (there is none; the "passing" status is Railway's deploy). Judged
+  lower priority, stated: PITR, worker separation, a redesigned daily
+  view — real costs, no trading decision changes this month.
 
 ## Numbers on one line must reconcile with each other
 

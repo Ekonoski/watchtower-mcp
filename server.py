@@ -145,6 +145,24 @@ def _redirect_allowed(uri: str) -> bool:
     return any(uri.startswith(prefix) for prefix in _REDIRECT_ALLOW)
 
 
+# CONTAINMENT (2026-09-04, the external review): /authorize auto-approved
+# any allowlisted callback prefix with no login, so anyone who knew the
+# hostname could mint the shared bearer token with two requests. Until the
+# authenticated flow ships, token ISSUANCE is off unless OAUTH_ISSUANCE=on:
+# every token already held by a client keeps working (the wrapper still
+# accepts it), /authorize and /token refuse with a message that says how
+# to connect a new client (flip the env var on for the minute it takes,
+# then off). Default is OFF — fail closed.
+OAUTH_ISSUANCE = os.environ.get("OAUTH_ISSUANCE", "off").strip().lower() in ("on", "1", "true", "yes")
+_ISSUANCE_OFF = {
+    "error": "access_denied",
+    "error_description": "Token issuance is disabled (OAUTH_ISSUANCE=off). Existing "
+                         "tokens keep working. To connect a NEW client, set "
+                         "OAUTH_ISSUANCE=on in the service's environment for the "
+                         "duration of the connection, then turn it off again.",
+}
+
+
 def _mcp_session_token() -> str:
     """Bearer token handed to OAuth clients — HMAC-derived from the master
     token so the master secret itself never transits the OAuth flow.
@@ -647,7 +665,8 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
                            exit_px: float = None, stop_px: float = None,
                            target_px: float = None, qty: float = None,
                            pnl_dollars: float = None, note: str = "",
-                           mistakes: str = "", risk_dollars: float = None) -> str:
+                           mistakes: str = "", risk_dollars: float = None,
+                           chart_urls: str = "", legs: str = "") -> str:
     """
     Log one of ERIC'S OWN trades into his journal — his manual book,
     separate from the paper desk's ledger by design. Callable from any
@@ -680,17 +699,92 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
         yardstick) and r_actual on this figure; missing = a hole.
       note: what the eye saw, verbatim.
       mistakes: the honest column — what broke the plan, if anything.
+      chart_urls: links to the chart screenshots the trade was judged on
+        (Google Drive folder "Watchtower — journal charts"), comma or
+        space separated. A pasted screenshot lives only in a chat
+        session; a link in the row is what a later session can open.
+      legs: the reasons the eye used, as tags from the FIXED vocabulary
+        (analysis/journal_legs.py), space or comma separated. Entry:
+        confirmed anticipated retest_held lower_high higher_low ema_flip
+        macd_cross cipher_div system_alert. Context: on_flip slippery
+        pinning low_gex pre_holiday binary_day chop_expected leader
+        midpack laggard. Exit: partial_at_level exit_at_level
+        runner_next_level runner_breakeven runner_ratchet stopped_close
+        stopped_touch no_partial. Unknown tags are refused by name; the
+        list changes only at a flat review. At ~30 rows the journal
+        grades every leg with vs without.
     """
     try:
         from analysis.trade_journal import log_trade
         return log_trade(ticker, direction, source, setup, timeframe,
                          instrument, entered_at, exited_at, entry_px,
                          exit_px, stop_px, target_px, qty, pnl_dollars,
-                         note, mistakes, risk_dollars)
+                         note, mistakes, risk_dollars, chart_urls, legs)
     except ValueError as e:
         return f"Not logged: {e}"
     except Exception as e:
         return f"Journal write failed: {e}"
+
+
+@mcp.tool()
+def watchtower_journal_skip(ticker: str, reason: str, direction: str = "long",
+                            setup: str = "", timeframe: str = "", at: str = "",
+                            spec_id: int = None, source: str = "eric",
+                            note: str = "", chart_urls: str = "",
+                            legs: str = "") -> str:
+    """
+    Record a SKIP in Eric's journal — an alert or setup he saw and
+    declined, with his reason. A skip is a decision, not a trade: it
+    carries no P&L and no R (the schema refuses one), lives in its own
+    section of watchtower_journal, and never touches the R record.
+    Log every skip of a desk alert (🎯 GO, 📐 day-bias, gamma ticket)
+    the way every trade is logged — the reason is data, and the desk's
+    own outcome on the declined alert grades the eye against the
+    machine once ~30 have accumulated.
+
+    Args:
+      ticker: symbol.  reason: why it was passed on, in his words (required).
+      direction: the side the alert/setup called ('long' default).
+      setup: the alert vocabulary — "rsl_go_trail 🎯 9:46", "day_bias
+        armed", "gamma wall_fade"…
+      timeframe: chart the decision was read on.
+      at: ISO time of the decision, ET assumed; defaults to now.
+      spec_id: the desk spec id the alert came from (paper_specs.id — the
+        🎯/🌅/📐 pings carry it) so the book's result grades the skip.
+      source: 'eric' (default) or 'grok' when relayed.
+      note: anything else the eye saw.
+      chart_urls: links to the chart screenshots behind the skip (Drive).
+      legs: tags from the fixed vocabulary — skip reasons (chop_expected
+        into_highs low_volume bearish_ind on_flip no_leader) plus any
+        context tags (pre_holiday binary_day leader…). Unknown tags are
+        refused by name.
+    """
+    try:
+        from analysis.trade_journal import log_skip
+        return log_skip(ticker, reason, direction, source, setup, timeframe,
+                        at, spec_id, note, chart_urls, legs)
+    except ValueError as e:
+        return f"Not logged: {e}"
+    except Exception as e:
+        return f"Journal write failed: {e}"
+
+
+@mcp.tool()
+def watchtower_bars(ticker: str, timeframe: str = "1m", day: str = "",
+                    last_n: int = 12, include_premarket: bool = False) -> str:
+    """
+    Live intraday bars for a ticker from the real-time Polygon feed —
+    1m / 5m / 15m for today (or a given YYYY-MM-DD), regular session by
+    default. Renders the day's open/high/low/last, the 9:30 bar, and the
+    last N bars (count of hidden bars stated). Read-only; NOT a decision
+    surface — the books decide on their own persisted bars. Use it to
+    answer "what did the 9:30 bar open at?" the minute it prints.
+    """
+    try:
+        from analysis.bars_tool import bars_report
+        return bars_report(ticker, timeframe, day, last_n, include_premarket)
+    except Exception as e:
+        return f"Bars read failed: {type(e).__name__}: {e}"
 
 
 @mcp.tool()
@@ -2522,6 +2616,8 @@ async def authorize(request: Request):
     """OAuth authorization endpoint — auto-approves for ALLOWLISTED client
     callbacks and redirects back with a one-time code. PKCE (code_challenge)
     is recorded here and enforced at /token when presented."""
+    if not OAUTH_ISSUANCE:
+        return JSONResponse(_ISSUANCE_OFF, status_code=403)
     params = dict(request.query_params)
     redirect_uri = params.get("redirect_uri", "")
     state = params.get("state", "")
@@ -2562,6 +2658,8 @@ async def token(request: Request):
     /authorize (Claude does; Grok's manual-credentials flow may not — PKCE is
     enforced-when-offered so both keep working). Returns an HMAC-derived
     session token, never MCP_AUTH_TOKEN itself."""
+    if not OAUTH_ISSUANCE:
+        return JSONResponse(_ISSUANCE_OFF, status_code=403)
     try:
         form = await request.form()
         data = dict(form)
@@ -2720,6 +2818,11 @@ class AuthASGIWrapper:
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
             path = scope.get("path", "")
+            if path.startswith("/mcp") and path not in PUBLIC_PATHS and not MCP_AUTH_TOKEN:
+                # fail CLOSED (2026-09-04): an unset secret used to mean "no
+                # auth at all" — now it means nobody gets in until it is set.
+                await self._unauthorized(send, "")
+                return
             if MCP_AUTH_TOKEN and path.startswith("/mcp") and path not in PUBLIC_PATHS:
                 headers = dict(scope.get("headers", []))
                 host = headers.get(b"host", b"").decode("utf-8", errors="replace")
