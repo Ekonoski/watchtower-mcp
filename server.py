@@ -694,6 +694,24 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
 
 
 @mcp.tool()
+def watchtower_bars(ticker: str, timeframe: str = "1m", day: str = "",
+                    last_n: int = 12, include_premarket: bool = False) -> str:
+    """
+    Live intraday bars for a ticker from the real-time Polygon feed —
+    1m / 5m / 15m for today (or a given YYYY-MM-DD), regular session by
+    default. Renders the day's open/high/low/last, the 9:30 bar, and the
+    last N bars (count of hidden bars stated). Read-only; NOT a decision
+    surface — the books decide on their own persisted bars. Use it to
+    answer "what did the 9:30 bar open at?" the minute it prints.
+    """
+    try:
+        from analysis.bars_tool import bars_report
+        return bars_report(ticker, timeframe, day, last_n, include_premarket)
+    except Exception as e:
+        return f"Bars read failed: {type(e).__name__}: {e}"
+
+
+@mcp.tool()
 def watchtower_journal(days: int = 90) -> str:
     """
     Read Eric's trade journal — worst R first (losers lead), running
