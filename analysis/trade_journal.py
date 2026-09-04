@@ -48,10 +48,32 @@ def _num(v, name):
         raise ValueError(f"{name} must be a number, got {v!r}")
 
 
+R_DOLLARS = 250.0     # Eric's manual R (set 2026-09-01) — the yardstick
+
+
+def r_readings(pnl_dollars, risk_dollars, direction, entry_px, exit_px, stop_px):
+    """Pure. (r_multiple, r_actual): r_multiple is R against the $250
+    baseline when a dollar P&L exists (the journal's yardstick, decided
+    2026-09-01), else the underlying-price R when entry/stop/exit allow
+    it; r_actual is R against the trade's own stop-defined dollar risk
+    (2026-09-03: "so you are logging my actual +R and the +R against the
+    $250?" — both). Anything unknowable is None, never zero."""
+    r = None
+    if pnl_dollars is not None:
+        r = round(pnl_dollars / R_DOLLARS, 2)
+    elif entry_px and exit_px and stop_px and entry_px != stop_px:
+        sign = 1.0 if direction == "long" else -1.0
+        r = round(sign * (exit_px - entry_px) / abs(entry_px - stop_px), 2)
+    r_act = None
+    if pnl_dollars is not None and risk_dollars:
+        r_act = round(pnl_dollars / risk_dollars, 2)
+    return r, r_act
+
+
 def log_trade(ticker, direction, source="eric", setup="", timeframe="",
               instrument="", entered_at="", exited_at="", entry_px=None,
               exit_px=None, stop_px=None, target_px=None, qty=None,
-              pnl_dollars=None, note="", mistakes="") -> str:
+              pnl_dollars=None, note="", mistakes="", risk_dollars=None) -> str:
     from screen.reversal_screen import _conn
     ticker = (ticker or "").strip().upper()
     direction = (direction or "").strip().lower()
@@ -64,25 +86,25 @@ def log_trade(ticker, direction, source="eric", setup="", timeframe="",
     e_px = _num(entry_px, "entry_px")
     x_px = _num(exit_px, "exit_px")
     s_px = _num(stop_px, "stop_px")
-    r = None
-    if e_px and x_px and s_px and e_px != s_px:
-        sign = 1.0 if direction == "long" else -1.0
-        r = round(sign * (x_px - e_px) / abs(e_px - s_px), 2)
+    pnl = _num(pnl_dollars, "pnl_dollars")
+    risk = _num(risk_dollars, "risk_dollars")
+    r, r_act = r_readings(pnl, risk, direction, e_px, x_px, s_px)
     conn = _conn()
     try:
         with conn.cursor() as c:
             c.execute("""INSERT INTO trade_journal
                 (source, ticker, direction, instrument, setup, timeframe,
                  entered_at, exited_at, entry_px, exit_px, stop_px,
-                 target_px, qty, pnl_dollars, r_multiple, note, mistakes)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 target_px, qty, pnl_dollars, r_multiple, note, mistakes,
+                 risk_dollars, r_actual)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id""",
                 ((source or "eric").strip().lower(), ticker, direction,
                  instrument.strip() or None, setup.strip() or None,
                  timeframe.strip() or None, ent, ext, e_px, x_px, s_px,
                  _num(target_px, "target_px"), _num(qty, "qty"),
-                 _num(pnl_dollars, "pnl_dollars"), r,
-                 note.strip() or None, mistakes.strip() or None))
+                 pnl, r, note.strip() or None, mistakes.strip() or None,
+                 risk, r_act))
             jid = c.fetchone()[0]
         conn.commit()
     finally:
@@ -96,8 +118,10 @@ def log_trade(ticker, direction, source="eric", setup="", timeframe="",
         bits.append(f"stop {s_px:g}")
     if x_px is not None:
         bits.append(f"out {x_px:g}")
-    bits.append(f"R {r:+.2f}" if r is not None else "R unavailable"
-                if x_px is not None else "OPEN")
+    bits.append(f"R {r:+.2f} on ${R_DOLLARS:g}" if r is not None else "R unavailable"
+                if x_px is not None or pnl is not None else "OPEN")
+    bits.append(f"real-risk R {r_act:+.2f} (${risk:g} at risk)" if r_act is not None
+                else "real-risk R unavailable (no risk_dollars)")
     return " · ".join(bits)
 
 
@@ -109,7 +133,8 @@ def journal_summary(days=90) -> str:
             c.execute("""SELECT id, source, ticker, direction, instrument,
                                 setup, timeframe, entered_at, exited_at,
                                 entry_px, exit_px, stop_px, r_multiple,
-                                pnl_dollars, note, mistakes
+                                pnl_dollars, note, mistakes, risk_dollars,
+                                r_actual
                          FROM trade_journal
                          WHERE entered_at >= now() - make_interval(days => %s)
                          ORDER BY r_multiple ASC NULLS LAST,
@@ -127,17 +152,28 @@ def journal_summary(days=90) -> str:
     if closed:
         tot = sum(float(r[12]) for r in closed)
         wins = sum(1 for r in closed if float(r[12]) > 0)
-        lines.append(f"Realized: {tot:+.2f}R · {wins}W/{len(closed) - wins}L "
+        lines.append(f"Realized: {tot:+.2f}R on the ${R_DOLLARS:g} baseline · "
+                     f"{wins}W/{len(closed) - wins}L "
                      f"(n={len(closed)} — below ~30, anecdote not evidence)")
+        with_act = [r for r in closed if r[17] is not None]
+        if with_act:
+            tot_a = sum(float(r[17]) for r in with_act)
+            lines.append(f"Real-risk R: {tot_a:+.2f}R across {len(with_act)} trades "
+                         f"with a stop-defined risk; {len(closed) - len(with_act)} "
+                         f"without (holes, never zeros)")
     lines.append("")
     lines.append("Worst first (losers lead; a journal that buries them "
                  "is marketing):")
     for r in rows[:25]:
         (jid, src, tk, dr, inst, setup, tf, ent, ext, e_px, x_px, s_px,
-         rm, pnl, note, mist) = r
+         rm, pnl, note, mist, risk, r_act) = r
         d = ent.date().isoformat() if ent else "?"
         rtxt = (f"{float(rm):+.2f}R" if rm is not None
                 else ("OPEN" if x_px is None else "R hole"))
+        if r_act is not None:
+            rtxt += f" (real-risk {float(r_act):+.2f}R on ${float(risk):,.0f})"
+        elif rm is not None:
+            rtxt += " (real-risk R unavailable)"
         seg = [f"#{jid} {d} {tk} {dr}", rtxt]
         if setup:
             seg.append(setup)

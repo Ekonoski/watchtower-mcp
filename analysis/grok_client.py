@@ -23,6 +23,25 @@ import os
 from typing import Any, Dict, List, Optional
 
 
+import logging as _logging
+import time
+
+log = _logging.getLogger("watchtower.grok")
+COOLDOWN_S = 30 * 60
+_COOLDOWN_UNTIL = 0.0
+_CREDIT_MARKERS = ("credits", "spending limit", "permission-denied", "permissiondenied")
+
+
+def _is_credits_error(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(k in m for k in _CREDIT_MARKERS)
+
+
+def cooldown_remaining() -> float:
+    """Seconds left on the credits cooldown (0 when live)."""
+    return max(0.0, _COOLDOWN_UNTIL - time.time())
+
+
 class GrokClient:
     def __init__(
         self,
@@ -82,11 +101,29 @@ class GrokClient:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
+        # Circuit breaker (2026-09-03): a dry xAI account answered every
+        # call with 403 "used all available credits or reached its monthly
+        # spending limit" and the scanners retried it every few seconds
+        # per ticker. On that class of error the client stands down for
+        # COOLDOWN_S, logs ONCE, and callers get their usual exception —
+        # which they already render as *unavailable*, never as data.
+        global _COOLDOWN_UNTIL
+        now = time.time()
+        if now < _COOLDOWN_UNTIL:
+            raise RuntimeError(
+                f"Grok unavailable: credits/permission cooldown until "
+                f"{time.strftime('%H:%M:%S', time.localtime(_COOLDOWN_UNTIL))}")
         try:
             resp = self._client.chat.completions.create(**kwargs)
             text = resp.choices[0].message.content or ""
         except Exception as e:
-            raise RuntimeError(f"Grok API call failed: {type(e).__name__}: {e}") from e
+            msg = f"{type(e).__name__}: {e}"
+            if _is_credits_error(msg):
+                _COOLDOWN_UNTIL = now + COOLDOWN_S
+                log.warning("[grok] account refused (credits/spending limit) — "
+                            "standing down for %d min. Full error: %s",
+                            COOLDOWN_S // 60, msg[:600])
+            raise RuntimeError(f"Grok API call failed: {msg}") from e
 
         result: Dict[str, Any] = {"text": text, "model": self.model, "usage": None}
         if hasattr(resp, "usage") and resp.usage:

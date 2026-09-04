@@ -1135,6 +1135,85 @@ Rendering doctrine, same spirit as the rest of this file:
   are the two knives worth a warning line on the 🎯; neither is a
   gate until n grows. No live change (Eric: "I don't wanna change
   anything in the system").
+  RISK MANAGEMENT AS THE EDGE (2026-09-03, ~8:40 AM, Eric: "if the
+  coin flip is a 50% ratio then isn't the bigger edge in risk
+  management?" — `analysis/riskmgmt_study.py`, `riskmgmt_events`,
+  marker `riskmgmt_v1`; the first pass silently graded only the four
+  non-mag-7 names because the 1m record is split across
+  mag7_1m_bars/liquid_1m_bars — fixed same hour, table chosen per
+  ticker). Exits with the unit at the real excursion — hold, 1%
+  disaster touch only, disaster + 21-EMA trail after +0.5/1.0/1.5%,
+  no struct stop — R on one 1% unit. On the 446 GOs every managed
+  variant is positive in BOTH halves (dt_050 +7.6/+5.5 bps, 51% win;
+  dis1 +11/+3.4) where the tight-stop book never was, and every one
+  gives back roughly half the mean to buy the tail (worst-5% day
+  −2.4R → −1.0R; hold +13.3/+12.8). On the 16,876 unconditioned long
+  tape entries (11 names) hold is +1.2/+1.2 bps and every managed
+  variant sits between −2.9 and +2.1 — no exit turns a coin flip
+  positive; the closest cell (ema_1m_gated + dt_050, +1.3/+3.5 bps,
+  7/11 names) is noise. The math, confirmed: exits reshape the
+  distribution, they cannot create a mean; risk management is
+  insurance (tail, survival, sizing) and selection is the edge.
+  The give-back read that came out of it (Eric: "if our options are
+  hitting 20/30/50% and we end up negative the failure is how we
+  exit"): half of all GOs reach +1% intraday, only 35% keep half
+  their best gain to the bell, the +100-200 bps bucket (28% of GOs =
+  option +25-50%) closes at +12 bps average with 35% red, and the
+  average trade gives back >1% from its high in EVERY bucket. The
+  21-EMA trail gives it back too (+9/+2 bps). Timing (high early
+  and bleed vs dip then rally) is NOT stored — queued below.
+  THE DAY TRADER'S FRAME (2026-09-03, Eric: "You're running these
+  intraday trades like swing trades on common shares and that is just
+  not feasible or profitable… take profit at areas of resistance
+  including our bot levels… then move our SL to break even… As
+  runners move up we can move our SL up"). He is right about the
+  frame: every intraday exit graded so far was a swing playbook
+  shrunk to one day, and the give-back read says the money is at the
+  intraday high, not the close. The practitioner and academic
+  literature is summarized in
+  `docs/research/options_daytrading_practice.md` (read it before
+  designing any intraday options exit): population base rates
+  (Taiwan <1% predictably profitable; retail options lose to a
+  ~12.6% spread and back-loaded decay), the morning-momentum
+  evidence (Gao et al.; Da–Goyenko–Zhang), the 0DTE decay curve
+  (collapses in the last 90 minutes), and the convergent process
+  rules (targets at levels, scale out, breakeven after a banked
+  partial, ratchet the runner's stop, time stops, hard initial stop,
+  daily loss limit). Stated there and here: the full-position
+  breakeven (`be_1r`, 17% win) is NOT Eric's rule — his banks half
+  first — and grades separately. And the targets are NOT just
+  PDH/PMH: the take-profit locations are the desk's own multi-touch
+  shelves (`analysis/levels.py` — pivots clustered across
+  timeframes, touches × confluence × recency), recomputed AS OF
+  each trade date from stored bars with no lookahead; the naive
+  levels ride beside them for comparison.
+  QUEUED FOR TONIGHT (2026-09-03, Eric: "let's set this up for
+  tonight"): the EXIT-SHAPE STUDY — path map from the 1m bars
+  (time of MFE/MAE, which prints first, minutes to the high,
+  give-back by bucket) plus the day trader's exits on the same
+  entries: TP1 at the first multi-touch shelf (and, as a second
+  family, PDH/ORH/HOD/round strikes; premarket high once the
+  premarket 1m backfill lands), full-exit and half-at-TP1 +
+  breakeven flavors (touch and 5m-close), the runner's stop
+  ratcheted under each new higher low / cleared level, TP2 at the
+  next shelf; fixed targets +50/100/150/200 bps; time stops 30/60
+  min; time exits 11:00/12:00/14:00; tighter 8-EMA trail; the
+  incumbents beside them — graded in bps AND the modeled option
+  frame (0.55/0.70/0.85Δ), where theta rewards taking the +25-50%
+  rather than waiting for a trailing close. And
+  the DAY-STATE CONDITIONING GRID. Every study so far
+  graded entries across all days; if intraday persistence exists it
+  lives in a subset of days. Pre-registered: the same entry
+  populations (446 GOs, the long tape-entry families, the day-bias
+  PDH-retest days), read in BOTH frames (hold-to-close bps and the
+  dt_050 managed exit), cut by day-states readable by 9:45 with no
+  lookahead — open vs prior range, gap bucket, prior close position,
+  VIX level/change, SPY trend state, the name's sector-RS state
+  (from 2024-08), and the gamma regime (2026-07-15 on only, stated
+  exploratory). Bar: both halves AND per-name replication; cells
+  under n=40 render small-n. A surviving state becomes a STAND-ASIDE
+  candidate — the kind of edge that survives theta because the other
+  days are simply not traded — never a chase signal.
 
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
