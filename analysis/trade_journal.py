@@ -70,10 +70,21 @@ def r_readings(pnl_dollars, risk_dollars, direction, entry_px, exit_px, stop_px)
     return r, r_act
 
 
+def _urls(v):
+    """Chart links: a list, or a comma/whitespace-separated string; [] -> None."""
+    if not v:
+        return None
+    if isinstance(v, str):
+        v = [u for u in v.replace(",", " ").split() if u]
+    out = [str(u).strip() for u in v if str(u).strip()]
+    return out or None
+
+
 def log_trade(ticker, direction, source="eric", setup="", timeframe="",
               instrument="", entered_at="", exited_at="", entry_px=None,
               exit_px=None, stop_px=None, target_px=None, qty=None,
-              pnl_dollars=None, note="", mistakes="", risk_dollars=None) -> str:
+              pnl_dollars=None, note="", mistakes="", risk_dollars=None,
+              chart_urls=None) -> str:
     from screen.reversal_screen import _conn
     ticker = (ticker or "").strip().upper()
     direction = (direction or "").strip().lower()
@@ -96,15 +107,15 @@ def log_trade(ticker, direction, source="eric", setup="", timeframe="",
                 (source, ticker, direction, instrument, setup, timeframe,
                  entered_at, exited_at, entry_px, exit_px, stop_px,
                  target_px, qty, pnl_dollars, r_multiple, note, mistakes,
-                 risk_dollars, r_actual)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 risk_dollars, r_actual, chart_urls)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id""",
                 ((source or "eric").strip().lower(), ticker, direction,
                  instrument.strip() or None, setup.strip() or None,
                  timeframe.strip() or None, ent, ext, e_px, x_px, s_px,
                  _num(target_px, "target_px"), _num(qty, "qty"),
                  pnl, r, note.strip() or None, mistakes.strip() or None,
-                 risk, r_act))
+                 risk, r_act, _urls(chart_urls)))
             jid = c.fetchone()[0]
         conn.commit()
     finally:
@@ -126,7 +137,7 @@ def log_trade(ticker, direction, source="eric", setup="", timeframe="",
 
 
 def log_skip(ticker, reason, direction="long", source="eric", setup="",
-             timeframe="", at="", spec_id=None, note="") -> str:
+             timeframe="", at="", spec_id=None, note="", chart_urls=None) -> str:
     """A SKIP is a decision, not a trade (2026-09-04, Eric on the NVDA
     GO he declined: "the skip is data, and the reason for the skip is
     also data"). It writes kind='skip' with NO P&L and NO R — the
@@ -152,12 +163,12 @@ def log_skip(ticker, reason, direction="long", source="eric", setup="",
         with conn.cursor() as c:
             c.execute("""INSERT INTO trade_journal
                 (kind, source, ticker, direction, setup, timeframe,
-                 entered_at, skip_reason, spec_id, note)
-                VALUES ('skip',%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 entered_at, skip_reason, spec_id, note, chart_urls)
+                VALUES ('skip',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id""",
                 ((source or "eric").strip().lower(), ticker, direction,
                  setup.strip() or None, timeframe.strip() or None, when,
-                 reason, sid, note.strip() or None))
+                 reason, sid, note.strip() or None, _urls(chart_urls)))
             jid = c.fetchone()[0]
         conn.commit()
     finally:
@@ -178,7 +189,7 @@ def _skips_block(c, days) -> list:
     unlinked render as such, never as zero)."""
     c.execute("""SELECT j.id, j.entered_at, j.ticker, j.direction, j.setup,
                         j.skip_reason, j.source, j.spec_id, s.book, s.status,
-                        t.exit_reason, t.r_multiple, t.exited_at
+                        t.exit_reason, t.r_multiple, t.exited_at, j.chart_urls
                  FROM trade_journal j
                  LEFT JOIN paper_specs s ON s.id = j.spec_id
                  LEFT JOIN paper_trades t ON t.spec_id = j.spec_id
@@ -192,7 +203,7 @@ def _skips_block(c, days) -> list:
     lines = ["", f"Skips — decisions, never R (n={len(rows)}):"]
     resolved = []
     for (jid, at, tk, dr, setup, reason, src, sid, book, status,
-         xr, rm, xt) in rows:
+         xr, rm, xt, charts) in rows:
         d = at.date().isoformat() if at else "?"
         seg = [f"#{jid} {d} {tk} {dr}"]
         if setup:
@@ -211,6 +222,8 @@ def _skips_block(c, days) -> list:
         seg.append(f"[{src}]")
         lines.append("  " + " · ".join(seg))
         lines.append(f"      why: {reason}")
+        if charts:
+            lines.append(f"      📎 {len(charts)} chart(s): " + " ".join(charts))
     if resolved:
         tot = sum(resolved)
         lines.append(f"  Desk's realized R on the alerts skipped: {tot:+.2f}R "
@@ -229,7 +242,7 @@ def journal_summary(days=90) -> str:
                                 setup, timeframe, entered_at, exited_at,
                                 entry_px, exit_px, stop_px, r_multiple,
                                 pnl_dollars, note, mistakes, risk_dollars,
-                                r_actual
+                                r_actual, chart_urls
                          FROM trade_journal
                          WHERE kind = 'trade'
                            AND entered_at >= now() - make_interval(days => %s)
@@ -264,7 +277,7 @@ def journal_summary(days=90) -> str:
                  "is marketing):")
     for r in rows[:25]:
         (jid, src, tk, dr, inst, setup, tf, ent, ext, e_px, x_px, s_px,
-         rm, pnl, note, mist, risk, r_act) = r
+         rm, pnl, note, mist, risk, r_act, charts) = r
         d = ent.date().isoformat() if ent else "?"
         rtxt = (f"{float(rm):+.2f}R" if rm is not None
                 else ("OPEN" if x_px is None else "R hole"))
@@ -292,6 +305,8 @@ def journal_summary(days=90) -> str:
             lines.append(f"      ⚠ {mist}")
         elif note:
             lines.append(f"      {note}")
+        if charts:
+            lines.append(f"      📎 {len(charts)} chart(s): " + " ".join(charts))
     if len(rows) > 25:
         lines.append(f"  … {len(rows) - 25} more not shown "
                      f"(count stated, never silently dropped)")

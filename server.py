@@ -647,7 +647,8 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
                            exit_px: float = None, stop_px: float = None,
                            target_px: float = None, qty: float = None,
                            pnl_dollars: float = None, note: str = "",
-                           mistakes: str = "", risk_dollars: float = None) -> str:
+                           mistakes: str = "", risk_dollars: float = None,
+                           chart_urls: str = "") -> str:
     """
     Log one of ERIC'S OWN trades into his journal — his manual book,
     separate from the paper desk's ledger by design. Callable from any
@@ -680,13 +681,17 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
         yardstick) and r_actual on this figure; missing = a hole.
       note: what the eye saw, verbatim.
       mistakes: the honest column — what broke the plan, if anything.
+      chart_urls: links to the chart screenshots the trade was judged on
+        (Google Drive folder "Watchtower — journal charts"), comma or
+        space separated. A pasted screenshot lives only in a chat
+        session; a link in the row is what a later session can open.
     """
     try:
         from analysis.trade_journal import log_trade
         return log_trade(ticker, direction, source, setup, timeframe,
                          instrument, entered_at, exited_at, entry_px,
                          exit_px, stop_px, target_px, qty, pnl_dollars,
-                         note, mistakes, risk_dollars)
+                         note, mistakes, risk_dollars, chart_urls)
     except ValueError as e:
         return f"Not logged: {e}"
     except Exception as e:
@@ -697,7 +702,7 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
 def watchtower_journal_skip(ticker: str, reason: str, direction: str = "long",
                             setup: str = "", timeframe: str = "", at: str = "",
                             spec_id: int = None, source: str = "eric",
-                            note: str = "") -> str:
+                            note: str = "", chart_urls: str = "") -> str:
     """
     Record a SKIP in Eric's journal — an alert or setup he saw and
     declined, with his reason. A skip is a decision, not a trade: it
@@ -719,11 +724,12 @@ def watchtower_journal_skip(ticker: str, reason: str, direction: str = "long",
         🎯/🌅/📐 pings carry it) so the book's result grades the skip.
       source: 'eric' (default) or 'grok' when relayed.
       note: anything else the eye saw.
+      chart_urls: links to the chart screenshots behind the skip (Drive).
     """
     try:
         from analysis.trade_journal import log_skip
         return log_skip(ticker, reason, direction, source, setup, timeframe,
-                        at, spec_id, note)
+                        at, spec_id, note, chart_urls)
     except ValueError as e:
         return f"Not logged: {e}"
     except Exception as e:

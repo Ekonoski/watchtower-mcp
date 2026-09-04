@@ -1021,6 +1021,23 @@ Rendering doctrine, same spirit as the rest of this file:
   fat-finger (SPY 2005-05-27 high 1120.2 on a 120 close) — flagged,
   not hand-edited; any SPY all-time-high query reads it until the
   vendor row is re-fetched.
+  **The charts are not logged unless they are linked** (same debrief,
+  Eric: "are you also logging the charts that I put in here… so that
+  you could use them later to potentially train yourself off of?").
+  Plain answer, kept here: a pasted screenshot lives only in the chat
+  session — nothing stores it, the container forgets it, and no model
+  learns from a session in a way that persists. What persists is what
+  is WRITTEN: journal rows with the eye's legs in the vocabulary, the
+  bar-stamped state tables, this file. So the row carries
+  `chart_urls` — links into the Drive folder "Watchtower — journal
+  charts" (folder id 143ZYimpiXRpfAj_yNXmPjNWqVGuln2lu, Eric's) —
+  and a later session opens the picture beside the row. The learning
+  loop Eric is describing is the exemplar-museum mechanism applied to
+  his own book: label every take, skip, partial, and runner decision
+  with the legs the eye used; grade each leg against outcomes at n;
+  promote a leg to a rule only when it clears the same bar every
+  study clears (both halves, replication). Rules come out of the
+  labeled set, never out of one remembered chart.
   Two holes the debrief surfaced, both the every-record-needs-an-owner
   disease: (1) **staleness is measured in the timeframe's own units** —
   the intraday oscillator guard was a flat 4 calendar days, so SPY's 1h

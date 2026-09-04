@@ -76,6 +76,21 @@ def test_skip_is_a_decision_not_a_trade():
     assert "skip_lines" in summ.split("if not rows:")[1].split("closed = ")[0]
 
 
+def test_chart_links_ride_the_row():
+    """2026-09-04 (Eric: "are you also logging the charts?") — a pasted
+    screenshot lives only in a session; the row carries LINKS to the
+    charts in his Drive folder, on trades and skips alike, rendered
+    beside the row."""
+    from analysis.trade_journal import _urls
+    assert _urls("") is None and _urls([]) is None
+    assert _urls("https://a/1, https://a/2") == ["https://a/1", "https://a/2"]
+    assert _urls(["https://a/1", " "]) == ["https://a/1"]
+    assert "chart_urls" in inspect.getsource(trade_journal.log_trade)
+    assert "chart_urls" in inspect.getsource(trade_journal.log_skip)
+    summ = inspect.getsource(trade_journal.journal_summary)
+    assert "📎" in summ and "📎" in inspect.getsource(trade_journal._skips_block)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
