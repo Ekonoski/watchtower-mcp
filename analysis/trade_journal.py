@@ -332,6 +332,7 @@ def journal_summary(days=90) -> str:
             lines.append(f"  {s}: {sum(rs):+.2f}R · {w}W/{len(rs) - w}L "
                          f"(n={len(rs)})")
     from analysis.journal_legs import leg_grade, render_grade
-    lines.extend(render_grade(leg_grade((r[18], r[12]) for r in closed), len(closed)))
+    # column order of the SELECT above: ... r_actual=17, chart_urls=18, legs=19
+    lines.extend(render_grade(leg_grade((r[19], r[12]) for r in closed), len(closed)))
     lines.extend(skip_lines)
     return "\n".join(lines)

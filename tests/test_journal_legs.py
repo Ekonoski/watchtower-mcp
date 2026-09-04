@@ -53,6 +53,12 @@ def test_writers_carry_legs():
         assert "legs" in src and "normalize as _legs" in src
     summ = inspect.getsource(trade_journal.journal_summary)
     assert "leg_grade" in summ and "render_grade" in summ
+    # the grade reads the LEGS column, not its neighbour (2026-09-04 live:
+    # r[18] was chart_urls, so "By leg" rendered empty on tagged rows)
+    sel = summ.split("SELECT")[1].split("FROM")[0]
+    cols = [c.strip() for c in sel.replace("\n", " ").split(",")]
+    assert cols.index("legs") == 19 and cols.index("r_multiple") == 12
+    assert "leg_grade((r[19], r[12])" in summ
 
 
 if __name__ == "__main__":
