@@ -1214,6 +1214,44 @@ Rendering doctrine, same spirit as the rest of this file:
   under n=40 render small-n. A surviving state becomes a STAND-ASIDE
   candidate — the kind of edge that survives theta because the other
   days are simply not traded — never a chase signal.
+  READOUT (2026-09-04 AM — the session-scoped after-close trigger died
+  overnight, so both studies ran at the 9:00 boot instead; a durable
+  Routine, never a session timer, from now on). EXIT-SHAPE, 446 GOs,
+  option frame at 0.70Δ, both halves: the ONLY exits positive in both
+  halves in option dollars are Eric's rule with the NAIVE levels —
+  all-off at the first of PDH / premarket high / ORB high / HOD /
+  strike (+$4/+$5 per contract, median +$65, 61% win, 5/7 names) and
+  half at TP1 + rest at TP2 on the 270 GOs that had two levels
+  (+$5/+$28, median +$69, 66% win, 5/7). Everything swing-shaped
+  loses money on the option: disaster-only −$17/−$14, tgt_200
+  −$19/−$9, the 21-EMA trail −$7/−$14, momentum fades −$1..−$13,
+  time stops −$19/−$10. The LEVEL KIND decides it: PDH (+$33, 57%
+  hit), premarket high (+$24, 69%), ORB high (+$17, 68%) pay; the
+  strike-grid line (244 of 446 TP1s, +$−6, 44% hit) and HOD-at-entry
+  (−$12) do not — a strike is not resistance. And the multi-touch
+  SHELVES as parameterized were TOO FAR: median 5-star, ~2.2% above
+  entry, so the shelf family graded like hold (median −$79) — the
+  intraday trade wants intraday-scale levels; a 5m/15m-only shelf
+  variant is queued. Path map: highs print U-shaped (35% before
+  10:30, 29% after 14:00), high-first 49%, median 96 min to the high,
+  126 bps average give-back. The tape-entry population stays a coin
+  flip under every exit (best cell tx_1100 −$4/+$8). META is the
+  one name negative under every exit (−$82 on the level exit).
+  DAY-STATE GRID, first survivor of the both-halves AND per-name bar:
+  **VIX backwardated (VIX > VIX3M) at the prior close** — the
+  coin-flip tape entries hold +35.0/+10.3 bps (n=1,063/420) and are
+  POSITIVE ON ALL 11 NAMES (9/11 under the managed exit); VIX ≥ 30
+  echoes it (+35/+59, 9/11, n=421/70); the GOs agree in direction
+  (+94/+91, n=25/9, tiny). Inverted term structure = the days
+  intraday persistence exists; a STAND-ASIDE/selector candidate,
+  measurement only. Weaker both-halves cells on the GOs: prior day
+  DOWN (+22/+29, 5/7 names) vs UP (+7/−1); prior close in the top
+  fifth of its range −12/−1 (a stand-aside candidate); the leader
+  from a BOTTOM-ranked sector +52/+20 (6/7) — the washout-turn echo
+  at the daily scale; Thursday −26/−3 (3/7). Day-bias re-decision
+  through day_bias.decide on 5,451 SPY days replicates the study
+  (filled days +51/+33 bps, 80%/73% win by era); QQQ's rows were
+  lost to an event_id collision (fixed, regrades tonight).
 
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT

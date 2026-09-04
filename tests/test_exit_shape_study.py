@@ -120,6 +120,10 @@ def test_daystate_legs_and_premarket():
     assert all(v is None for v in hole.values())
     src = inspect.getsource(ds)
     assert "from analysis.day_bias import decide" in src and "INSERT INTO daystate_legs" in src
+    # day-bias rows carry a per-ticker slot in event_id (2026-09-04: SPY and
+    # QQQ collided on the bare date and every QQQ row was silently dropped)
+    assert ds.DAYBIAS_SLOT == {"SPY": 0, "QQQ": 1}
+    assert "* 10 + DAYBIAS_SLOT[tk]" in src and "missing_daybias" in src
     assert "paper_trades" not in src and "paper_specs" not in src
     from zoneinfo import ZoneInfo
     et = ZoneInfo("America/New_York")
