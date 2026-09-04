@@ -478,7 +478,7 @@ def _fetch_daily_ohlcv(conn, tickers: list, days: int = 700) -> dict:
             SELECT ticker, trade_date,
                    COALESCE(open, close), COALESCE(high, close),
                    COALESCE(low, close), close, COALESCE(volume, 0)
-            FROM daily_prices
+            FROM daily_prices_clean
             WHERE ticker = ANY(%s) AND trade_date >= CURRENT_DATE - %s
             ORDER BY ticker, trade_date
             """, (tickers, days),

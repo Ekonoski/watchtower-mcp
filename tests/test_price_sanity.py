@@ -28,6 +28,23 @@ def test_verdicts():
     assert ps.verdict((None, 1.0, 0.9, 0.95), (None, 1.0, 0.9, 0.95)) == "confirmed"
 
 
+def test_vendor_anomalies_are_flagged_not_edited():
+    """2026-09-04: the vendor CONFIRMED five impossible prints; Eric ruled
+    them flagged. The migration adds the verdict and a view that nulls
+    O/H/L on flagged rows; the oscillator's daily fetch reads the view
+    (its COALESCE to close already handles the NULL). The raw table is
+    never written by the flag path."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    mig = open(os.path.join(root, "migrations", "056_vendor_anomalies.sql")).read()
+    assert "'vendor_anomaly'" in mig and "CREATE OR REPLACE VIEW daily_prices_clean" in mig
+    assert "UPDATE daily_prices" not in mig
+    for tk, d in (("SPY", "2005-05-27"), ("SPY", "2006-01-26"), ("SPY", "2008-09-29"),
+                  ("IWM", "2008-09-19"), ("IWM", "2009-06-16")):
+        assert f"('{tk}', DATE '{d}')" in mig
+    osc = open(os.path.join(root, "analysis", "oscillator.py")).read()
+    assert "FROM daily_prices_clean" in osc
+
+
 def test_writes_vendor_bar_or_nothing():
     src = inspect.getsource(ps.run)
     assert 'if v == "corrected":' in src and "UPDATE daily_prices SET open=%s, high=%s, low=%s, close=%s" in src
