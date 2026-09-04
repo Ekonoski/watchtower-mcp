@@ -2728,7 +2728,8 @@ def start_scheduler():
                             ("riskmgmt", "analysis.riskmgmt_study"),
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
-                            ("daystate", "analysis.daystate_study")):
+                            ("daystate", "analysis.daystate_study"),
+                            ("price_sanity", "analysis.price_sanity")):
             try:
                 import importlib
                 _run = importlib.import_module(_mod).run

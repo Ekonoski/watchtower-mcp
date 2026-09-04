@@ -1036,6 +1036,19 @@ Rendering doctrine, same spirit as the rest of this file:
   9/3 was a hole for the exit-shape premarket-high target family and
   the journal's PML/PMH checks; `run_today` at 9:31/9:41 plus a boot
   catch-up own it now, a day is claimed only when every ticker fetched.
+  And the fat-finger itself (Eric: "are you gonna refetch that?"):
+  `analysis/price_sanity.py` — every stored daily bar whose open/high/
+  low sits >2x from its close is RE-FETCHED from the vendor and replaced
+  with the vendor's bar, never hand-edited; verdicts in `price_sanity`
+  (corrected / confirmed / no_vendor_bar). The census before the sweep:
+  758 suspect rows across 345 tickers, most of them REAL prints on
+  warrants and penny names (a 0.38→12.06 warrant day is a print, not a
+  typo — so the sweep verifies, it does not purge), and five decimal-
+  shift errors on the liquid set: SPY 2005-05-27 (high 1120.2),
+  2006-01-26 (low 57.29), 2008-09-29 (low 11.85), IWM 2008-09-19 (high
+  152.01), 2009-06-16 (high 512.7). Any study that read those days'
+  highs/lows (day-state prior-close-position on the following days)
+  carried the error; small, stated, re-gradeable.
 
 - **The pings and the ledger are one definition, and the audit checks
   that they agree** (2026-09-02, the 11:09 phantom exit ping): the 9/1
