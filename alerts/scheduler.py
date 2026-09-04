@@ -2085,6 +2085,22 @@ def start_scheduler():
         id="spec_ping", replace_existing=True,
     )
 
+    # Index 1m tape, live (2026-09-04): SPY/QQQ/IWM/AMD completed 1m bars
+    # persisted every minute of the session, first-seen wins.
+    def _index_1m_live():
+        try:
+            from analysis.index_1m_live import run_tick
+            run_tick()
+        except Exception:
+            log.exception("[index-1m] tick failed")
+
+    scheduler.add_job(
+        _index_1m_live,
+        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*", second="20",
+                    timezone=et),
+        id="index_1m_live", replace_existing=True,
+    )
+
     # 📐 early verdict (2026-09-04, Eric: "why does it take until 9:51?
     # ... early is better"): the verdict needs only the 9:30 OPEN, so it
     # goes out the minute that bar completes; 9:51 stays as the fallback.
