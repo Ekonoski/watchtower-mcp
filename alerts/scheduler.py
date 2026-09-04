@@ -2085,6 +2085,22 @@ def start_scheduler():
         id="spec_ping", replace_existing=True,
     )
 
+    # 📐 early verdict (2026-09-04, Eric: "why does it take until 9:51?
+    # ... early is better"): the verdict needs only the 9:30 OPEN, so it
+    # goes out the minute that bar completes; 9:51 stays as the fallback.
+    def _daybias_early():
+        try:
+            from alerts.day_bias_ping import run_daybias_early_verdict
+            run_daybias_early_verdict()
+        except Exception:
+            log.exception("[day-bias-ping] early verdict failed")
+
+    scheduler.add_job(
+        _daybias_early,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="31,33",
+                    second="40", timezone=et),
+        id="daybias_ping_early", replace_existing=True,
+    )
     scheduler.add_job(
         _daybias_ping,
         CronTrigger(day_of_week="mon-fri", hour="9", minute="51,56",

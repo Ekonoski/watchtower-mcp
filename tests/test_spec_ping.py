@@ -37,6 +37,18 @@ def test_read_only_by_signature():
     assert "UPDATE paper_" not in src and "DELETE" not in src
 
 
+def test_skips_render_as_the_decision():
+    # 2026-09-04 (NFP): "0 armed" without the why read as a hole
+    msg = format_tickets([], 15, [("IWM", "stack_fade_300", "skipped_binary"),
+                                  ("QQQ", "stack_fade_715", "skipped_binary"),
+                                  ("SPY", "stack_fade_770", "skipped_binary")])
+    assert "0 armed" in msg
+    assert "binary-day skip" in msg and "SPY stack_fade_770" in msg
+    assert "10:30 shadow re-arm" in msg
+    assert "9:31" in msg and "9:51 fallback" in msg
+    assert "Skipped" not in format_tickets([], 15, [])
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

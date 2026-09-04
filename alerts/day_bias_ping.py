@@ -75,6 +75,93 @@ def format_hole() -> str:
             "(see ingestion_log, job day_bias_loop). A hole, not a verdict.")
 
 
+EARLY_TICK = dt.time(9, 31)     # the 9:30 1m bar is complete
+
+
+def early_state(bar_930, pdh):
+    """Pure. bar_930 = (ts_et, open, close, high, low, volume) for the
+    completed 9:30 1m bar. Runs the BOOK's own decide() on that single
+    bar (one definition — the arming rule is never restated here) and
+    maps its state to the spec status vocabulary."""
+    from analysis.day_bias import decide
+    res = decide([bar_930], pdh)
+    state = res.get("state")
+    if state == "no_bias":
+        return "skipped_bias", res
+    if state == "cancelled_early":
+        return "cancelled", res
+    if state == "waiting" and "hole" not in res:
+        return "armed", res
+    return None, res
+
+
+def run_daybias_early_verdict() -> dict:
+    """9:31 ET (2026-09-04, Eric: "why does it take until 9:51?"): the
+    verdict needs only the 9:30 OPEN, so it goes out the minute that
+    bar completes. Reads PDH the book's way and the 9:30 1m bar from
+    Polygon, decides through day_bias.decide, claims the same verdict
+    ref — so the 9:51 pass becomes the fallback (no bar, no ping) and
+    the cancel follow-up still fires if the 9:46 book pass cancels."""
+    from alerts.discord_notify import claim_and_send, is_configured
+    from analysis.day_bias import DISASTER_STOP_PCT, _pdh
+    from analysis.paper_trader import ET
+    from analysis.polygon_data import get_client
+    from screen.reversal_screen import _conn
+
+    now = dt.datetime.now(ET)
+    if now.weekday() >= 5 or now.time() < EARLY_TICK or now.time() >= FIRST_TICK:
+        return {"skip": "outside window"}
+    if not is_configured(CHANNEL):
+        return {"off": True}
+    client = get_client()
+    if client is None:
+        return {"skip": "no polygon client"}
+    today = now.date()
+    ref = today.isoformat()
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT 1 FROM discord_notify_log WHERE kind=%s AND ref=%s",
+                      (KIND_VERDICT, ref))
+            if c.fetchone():
+                return {"skip": "verdict already sent"}
+        pdh = _pdh(conn, today)
+        if pdh is None:
+            return {"skip": "no PDH"}
+        try:
+            aggs = list(client.get_aggs("SPY", multiplier=1, timespan="minute",
+                                        from_=today.isoformat(), to=today.isoformat(),
+                                        limit=120))
+        except Exception as e:
+            log.warning(f"[day-bias-ping] 1m fetch failed: {e}")
+            return {"skip": "fetch failed"}
+        bar = None
+        for a in aggs:
+            t = dt.datetime.fromtimestamp(a.timestamp / 1000, dt.timezone.utc).astimezone(ET)
+            if t.time() == dt.time(9, 30):
+                bar = (t, float(a.open), float(a.close), float(a.high), float(a.low),
+                       float(a.volume) if a.volume is not None else None)
+                break
+        if bar is None:
+            return {"skip": "9:30 bar not yet available"}
+        status, res = early_state(bar, pdh)
+        if status is None:
+            return {"skip": f"undecided: {res}"}
+        stop = pdh * (1 - DISASTER_STOP_PCT)
+        msg = format_verdict(status, pdh, stop, bar[1]) + \
+            "\n(9:31 read off the 9:30 1m open; the book arms at 9:46 on the 15m bar)"
+        out = claim_and_send(KIND_VERDICT, ref, CHANNEL, msg, conn=conn)
+        if status == "cancelled":
+            with conn.cursor() as c:
+                c.execute("""INSERT INTO discord_notify_log (kind, ref, channel, delivered)
+                             VALUES (%s, %s, %s, true) ON CONFLICT (kind, ref) DO NOTHING""",
+                          (KIND_CANCEL, ref, CHANNEL))
+            conn.commit()
+        return {"verdict": out, "state": status, "open": bar[1], "pdh": pdh}
+    finally:
+        conn.close()
+
+
 def run_daybias_ping() -> dict:
     """Read the day_bias book's record and deliver the day's verdict —
     and, if an armed day was cancelled by an early touch, the change."""

@@ -87,6 +87,24 @@ def test_read_only_and_at_most_once_by_signature():
     assert "today.isoformat()" in src
 
 
+def test_early_verdict_uses_the_books_decide_and_maps_states():
+    # 2026-09-04 (Eric: "why does it take until 9:51?"): the 9:31 read
+    # decides through day_bias.decide on the completed 9:30 1m bar —
+    # never a restated rule — and maps its states to the spec vocabulary.
+    import datetime as dt
+    from alerts import day_bias_ping as p
+    t = dt.datetime(2026, 9, 4, 9, 30)
+    assert p.early_state((t, 767.9, 768.2, 768.4, 767.5, 1e6), 766.43)[0] == "armed"
+    assert p.early_state((t, 765.0, 765.5, 766.0, 764.8, 1e6), 766.43)[0] == "skipped_bias"
+    assert p.early_state((t, 767.9, 767.0, 768.0, 766.3, 1e6), 766.43)[0] == "cancelled"
+    assert p.early_state((dt.datetime(2026, 9, 4, 9, 31), 767.9, 768.2, 768.4, 767.5, 1e6),
+                         766.43)[0] is None                      # not the 9:30 bar = hole
+    src = inspect.getsource(p.run_daybias_early_verdict)
+    assert "from analysis.day_bias import DISASTER_STOP_PCT, _pdh" in src
+    assert "claim_and_send(KIND_VERDICT" in src and "INSERT INTO paper_" not in src
+    assert p.EARLY_TICK == dt.time(9, 31)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
