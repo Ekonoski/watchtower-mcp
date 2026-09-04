@@ -145,6 +145,24 @@ def _redirect_allowed(uri: str) -> bool:
     return any(uri.startswith(prefix) for prefix in _REDIRECT_ALLOW)
 
 
+# CONTAINMENT (2026-09-04, the external review): /authorize auto-approved
+# any allowlisted callback prefix with no login, so anyone who knew the
+# hostname could mint the shared bearer token with two requests. Until the
+# authenticated flow ships, token ISSUANCE is off unless OAUTH_ISSUANCE=on:
+# every token already held by a client keeps working (the wrapper still
+# accepts it), /authorize and /token refuse with a message that says how
+# to connect a new client (flip the env var on for the minute it takes,
+# then off). Default is OFF — fail closed.
+OAUTH_ISSUANCE = os.environ.get("OAUTH_ISSUANCE", "off").strip().lower() in ("on", "1", "true", "yes")
+_ISSUANCE_OFF = {
+    "error": "access_denied",
+    "error_description": "Token issuance is disabled (OAUTH_ISSUANCE=off). Existing "
+                         "tokens keep working. To connect a NEW client, set "
+                         "OAUTH_ISSUANCE=on in the service's environment for the "
+                         "duration of the connection, then turn it off again.",
+}
+
+
 def _mcp_session_token() -> str:
     """Bearer token handed to OAuth clients — HMAC-derived from the master
     token so the master secret itself never transits the OAuth flow.
@@ -2598,6 +2616,8 @@ async def authorize(request: Request):
     """OAuth authorization endpoint — auto-approves for ALLOWLISTED client
     callbacks and redirects back with a one-time code. PKCE (code_challenge)
     is recorded here and enforced at /token when presented."""
+    if not OAUTH_ISSUANCE:
+        return JSONResponse(_ISSUANCE_OFF, status_code=403)
     params = dict(request.query_params)
     redirect_uri = params.get("redirect_uri", "")
     state = params.get("state", "")
@@ -2638,6 +2658,8 @@ async def token(request: Request):
     /authorize (Claude does; Grok's manual-credentials flow may not — PKCE is
     enforced-when-offered so both keep working). Returns an HMAC-derived
     session token, never MCP_AUTH_TOKEN itself."""
+    if not OAUTH_ISSUANCE:
+        return JSONResponse(_ISSUANCE_OFF, status_code=403)
     try:
         form = await request.form()
         data = dict(form)
@@ -2796,6 +2818,11 @@ class AuthASGIWrapper:
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
             path = scope.get("path", "")
+            if path.startswith("/mcp") and path not in PUBLIC_PATHS and not MCP_AUTH_TOKEN:
+                # fail CLOSED (2026-09-04): an unset secret used to mean "no
+                # auth at all" — now it means nobody gets in until it is set.
+                await self._unauthorized(send, "")
+                return
             if MCP_AUTH_TOKEN and path.startswith("/mcp") and path not in PUBLIC_PATHS:
                 headers = dict(scope.get("headers", []))
                 host = headers.get(b"host", b"").decode("utf-8", errors="replace")

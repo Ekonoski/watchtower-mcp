@@ -1577,6 +1577,46 @@ Rendering doctrine, same spirit as the rest of this file:
   FMP burn was the news loop, so restoring the firehose is a data-
   quality question, never a backfill hangover.
 
+- **The external review, and what it found** (2026-09-04, Eric had a
+  separate Claude Code session review the system read-only). Verified
+  and acted on the same evening, in Eric's order: (1) **the data-API
+  roles held every privilege on all 127 public tables** — 41 tables
+  (trade_journal, cipher_exemplars, fill_audit, options_expression among
+  them) had no row-level security, so the project's anon key alone could
+  read or truncate them through REST; nothing Watchtower runs uses those
+  roles (everything connects via DATABASE_URL), so migration 055 REVOKEs
+  all of it plus default privileges for future tables — zero grants
+  remain; (2) **the hidden-gems enrichment had never worked** — the
+  screen queried columns that do not exist (`price_target_avg` /
+  `price_target_high` / `date`; revenue and earnings growth) behind a
+  bare `except: pass`, so the analyst-upside and fundamental-
+  acceleration scores were zero for every ticker since the screen
+  shipped, and the aborted transaction broke the next query on the
+  connection (the review saw both errors in the live Postgres logs).
+  Now `target_consensus` / `target_high` / `as_of_date`, rollback +
+  WARNING on failure, and the growth legs are declared HOLES — no stored
+  table carries them (`tests/test_upcomer_enrichment.py` pins the
+  column names against the live schema). The `_social_block` family, in
+  a scorer: a bare except is a section that can never fire. (3) **the
+  MCP OAuth flow, CONTAINED the same evening** (the reviewer's follow-up
+  ruling, relayed by Eric: containment before the weekend design) —
+  `/authorize` auto-approved any allowlisted callback prefix with no
+  login, the token is one shared HMAC value good for ten years, and the
+  wrapper skipped auth entirely when MCP_AUTH_TOKEN was unset. Now:
+  token ISSUANCE is off unless `OAUTH_ISSUANCE=on` (both endpoints
+  refuse with the how-to-reconnect message; every held token keeps
+  working; to connect a new client flip the Railway var on for the
+  minute it takes, then off), and the `/mcp` wrapper fails CLOSED with
+  the secret unset (`tests/test_mcp_auth_containment.py`). The
+  permanent flow is QUEUED for Eric's approval on the design: a login
+  step before the code, PKCE required, short-lived rotating tokens,
+  refuse to start without the secret, then rotate MCP_AUTH_TOKEN to
+  invalidate every token minted under the old flow. Also queued: a
+  GitHub Actions workflow that runs `tests/*.py`
+  (there is none; the "passing" status is Railway's deploy). Judged
+  lower priority, stated: PITR, worker separation, a redesigned daily
+  view — real costs, no trading decision changes this month.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a

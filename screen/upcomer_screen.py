@@ -28,11 +28,14 @@ Usage:
     python3 screen/upcomer_screen.py --min-score 40
 """
 import argparse
+import logging
 import os
 import sys
 import time
 from datetime import date, timedelta
 from typing import Dict, List, Optional
+
+_log = logging.getLogger("watchtower.upcomer")
 
 try:
     import numpy as np
@@ -236,8 +239,12 @@ def _load_ticker_sector_map(conn, tickers: List[str]) -> Dict[str, str]:
             )
             for row in cur.fetchall():
                 out[row[0]] = row[1] or "Unknown"
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning(f"[upcomer] sector map unavailable: {type(e).__name__}: {str(e)[:300]}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     return out
 
 
@@ -249,15 +256,27 @@ def _load_signal_data(conn, tickers: List[str]) -> Dict[str, dict]:
         return out
     placeholders = ",".join(["%s"] * len(tickers))
 
+    # 2026-09-04 (the external review's finding #3): these two queries had
+    # asked analyst_revisions for price_target_avg/price_target_high/date
+    # and financial_scores for revenue/earnings growth — columns that never
+    # existed — and a bare `except: pass` swallowed the failure, so the
+    # analyst-upside and fundamental-acceleration scores had been zero for
+    # every ticker since the screen shipped, AND the aborted transaction
+    # made the next query on the connection fail too. Now: the columns the
+    # tables actually have (target_consensus / target_high / as_of_date),
+    # a rollback on failure so the connection stays usable, a WARNING that
+    # names the cause, and the growth legs declared as HOLES — no stored
+    # table carries them (the factory's financial_scores is Altman/
+    # Piotroski only), so they render as unavailable, never as zero growth.
     try:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT DISTINCT ON (ticker) ticker, grade_consensus,
-                       price_target_avg, price_target_high
+                       target_consensus, target_high
                 FROM analyst_revisions
                 WHERE ticker IN ({placeholders})
-                ORDER BY ticker, date DESC
+                ORDER BY ticker, as_of_date DESC
                 """,
                 tickers,
             )
@@ -266,15 +285,19 @@ def _load_signal_data(conn, tickers: List[str]) -> Dict[str, dict]:
                 out[t]["grade_consensus"] = grade
                 out[t]["price_target_avg"] = float(pt_avg) if pt_avg else None
                 out[t]["price_target_high"] = float(pt_high) if pt_high else None
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning(f"[upcomer] analyst enrichment unavailable (hole, not zero): "
+                     f"{type(e).__name__}: {str(e)[:300]}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     try:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT DISTINCT ON (ticker) ticker, piotroski_score,
-                       revenue_growth_qoq, revenue_growth_yoy, earnings_growth_qoq
+                SELECT DISTINCT ON (ticker) ticker, piotroski_score, altman_z_score
                 FROM financial_scores
                 WHERE ticker IN ({placeholders})
                 ORDER BY ticker, as_of_date DESC
@@ -282,13 +305,20 @@ def _load_signal_data(conn, tickers: List[str]) -> Dict[str, dict]:
                 tickers,
             )
             for row in cur.fetchall():
-                t, pio, rev_qoq, rev_yoy, earn_qoq = row
+                t, pio, altz = row
                 out[t]["piotroski_score"] = pio
-                out[t]["revenue_growth_qoq"] = float(rev_qoq) if rev_qoq else None
-                out[t]["revenue_growth_yoy"] = float(rev_yoy) if rev_yoy else None
-                out[t]["earnings_growth_qoq"] = float(earn_qoq) if earn_qoq else None
-    except Exception:
-        pass
+                out[t]["altman_z"] = float(altz) if altz is not None else None
+                # growth legs: declared holes until a source table exists
+                out[t]["revenue_growth_qoq"] = None
+                out[t]["revenue_growth_yoy"] = None
+                out[t]["earnings_growth_qoq"] = None
+    except Exception as e:
+        _log.warning(f"[upcomer] fundamentals enrichment unavailable (hole, not zero): "
+                     f"{type(e).__name__}: {str(e)[:300]}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     return out
 
