@@ -1038,6 +1038,20 @@ Rendering doctrine, same spirit as the rest of this file:
   promote a leg to a rule only when it clears the same bar every
   study clears (both halves, replication). Rules come out of the
   labeled set, never out of one remembered chart.
+  BUILT the same day (Eric: "That list works, build it"): `legs text[]`
+  on every journal row, the FIXED vocabulary in
+  `analysis/journal_legs.py` (entry / context / exit / skip groups, each
+  tag marked record-checkable or eye-only; unknown tags refused by name;
+  the list changes only at a flat review, never after a loss), and a
+  "By leg" block in `watchtower_journal` — with vs without each tag,
+  both sides always stated, small-n stated. The week's eleven rows were
+  back-tagged from the debriefs. First read, n=10 closed, anecdote by
+  the file's own rule: `confirmed` 6W/0L +2.21R avg vs `anticipated`
+  0W/4L −0.56R — the losing feature of every loser is the same leg
+  (Eric's own Tuesday diagnosis, "I don't let the trend identify
+  itself"); `no_partial` is the only green trade that ended red.
+  `tests/test_journal_legs.py` pins the vocabulary shape, the refusal,
+  and the both-sides grade.
   Two holes the debrief surfaced, both the every-record-needs-an-owner
   disease: (1) **staleness is measured in the timeframe's own units** —
   the intraday oscillator guard was a flat 4 calendar days, so SPY's 1h
