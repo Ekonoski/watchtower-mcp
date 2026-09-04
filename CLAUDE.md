@@ -1079,7 +1079,15 @@ Rendering doctrine, same spirit as the rest of this file:
   2006-01-26 (low 57.29), 2008-09-29 (low 11.85), IWM 2008-09-19 (high
   152.01), 2009-06-16 (high 512.7). Any study that read those days'
   highs/lows (day-state prior-close-position on the following days)
-  carried the error; small, stated, re-gradeable.
+  carried the error; small, stated, re-gradeable. THE SWEEP'S VERDICT
+  on those five (same evening): CONFIRMED — Polygon itself carries the
+  bad prints, so the sweep correctly left them alone. Eric ruled them
+  flagged: verdict `vendor_anomaly` (migration 056), the raw table
+  untouched, and `daily_prices_clean` nulls open/high/low on a flagged
+  row so readers that fall back to the close read the day as its close
+  (the oscillator's daily fetch reads the view; other studies adopt it
+  as they are touched). The first time a vendor print was overridden,
+  by exclusion only and by Eric's call.
 
 - **The pings and the ledger are one definition, and the audit checks
   that they agree** (2026-09-02, the 11:09 phantom exit ping): the 9/1
