@@ -55,6 +55,27 @@ def test_writes_only_the_journal():
     assert "UPDATE " not in src and "DELETE FROM" not in src
 
 
+def test_skip_is_a_decision_not_a_trade():
+    """2026-09-04, the NVDA GO Eric declined: a skip records kind='skip'
+    with its reason and the declined spec, writes NO P&L / R columns,
+    and the R aggregates read kind='trade' only."""
+    from analysis.trade_journal import log_skip
+    src = inspect.getsource(log_skip)
+    assert "VALUES ('skip'" in src
+    for col in ("pnl_dollars", "r_multiple", "r_actual", "entry_px"):
+        assert col not in src, f"a skip must not write {col}"
+    assert "skip_reason, spec_id" in src
+    assert "reason is required" in src            # an unexplained skip is refused
+    summ = inspect.getsource(trade_journal.journal_summary)
+    assert "WHERE kind = 'trade'" in summ          # R math excludes skips
+    assert "_skips_block(c, days)" in summ         # and the skips still render
+    blk = inspect.getsource(trade_journal._skips_block)
+    assert "LEFT JOIN paper_specs" in blk and "LEFT JOIN paper_trades" in blk
+    assert "no fill" in blk and "hole" in blk      # unfilled / unlinked are not zeros
+    # the summary's zero-trade branch still prints the skips
+    assert "skip_lines" in summ.split("if not rows:")[1].split("closed = ")[0]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

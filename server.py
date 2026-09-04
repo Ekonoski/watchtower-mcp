@@ -694,6 +694,43 @@ def watchtower_journal_log(ticker: str, direction: str, source: str = "eric",
 
 
 @mcp.tool()
+def watchtower_journal_skip(ticker: str, reason: str, direction: str = "long",
+                            setup: str = "", timeframe: str = "", at: str = "",
+                            spec_id: int = None, source: str = "eric",
+                            note: str = "") -> str:
+    """
+    Record a SKIP in Eric's journal — an alert or setup he saw and
+    declined, with his reason. A skip is a decision, not a trade: it
+    carries no P&L and no R (the schema refuses one), lives in its own
+    section of watchtower_journal, and never touches the R record.
+    Log every skip of a desk alert (🎯 GO, 📐 day-bias, gamma ticket)
+    the way every trade is logged — the reason is data, and the desk's
+    own outcome on the declined alert grades the eye against the
+    machine once ~30 have accumulated.
+
+    Args:
+      ticker: symbol.  reason: why it was passed on, in his words (required).
+      direction: the side the alert/setup called ('long' default).
+      setup: the alert vocabulary — "rsl_go_trail 🎯 9:46", "day_bias
+        armed", "gamma wall_fade"…
+      timeframe: chart the decision was read on.
+      at: ISO time of the decision, ET assumed; defaults to now.
+      spec_id: the desk spec id the alert came from (paper_specs.id — the
+        🎯/🌅/📐 pings carry it) so the book's result grades the skip.
+      source: 'eric' (default) or 'grok' when relayed.
+      note: anything else the eye saw.
+    """
+    try:
+        from analysis.trade_journal import log_skip
+        return log_skip(ticker, reason, direction, source, setup, timeframe,
+                        at, spec_id, note)
+    except ValueError as e:
+        return f"Not logged: {e}"
+    except Exception as e:
+        return f"Journal write failed: {e}"
+
+
+@mcp.tool()
 def watchtower_bars(ticker: str, timeframe: str = "1m", day: str = "",
                     last_n: int = 12, include_premarket: bool = False) -> str:
     """

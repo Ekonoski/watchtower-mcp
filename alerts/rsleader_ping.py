@@ -270,6 +270,20 @@ def run_go_watch() -> str:
                 size_line = (f"**SKIP at ${R_DOLLARS:.0f} R** — one 0.70Δ "
                              f"contract risks ~${per_ct:.0f} at the stop. "
                              f"Pass; never tighten the stop to fit.")
+            # the desk's own spec for this GO, so a take OR a skip can be
+            # journaled against the book's outcome (2026-09-04: skips are
+            # data; spec_id is the link). Absent = the book has not written
+            # it yet this minute — say so, never guess an id.
+            with conn.cursor() as c:
+                c.execute("SELECT id FROM paper_specs WHERE book='rs_leader' "
+                          "AND trade_date=%s AND ticker=%s ORDER BY id DESC "
+                          "LIMIT 1", (today, leader))
+                row = c.fetchone()
+            journal_line = (f"_Desk spec #{row[0]} — took it: journal_log; "
+                            f"passed: journal_skip with your reason "
+                            f"(spec_id={row[0]})._" if row else
+                            "_Desk spec not written yet — journal by "
+                            "ticker/date; the id links when it exists._")
             msg = (f"🎯 **GO — {leader}** 1m {bar_ts:%H:%M} candle closed "
                    f"holding the 1m 8/21.{late}\n"
                    f"**Entry {entry:.2f}** · stop level **{stop:.2f}** "
@@ -283,7 +297,8 @@ def run_go_watch() -> str:
                    f"the fallback division if you buy another strike.)_\n"
                    f"_Graded: trail-after-1R, the only exit positive in "
                    f"both year-halves (+0.40/+0.27 avg R, ~40% win, "
-                   f"n=377). No profit target._")
+                   f"n=377). No profit target._\n"
+                   f"{journal_line}")
             return claim_and_send(KIND_GO, today.isoformat(), CHANNEL, msg,
                                   conn=conn)
         if now.time() >= ENTRY_CUTOFF:

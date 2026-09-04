@@ -125,6 +125,101 @@ def log_trade(ticker, direction, source="eric", setup="", timeframe="",
     return " · ".join(bits)
 
 
+def log_skip(ticker, reason, direction="long", source="eric", setup="",
+             timeframe="", at="", spec_id=None, note="") -> str:
+    """A SKIP is a decision, not a trade (2026-09-04, Eric on the NVDA
+    GO he declined: "the skip is data, and the reason for the skip is
+    also data"). It writes kind='skip' with NO P&L and NO R — the
+    schema refuses an R on a skip — and links the desk spec it declined
+    (spec_id) so the book's own outcome on that alert can grade the
+    eye. The reason is required: an unexplained skip is a hole, not a
+    decision."""
+    from screen.reversal_screen import _conn
+    ticker = (ticker or "").strip().upper()
+    direction = (direction or "long").strip().lower()
+    reason = (reason or "").strip()
+    if not ticker:
+        raise ValueError("ticker is required")
+    if direction not in _DIRS:
+        raise ValueError("direction must be 'long' or 'short'")
+    if not reason:
+        raise ValueError("reason is required — a skip without its reason "
+                         "is a hole, not a decision")
+    when = _parse_ts(at) or dt.datetime.now(dt.timezone.utc)
+    sid = int(spec_id) if spec_id not in (None, "", 0) else None
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("""INSERT INTO trade_journal
+                (kind, source, ticker, direction, setup, timeframe,
+                 entered_at, skip_reason, spec_id, note)
+                VALUES ('skip',%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id""",
+                ((source or "eric").strip().lower(), ticker, direction,
+                 setup.strip() or None, timeframe.strip() or None, when,
+                 reason, sid, note.strip() or None))
+            jid = c.fetchone()[0]
+        conn.commit()
+    finally:
+        conn.close()
+    bits = [f"Journal #{jid}: SKIPPED {ticker} {direction}"]
+    if setup:
+        bits.append(setup)
+    bits.append(f"reason: {reason}")
+    bits.append(f"linked to desk spec #{sid} — the book's outcome grades it"
+                if sid else "no desk spec linked (grades only against the tape)")
+    return " · ".join(bits)
+
+
+def _skips_block(c, days) -> list:
+    """Render the window's skips — decisions with reasons — each beside
+    the desk's own outcome on the alert it declined (a linked spec that
+    filled and resolved says what the eye avoided or missed; unfilled /
+    unlinked render as such, never as zero)."""
+    c.execute("""SELECT j.id, j.entered_at, j.ticker, j.direction, j.setup,
+                        j.skip_reason, j.source, j.spec_id, s.book, s.status,
+                        t.exit_reason, t.r_multiple, t.exited_at
+                 FROM trade_journal j
+                 LEFT JOIN paper_specs s ON s.id = j.spec_id
+                 LEFT JOIN paper_trades t ON t.spec_id = j.spec_id
+                 WHERE j.kind = 'skip'
+                   AND j.entered_at >= now() - make_interval(days => %s)
+                 ORDER BY j.entered_at DESC""", (int(days),))
+    rows = c.fetchall()
+    if not rows:
+        return ["", f"Skips: 0 recorded in the last {days} days (zero is data; "
+                    f"log a declined alert with watchtower_journal_skip)."]
+    lines = ["", f"Skips — decisions, never R (n={len(rows)}):"]
+    resolved = []
+    for (jid, at, tk, dr, setup, reason, src, sid, book, status,
+         xr, rm, xt) in rows:
+        d = at.date().isoformat() if at else "?"
+        seg = [f"#{jid} {d} {tk} {dr}"]
+        if setup:
+            seg.append(setup)
+        if sid is None:
+            seg.append("no desk spec linked")
+        elif book is None:
+            seg.append(f"spec #{sid} not found (hole)")
+        elif rm is not None:
+            seg.append(f"{book} book: {float(rm):+.2f}R ({xr})")
+            resolved.append(float(rm))
+        elif xt is None and xr is None and status in ("triggered", "filled"):
+            seg.append(f"{book} book: OPEN")
+        else:
+            seg.append(f"{book} book: {status} (no fill)")
+        seg.append(f"[{src}]")
+        lines.append("  " + " · ".join(seg))
+        lines.append(f"      why: {reason}")
+    if resolved:
+        tot = sum(resolved)
+        lines.append(f"  Desk's realized R on the alerts skipped: {tot:+.2f}R "
+                     f"across {len(resolved)} resolved (n={len(resolved)} — "
+                     f"below ~30, anecdote not evidence). Negative = the eye "
+                     f"avoided a loss; positive = it missed a winner.")
+    return lines
+
+
 def journal_summary(days=90) -> str:
     from screen.reversal_screen import _conn
     conn = _conn()
@@ -136,15 +231,18 @@ def journal_summary(days=90) -> str:
                                 pnl_dollars, note, mistakes, risk_dollars,
                                 r_actual
                          FROM trade_journal
-                         WHERE entered_at >= now() - make_interval(days => %s)
+                         WHERE kind = 'trade'
+                           AND entered_at >= now() - make_interval(days => %s)
                          ORDER BY r_multiple ASC NULLS LAST,
                                   entered_at DESC""", (int(days),))
             rows = c.fetchall()
+            skip_lines = _skips_block(c, days)
     finally:
         conn.close()
     if not rows:
-        return (f"Trade journal: 0 entries in the last {days} days. "
-                f"Zero is data — log with watchtower_journal_log.")
+        return (f"Trade journal: 0 trades in the last {days} days. "
+                f"Zero is data — log with watchtower_journal_log."
+                + "\n".join(skip_lines))
     closed = [r for r in rows if r[12] is not None]
     open_or_hole = [r for r in rows if r[12] is None]
     lines = [f"Trade journal — last {days} days · {len(rows)} entries "
@@ -208,4 +306,5 @@ def journal_summary(days=90) -> str:
             w = sum(1 for x in rs if x > 0)
             lines.append(f"  {s}: {sum(rs):+.2f}R · {w}W/{len(rs) - w}L "
                          f"(n={len(rs)})")
+    lines.extend(skip_lines)
     return "\n".join(lines)

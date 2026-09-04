@@ -998,6 +998,30 @@ Rendering doctrine, same spirit as the rest of this file:
   against this baseline; a size that drifted from it is a `mistakes`
   entry, not a footnote.
 
+- **The journal records skips** (2026-09-04, Eric, on the NVDA 🎯 GO he
+  declined into all-time highs on NFP day: "the skip is data, and the
+  reason for the skip is also data. So I think that needs to be
+  journaled… the more data we have, the more I can learn from you, and
+  you can learn from my trades"). `watchtower_journal_skip(ticker,
+  reason, …, spec_id)` writes `kind='skip'` — a DECISION with a
+  required reason, no P&L, no R (migration 051's CHECK refuses an R on
+  a skip), excluded from every R aggregate by kind and rendered in its
+  own section of `watchtower_journal` beside the DESK'S OWN OUTCOME on
+  the declined spec (linked by `spec_id`; unfilled / unlinked render as
+  such, never as zero). The scoreboard it builds: "desk's realized R
+  on the alerts skipped" with n — negative means the eye avoided a
+  loss, positive means it missed a winner; the gate is the usual ~30.
+  Row 1: NVDA 9/4 — the book trailed out −0.13R and the name was −4R
+  on the GO unit by 14:00; Eric's stated reason (chop into highs)
+  matched three day-state grid stand-aside candidates lit at
+  Thursday's close (VIX contango, prior day up, prior close top-fifth)
+  — one day, measurement only, no gate. `tests/test_trade_journal.py`
+  pins that a skip writes no R columns and the R math reads
+  `kind='trade'` only. Same session: `daily_prices` carries a vendor
+  fat-finger (SPY 2005-05-27 high 1120.2 on a 120 close) — flagged,
+  not hand-edited; any SPY all-time-high query reads it until the
+  vendor row is re-fetched.
+
 - **The pings and the ledger are one definition, and the audit checks
   that they agree** (2026-09-02, the 11:09 phantom exit ping): the 9/1
   partial-block fix cured the BOOK, but the Discord trade-watch
