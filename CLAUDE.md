@@ -1846,6 +1846,19 @@ Rendering doctrine, same spirit as the rest of this file:
   book; the quality gate is kept as a graded fact for the next
   single-name question (a veto worth 26 points of drawdown), never
   re-litigated by feel.
+  THE HUMAN SCOREBOARD (same evening, Eric: "my goal as a human trader
+  will be to beat the S&P 500"): `watchtower_journal` now grades his
+  account against SPY total return under the SAME two-clause rule the
+  machine just failed — equity = starting equity + realized P&L booked
+  on the exit date (open trades unmarked and counted as such), SPY with
+  dividends reinvested at the ex-date close, both clauses, worst
+  drawdown beside the win rate, n stated. `journal_config` holds
+  starting_equity (seeded $25,000 and labeled ASSUMED until set via
+  `watchtower_journal_config`) and scoreboard_start (2026-09-01).
+  `tests/test_trade_journal.py` pins the curve math, the unbooked-exit
+  rule, both clause verdicts, and that the module's only UPDATE is the
+  journal's own config upsert. R per week against a yearly index number
+  flatters the trader; this is the fair comparison.
 
 ## Numbers on one line must reconcile with each other
 
