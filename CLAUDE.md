@@ -1824,6 +1824,28 @@ Rendering doctrine, same spirit as the rest of this file:
   back to 2008 — point-in-time fundamentals exist and the earlier
   "thin before 2021" statement was wrong. A dated quality × momentum
   single-name book is gradeable; queued as v9 on the build window.
+  V9 READOUT (same evening): FUNDAMENTALS ARE A REAL GATE ON SINGLE
+  NAMES, AND STILL NOT ENOUGH. `beat_spy_stock_fund` (115k rows,
+  trailing-4Q sums from the EARLIEST filing per period with
+  report_date ≤ month-end — restatements cannot leak back) and
+  `fund_gate_ok`: quality = 4 fresh quarters, TTM net income > 0, TTM
+  operating cash flow > 0 and above net income; growth = 8 quarters,
+  TTM revenue up > 10%. The quality gate alone took the ungated top-10
+  momentum book from 6.80% / −74.0% to 11.34% / −48.3% (+4.5 pts, 26
+  pts less drawdown; 2008 went from −56% to −5%) — the single biggest
+  improvement any one rule made all day, and the desk's own prior
+  ("fundamentals earn a veto, not a selector") stated exactly right:
+  ranking BY growth instead of momentum collapsed to 5.82%. But it
+  fails the both-halves bar: 2006–15 beats (10.17 vs 6.96, DD −28.7 vs
+  −55.2), 2016–23 fails both clauses (12.89 vs 13.15; DD −48.3 vs
+  −33.7 — the trough is 2020-03-18, ten momentum stocks with no exit
+  inside the month); the growth gate alone is worse (−59.5% DD), the
+  200-day regime costs 2 pts and saves 3 (−45.0%). Against v7 (11.96%
+  / −30.3%, both halves) the quality stock book earns nothing — it
+  ties on return and doubles the drawdown. Verdict: no single-name
+  book; the quality gate is kept as a graded fact for the next
+  single-name question (a veto worth 26 points of drawdown), never
+  re-litigated by feel.
 
 ## Numbers on one line must reconcile with each other
 
