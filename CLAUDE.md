@@ -1673,6 +1673,39 @@ Rendering doctrine, same spirit as the rest of this file:
   holes averaged as −10R in the exit-reason table until filtered) —
   every capped aggregate guards NULL explicitly, no exceptions.
 
+- **The wave parameters may not match Eric's chart** (2026-09-07, from
+  the ChatGPT Cipher B reconstruction Eric saved to
+  `tradingview/confluence_compass_momentum.pine`: "all of the dots,
+  momentum waves, money flow, RSIs line up exactly"). Its waves use
+  Cipher B's published defaults — channel EMA 9, average EMA 12, wt2 SMA
+  3 — while `compute_oscillator` uses the LazyBear defaults 10 / 21 / 4.
+  Our money flow (the RSI-MFI `sma(((close-open)/(high-low))*150, 60)`)
+  IS Cipher B's; the reconstruction's CCI-style flow and its price
+  stochastics (40/81) are not, so "matches exactly" is partial on both
+  sides. What matters: every wave-cross definition in the record (16D
+  dots, cipher_reversal cross freshness, the exemplar museum, wt2 gates)
+  was graded on 10/21/4, and Eric's eye reads 9/12/3. The crosses mostly
+  coincide but timing and marginal dots differ. QUEUED as a robustness
+  study, not a change: recompute the 16D dot record (and the VFF/CHWY/
+  NFLX archetypes) under 9/12/3, count dots that appear/disappear/shift,
+  and re-grade the deep cohort; if the edge holds on both settings the
+  engine adopts Cipher B's numbers so the system and the chart speak one
+  dialect — a definition change, so it waits on the re-grade.
+
+- **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
+  trading system that beats the SPY… you are competing to beat the SPY
+  and ChatGPT"; options allowed). Rules for BOTH contestants frozen in
+  `docs/research/beat_spy_challenge_rules.md`: SPY total return as the
+  bar, beat = higher compound return AND no deeper max drawdown,
+  defined-risk options only, no margin, 5 bps shares / modeled-option
+  spread charge, build window through 2023-12-31, sealed window
+  2024-01-02 → 2026-09-04 run ONCE on frozen written rules. Stated
+  odds: high on the build window, ~40% on the sealed one. The build
+  starts from what already cleared the both-eras bar (weekly cipher
+  band, 16D deep-dot ladder, VIX-backwardation days, SPY-below-200d
+  stand-aside), sized by the stop, product graded not parts; every
+  option is model-priced (no historical chains) and says so.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
