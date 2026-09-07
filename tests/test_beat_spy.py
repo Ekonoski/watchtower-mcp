@@ -227,6 +227,32 @@ def test_v8_stock_sleeve():
     assert res["stats"]["final_equity"] > 100_000
 
 
+def test_v9_fundamentals_gates():
+    """Point-in-time gates: a hole never passes, stale filings never pass,
+    quality wants positive TTM earnings with cash flow above them, growth
+    wants revenue up more than growth_min on eight quarters."""
+    d = dt.date(2019, 6, 28)
+    good = dict(ttm_ni=100.0, ttm_ocf=150.0, ttm_rev=1000.0, ttm_rev_prev=800.0, n4=4, n8=8,
+                last_report=dt.date(2019, 5, 1))
+    ok = bs.fund_gate_ok
+    assert ok(None, (), d) and ok(good, (), d)                                  # no gate: everything passes
+    assert not ok(None, ("quality",), d)                                        # a hole never passes a gate
+    assert ok(good, ("quality",), d) and ok(good, ("growth",), d) and ok(good, ("quality", "growth"), d)
+    assert not ok(dict(good, last_report=dt.date(2018, 12, 1)), ("quality",), d)  # stale filing
+    assert not ok(dict(good, ttm_ni=-1.0), ("quality",), d)                     # loses money
+    assert not ok(dict(good, ttm_ocf=90.0), ("quality",), d)                    # accruals above cash
+    assert not ok(dict(good, n4=3), ("quality",), d)                            # missing quarter
+    assert not ok(dict(good, ttm_rev=850.0), ("growth",), d)                    # +6% < 10%
+    assert ok(dict(good, ttm_rev=850.0), ("growth",), d, growth_min=0.05)
+    assert not ok(dict(good, n8=7), ("growth",), d)
+    assert not ok(dict(good, ttm_rev_prev=0.0), ("growth",), d)
+    # the seeder takes the EARLIEST filing per period so restatements cannot leak back
+    src = inspect.getsource(bs._ensure_stock_fund)
+    assert "report_date <= m.me_date" in src and "f.report_date ASC" in src and "DISTINCT ON (f.period_end_date)" in src
+    for n in ("v9_q10", "v9_qg10", "v9_growthrank10"):
+        assert bs.BUILD_VARIANTS[n]["pool"] == "stocks" and bs.BUILD_VARIANTS[n]["fund_gates"]
+
+
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src

@@ -154,7 +154,11 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # stock_min_px); the top stock_cands_mult × top_n names per
                 # month are loaded and ranked; slots no stock fills go to the
                 # defensive name if it qualifies, else cash.
-                stock_dv=10e6, stock_min_px=5.0, stock_cands_mult=3)
+                stock_dv=10e6, stock_min_px=5.0, stock_cands_mult=3,
+                # v9: point-in-time fundamentals gates on the stock pool, from
+                # filings with report_date <= the month-end (beat_spy_stock_fund).
+                # fund_gates ⊆ {'quality','growth'}; stock_rank 'mom' | 'growth'.
+                fund_gates=(), stock_rank="mom", fund_fresh_days=130, growth_min=0.10)
 STOCK_DV_MIN, STOCK_PX_MIN = 10e6, 5.0     # the ranking table's own floor
 VOL_SCALE_MIN = 0.30
 RESIZE_BAND = 0.20        # resize a share position only when it drifts 20% from target
@@ -408,22 +412,101 @@ def _ensure_stock_monthly(conn, me_dates):
     return n
 
 
-def _stock_candidates(conn, p, me_dates):
-    """{month-end date: [(ticker, momentum), ...]} best-first, the top
-    stock_cands_mult × top_n per date, leveraged ETPs refused by name."""
+def _ensure_stock_fund(conn, me_dates):
+    """One-shot seeder (v9): trailing-four-quarter fundamentals per
+    (month-end, ticker) in the ranking table, from filings whose
+    report_date <= me_date — the EARLIEST filing per period, so a later
+    restatement can never leak back. Minutes, once."""
     with conn.cursor() as c:
-        c.execute("""SELECT m.me_date, m.ticker, m.c21 / m.c252 - 1 AS mom
+        c.execute("SELECT DISTINCT me_date FROM beat_spy_stock_fund")
+        have = {r[0] for r in c.fetchall()}
+    todo = sorted(d for d in me_dates if d not in have)
+    if not todo:
+        return 0
+    log.info("[beat_spy] seeding beat_spy_stock_fund for %d month-ends", len(todo))
+    with conn.cursor() as c:
+        c.execute("""INSERT INTO beat_spy_stock_fund (me_date, ticker, ttm_ni, ttm_ocf, ttm_rev, ttm_rev_prev, n4, n8, last_report)
+                     SELECT m.me_date, m.ticker,
+                            sum(q.net_income) FILTER (WHERE q.rn <= 4),
+                            sum(q.operating_cash_flow) FILTER (WHERE q.rn <= 4),
+                            sum(q.revenue) FILTER (WHERE q.rn <= 4),
+                            sum(q.revenue) FILTER (WHERE q.rn BETWEEN 5 AND 8),
+                            count(*) FILTER (WHERE q.rn <= 4), count(*) FILTER (WHERE q.rn <= 8),
+                            max(q.report_date) FILTER (WHERE q.rn = 1)
+                     FROM beat_spy_stock_monthly m
+                     JOIN LATERAL (
+                        SELECT x.*, row_number() OVER (ORDER BY x.period_end_date DESC) AS rn
+                        FROM (SELECT DISTINCT ON (f.period_end_date) f.period_end_date, f.report_date,
+                                     f.net_income, f.operating_cash_flow, f.revenue
+                              FROM fundamentals_quarterly f
+                              WHERE f.ticker = m.ticker AND f.report_date <= m.me_date
+                              ORDER BY f.period_end_date DESC, f.report_date ASC) x
+                        LIMIT 8) q ON true
+                     WHERE m.me_date = ANY(%s)
+                     GROUP BY m.me_date, m.ticker
+                     ON CONFLICT DO NOTHING""", (todo,))
+        n = c.rowcount
+    conn.commit()
+    log.info("[beat_spy] stock fundamentals table: %d rows inserted", n)
+    return n
+
+
+def fund_gate_ok(row, gates, me_date, fresh_days=130, growth_min=0.10):
+    """Pure. row = dict(ttm_ni, ttm_ocf, ttm_rev, ttm_rev_prev, n4, n8, last_report)
+    or None. 'quality': four fresh quarters, TTM net income > 0, TTM operating
+    cash flow > 0 and above net income. 'growth': eight quarters, TTM revenue
+    up more than growth_min on the prior four. A hole never passes a gate."""
+    if not gates:
+        return True
+    if row is None or row["last_report"] is None or (me_date - row["last_report"]).days > fresh_days:
+        return False
+    if "quality" in gates:
+        if row["n4"] < 4 or row["ttm_ni"] is None or row["ttm_ocf"] is None:
+            return False
+        if not (row["ttm_ni"] > 0 and row["ttm_ocf"] > 0 and row["ttm_ocf"] > row["ttm_ni"]):
+            return False
+    if "growth" in gates:
+        if row["n8"] < 8 or not row["ttm_rev"] or not row["ttm_rev_prev"] or row["ttm_rev_prev"] <= 0:
+            return False
+        if row["ttm_rev"] / row["ttm_rev_prev"] - 1 <= growth_min:
+            return False
+    return True
+
+
+def _stock_candidates(conn, p, me_dates):
+    """{month-end date: [(ticker, momentum), ...]} best-first by stock_rank
+    ('mom' or 'growth'), the top stock_cands_mult × top_n per date AFTER the
+    fundamentals gates, leveraged ETPs refused by name."""
+    gates = tuple(p.get("fund_gates") or ())
+    with conn.cursor() as c:
+        c.execute("""SELECT m.me_date, m.ticker, m.c21 / m.c252 - 1 AS mom,
+                            f.ttm_ni, f.ttm_ocf, f.ttm_rev, f.ttm_rev_prev, f.n4, f.n8, f.last_report
                      FROM beat_spy_stock_monthly m LEFT JOIN tickers t ON t.ticker = m.ticker
+                     LEFT JOIN beat_spy_stock_fund f ON f.me_date = m.me_date AND f.ticker = m.ticker
                      WHERE m.me_date = ANY(%s) AND m.dv60 >= %s AND m.close >= %s
                        AND NOT COALESCE(t.company_name ~* %s, false)
                      ORDER BY m.me_date, mom DESC""",
                   (list(me_dates), p["stock_dv"], p["stock_min_px"], LEVERAGED_ETP_RE))
-        out = {}
-        cap = p["stock_cands_mult"] * p["top_n"]
-        for d, tk, m in c.fetchall():
-            lst = out.setdefault(d, [])
-            if len(lst) < cap:
-                lst.append((tk, float(m)))
+        rows = c.fetchall()
+    by_date = {}
+    for d, tk, m, ni, ocf, rev, rev_prev, n4, n8, last_rep in rows:
+        fr = None if n4 is None else dict(ttm_ni=None if ni is None else float(ni), ttm_ocf=None if ocf is None else float(ocf),
+                                          ttm_rev=None if rev is None else float(rev),
+                                          ttm_rev_prev=None if rev_prev is None else float(rev_prev),
+                                          n4=int(n4), n8=int(n8), last_report=last_rep)
+        if not fund_gate_ok(fr, gates, d, p["fund_fresh_days"], p["growth_min"]):
+            continue
+        key = float(m)
+        if p["stock_rank"] == "growth":
+            if fr is None or not fr["ttm_rev"] or not fr["ttm_rev_prev"] or fr["ttm_rev_prev"] <= 0:
+                continue
+            key = fr["ttm_rev"] / fr["ttm_rev_prev"] - 1
+        by_date.setdefault(d, []).append((tk, float(m), key))
+    out = {}
+    cap = p["stock_cands_mult"] * p["top_n"]
+    for d, lst in by_date.items():
+        lst.sort(key=lambda r: -r[2])
+        out[d] = [(tk, m) for tk, m, _ in lst[:cap]]
     return out
 
 
@@ -803,6 +886,8 @@ def run_variant(name, overrides=None, window="build") -> dict:
             lo, hi = p["start"] - dt.timedelta(days=45), p["end"]
             me_dates = [cal[i] for i in month_ends(cal) if lo <= cal[i] <= hi]
             _ensure_stock_monthly(conn, me_dates)
+            if p.get("fund_gates") or p.get("stock_rank") == "growth":
+                _ensure_stock_fund(conn, me_dates)
             stock_cands = _stock_candidates(conn, p, me_dates)
             need = {tk for lst in stock_cands.values() for tk, _ in lst} - set(px)
             px.update(_load_closes(conn, sorted(need)))
@@ -1019,6 +1104,33 @@ BUILD_VARIANTS = {
     "v8_lev3":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
                               mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
                               rebalance="monthly", sma_filter=False, defensive="bonds", lev=3.0),
+    # v9 (Eric: "I would think you would use fundamentals"): point-in-time
+    # quality / growth gates on the single-name pool, momentum-ranked; build only
+    "v9_q10":            dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality",)),
+    "v9_g10":            dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("growth",)),
+    "v9_qg10":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality", "growth")),
+    "v9_qg5":            dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=5,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality", "growth")),
+    "v9_qg20":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=20,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality", "growth")),
+    "v9_qg10_reg200":    dict(regime="weekly200", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality", "growth")),
+    "v9_growthrank10":   dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality",),
+                              stock_rank="growth"),
+    "v9_q10_nodots":     dict(regime="none", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", fund_gates=("quality",)),
 }
 
 
