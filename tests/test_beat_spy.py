@@ -145,6 +145,45 @@ def test_v6_two_speed_and_vol_scale():
     assert any(t["reason"].endswith("_call") for t in lv["trades"])
 
 
+def test_series_defects_guard():
+    """The 'AI' splice ($2.83 Arlington → $100+ C3.ai) and TFIN's 2008→2022
+    hole: a held ladder exits at the last real print; a dot on a broken
+    tape is refused. Neither looks ahead."""
+    d0 = dt.date(2010, 1, 4)
+    cal = []
+    d = d0
+    while len(cal) < 900:
+        if d.weekday() < 5:
+            cal.append(d)
+        d += dt.timedelta(days=1)
+    flat = [100.0] * 900
+    # XYZ: $3 for 500 bars, then the symbol is reused at $120
+    xyz = [3.0] * 500 + [120.0] * 400
+    defs = bs.series_defects(cal, xyz)
+    assert defs == [(cal[500], "splice")]
+    # a hole: bars 0-399, then nothing for a year, then bars resume
+    holey_dates = cal[:400] + cal[650:]
+    assert bs.series_defects(holey_dates, [5.0] * len(holey_dates)) == [(cal[650], "gap")]
+    px = {"SPY": _series(cal, [100 * (1.0003 ** i) for i in range(900)]), "TLT": _series(cal, flat),
+          "GLD": _series(cal, flat), "XYZ": _series(cal, xyz)}
+    p = dict(bs.DEFAULTS)
+    p.update(start=cal[300], end=cal[-1], top_n=1, a_weight=0.5, b_weight=0.5, b_slots=1, b_hold=400,
+             pool="index_eq", abs_mom=False, sma_filter=False, regime="none")
+    # dot before the splice: bought at $3, must exit at $3 on the splice bar, never at $120
+    res = bs.simulate(px, [("XYZ", cal[450], 3.0)], {}, p)
+    t = [t for t in res["trades"] if t["ticker"] == "XYZ"]
+    assert len(t) == 1 and t[0]["reason"] == "series_splice" and t[0]["exit_date"] == cal[500]
+    assert abs(t[0]["exit_px"] - 3.0) < 1e-9 and abs(t[0]["pnl"]) < 200        # costs only, no phantom 40x
+    assert res["stats"]["defect_exits"] == 1
+    # dot AFTER the splice (inside two years of it): refused
+    res2 = bs.simulate(px, [("XYZ", cal[520], 120.0)], {}, p)
+    assert not any(t["ticker"] == "XYZ" for t in res2["trades"])
+    assert res2["stats"]["dots_refused_defect"] == 1
+    # every run stamps the hygiene version it ran under; the boot grid re-runs older rows
+    assert bs.DEFAULTS["defect_guard"] == bs.DEFECT_GUARD_VERSION
+    assert "_pre_guard" in inspect.getsource(bs.run_build_grid)
+
+
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src

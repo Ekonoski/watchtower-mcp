@@ -142,7 +142,13 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # vol_target (annualized, e.g. 0.15): the trend sleeve's exposure
                 # is scaled by vol_target / SPY 60-day realized vol, clamped to
                 # [VOL_SCALE_MIN, max_lev]; scale > 1 rides the call overlay.
-                fast_sma=50, fast_rise=10, vol_target=None, max_lev=1.0)
+                fast_sma=50, fast_rise=10, vol_target=None, max_lev=1.0,
+                # v6: which defensive assets the book may hold when equities fail
+                # ('all' = TLT+GLD; 'bonds' = TLT only — v5 held GLD Mar→Oct 2008
+                # for −$19.6k because gold ranked first on momentum into its crash)
+                defensive="all",
+                # series-hygiene version stamped into every run's params
+                defect_guard=1)
 VOL_SCALE_MIN = 0.30
 RESIZE_BAND = 0.20        # resize a share position only when it drifts 20% from target
 
@@ -169,6 +175,26 @@ def vol_scale(vol_target, spy_vol, max_lev):
     if not vol_target or spy_vol is None or spy_vol <= 0:
         return 1.0
     return max(VOL_SCALE_MIN, min(max_lev, vol_target / spy_vol))
+
+
+DEFECT_JUMP = 3.0          # a close 3x (or 1/3) its prior close is a spliced series, not a move
+DEFECT_GAP_DAYS = 10       # more than 10 calendar days between stored bars is a hole
+
+
+def series_defects(dates, closes, max_jump=DEFECT_JUMP, max_gap_days=DEFECT_GAP_DAYS):
+    """Pure. Dates at which a stored series stops being one continuous tape:
+    a close beyond max_jump× its prior close (ticker reuse — 'AI' was
+    Arlington Asset at $2.83 until C3.ai took the symbol at $100+) or a
+    gap longer than max_gap_days (TFIN's 2008 bars followed by 2022's).
+    The defect is stamped on the FIRST bar after the break."""
+    out = []
+    for i in range(1, len(dates)):
+        c0, c1 = closes[i - 1], closes[i]
+        if (dates[i] - dates[i - 1]).days > max_gap_days:
+            out.append((dates[i], "gap"))
+        elif c0 > 0 and (c1 / c0 > max_jump or c1 / c0 < 1.0 / max_jump):
+            out.append((dates[i], "splice"))
+    return out
 
 
 def month_ends(dates):
@@ -356,6 +382,13 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
     faber_on = True
     ts_state = "normal"       # v6 two-speed regime state
     ts_scale = 1.0            # v6 vol-target multiplier, refreshed at rebalance
+    # series hygiene (2026-09-07, the 'AI' $2.83→$134 splice and TFIN's 2008→2023
+    # hole): defects per ticker, stamped on the first bar after the break. A held
+    # ladder exits at the LAST REAL PRINT when its tape breaks; a dot on a series
+    # broken inside the prior two years is refused. No lookahead either way.
+    defects = {tk: series_defects(s["dates"], s["closes"]) for tk, s in px.items()}
+    defect_at = {tk: {d_: kind for d_, kind in v} for tk, v in defects.items()}
+    n_defect_exits = n_dots_refused = 0
 
     def price(tk, d):
         s = px.get(tk)
@@ -381,7 +414,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
         p_ = price(o["ticker"], d)
         return (p_ if p_ is not None else o["last"]) * o["qty"]
 
-    def close_pos(tk, d, reason):
+    def close_pos(tk, d, reason, px_override=None):
         nonlocal cash
         o = pos.pop(tk)
         if o["kind"] == "call":
@@ -389,7 +422,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             proceeds = gross * (1 - CALL_SPREAD) - CALL_COMMISSION * (o["qty"] / 100.0)
             p_ = price(tk, d) or o["last"]
         else:
-            p_ = price(tk, d)
+            p_ = px_override if px_override is not None else price(tk, d)
             if p_ is None:
                 p_ = o["last"]
             proceeds = o["qty"] * p_ * (1 - cost)
@@ -493,6 +526,12 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             j = s["idx"].get(d)
             if j is None:
                 continue
+            if d in defect_at[tk]:
+                # the tape broke here: sell at the last real print, never at the spliced one
+                close_pos(tk, d, "series_" + defect_at[tk][d], px_override=s["closes"][j - 1] if j > 0 else None)
+                ladders.pop(tk)
+                n_defect_exits += 1
+                continue
             for k, off in enumerate(p["ladder"]):
                 if L["filled"][k] or k == 0:
                     continue
@@ -513,6 +552,9 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 ladders.pop(tk)
         for tk, dpx in dots_by_date.get(d, []):
             if tk in ladders or tk in pos or len(ladders) >= p["b_slots"] or tk not in px:
+                continue
+            if any(d - dt.timedelta(days=730) < dd_ <= d for dd_, _ in defects[tk]):
+                n_dots_refused += 1              # the dot was computed on a broken tape
                 continue
             full = eq * p["b_weight"] / p["b_slots"]
             tranche = full / len(p["ladder"])
@@ -555,8 +597,9 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
             ts_scale = vol_scale(p["vol_target"], realized_vol(spy["closes"], si), p["max_lev"])
             pool = {"core": ETF_CORE, "index": ETF_INDEX, "index_eq": ETF_INDEX_EQ}.get(p["pool"], ETF_POOL)
+            defpool = DEFENSIVE_POOL if p.get("defensive", "all") == "all" else ("TLT",)
             cands = {}
-            for tk in set(pool) | set(DEFENSIVE_POOL):
+            for tk in set(pool) | set(defpool):
                 s = px.get(tk)
                 if not s:
                     continue
@@ -574,7 +617,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                     continue
                 cands[tk] = m
             ranked_all = [t for t in rank_pool(cands) if t in pool]
-            defensive = [t for t in rank_pool({t: cands[t] for t in DEFENSIVE_POOL if t in cands}) if cands[t] > 0]
+            defensive = [t for t in rank_pool({t: cands[t] for t in defpool if t in cands}) if cands[t] > 0]
             if risk_on and not ranked_all:
                 ranked_all = defensive          # GEM: equities fail the absolute filter -> bonds/gold
             current = [t for t, o in pos.items() if o["sleeve"] == "trend"]
@@ -596,14 +639,14 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             use_calls = risk_on and (p["lev"] > 1.0 or ts_scale > 1.0)
             for tk in target:
                 if tk not in pos:
-                    if use_calls and tk not in DEFENSIVE_POOL:
+                    if use_calls and tk not in defpool:
                         open_call(tk, d, exposure * max(p["lev"], 1.0), "trend", eq, fallback=min(exposure, slot))
                     else:
                         open_pos(tk, d, min(exposure, cash), "trend", "momentum")
                 elif p["vol_target"] and pos[tk]["kind"] == "shares" and pos[tk]["sleeve"] == "trend":
                     # resize held shares toward the new exposure (calls re-size at roll)
                     held = value(pos[tk], d)
-                    want = min(exposure, slot) if not use_calls or tk in DEFENSIVE_POOL else exposure
+                    want = min(exposure, slot) if not use_calls or tk in defpool else exposure
                     if held > want * (1 + RESIZE_BAND):
                         trim_pos(tk, d, held - want)
                     elif held < want * (1 - RESIZE_BAND):
@@ -619,7 +662,8 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
     stats = dict(final_equity=eq1, cagr=cagr(eq0, eq1, days), max_dd=max_drawdown([e for _, e, _ in equity]),
                  spy_final=spy1, spy_cagr=cagr(spy0, spy1, days), spy_max_dd=max_drawdown([s for _, _, s in equity]),
                  n_trades=len(trades), wins=sum(1 for t in trades if t["pnl"] > 0),
-                 days_invested=sum(1 for _, e, _ in equity) )
+                 days_invested=sum(1 for _, e, _ in equity),
+                 defect_exits=n_defect_exits, dots_refused_defect=n_dots_refused)
     stats["beats"] = bool(stats["cagr"] is not None and stats["spy_cagr"] is not None
                           and stats["cagr"] > stats["spy_cagr"] and stats["max_dd"] >= stats["spy_max_dd"])
     return dict(equity=equity, trades=trades, stats=stats)
@@ -667,9 +711,11 @@ def run_variant(name, overrides=None, window="build") -> dict:
                           [(run_id, t["sleeve"], t["ticker"], t["entry_date"], t["entry_px"], t["exit_date"],
                             t["exit_px"], t["qty"], t["pnl"], t["reason"]) for t in res["trades"]])
         conn.commit()
-        log.info("[beat_spy] %s/%s: eq %.0f cagr %.2f%% dd %.1f%% | SPY cagr %.2f%% dd %.1f%% | beats=%s",
+        log.info("[beat_spy] %s/%s: eq %.0f cagr %.2f%% dd %.1f%% | SPY cagr %.2f%% dd %.1f%% | beats=%s "
+                 "| series defects: %d ladder exits, %d dots refused",
                  name, window, st["final_equity"], 100 * (st["cagr"] or 0), 100 * st["max_dd"],
-                 100 * (st["spy_cagr"] or 0), 100 * st["spy_max_dd"], st["beats"])
+                 100 * (st["spy_cagr"] or 0), 100 * st["spy_max_dd"], st["beats"],
+                 st["defect_exits"], st["dots_refused_defect"])
         st["run_id"] = run_id
         return st
     finally:
@@ -776,15 +822,39 @@ BUILD_VARIANTS = {
     "v6_ts_vt15_lev1p5_nodots": dict(regime="two_speed", force_liquidate=True, a_weight=1.0, b_weight=0.0, b_slots=0,
                                      mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
                                      rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.5),
+    # v6b: bonds-only defensive (v5 held GLD through its 2008 crash)
+    "v6_ts_bonds":       dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v6_gem_bonds":      dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v6_ts_vt15_lev1p5_bonds": dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                                    mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                                    rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.5,
+                                    defensive="bonds"),
 }
 
 
+DEFECT_GUARD_VERSION = 1   # bump when series hygiene changes; older rows re-run
+
+
 def run_build_grid() -> bool:
-    """Boot: run every build-window variant not yet stored. True when done."""
+    """Boot: run every build-window variant not yet stored under the current
+    series-hygiene version. Rows written before the guard (2026-09-07: TFIN's
+    phantom $52k sat in 28 of them) are kept for the record as
+    <name>_pre_guard and the canonical name re-runs. True when done."""
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
         with conn.cursor() as c:
+            c.execute("""UPDATE beat_spy_runs SET name = name || '_pre_guard'
+                         WHERE run_window='build' AND name NOT LIKE '%%_pre_guard'
+                           AND COALESCE((params->>'defect_guard')::int, 0) < %s""", (DEFECT_GUARD_VERSION,))
+            if c.rowcount:
+                log.warning("[beat_spy] %d build runs predate series-hygiene v%d — kept as *_pre_guard, re-running.",
+                            c.rowcount, DEFECT_GUARD_VERSION)
+            conn.commit()
             c.execute("SELECT name FROM beat_spy_runs WHERE run_window='build'")
             have = {r[0] for r in c.fetchall()}
     finally:
