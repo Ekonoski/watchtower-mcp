@@ -1736,6 +1736,33 @@ Rendering doctrine, same spirit as the rest of this file:
   `READOUT_SQL` logs the comparison when the fleet completes;
   `tests/test_greendot_recount.py` pins the one-definition property,
   the flags, the defect windows, the matching, and writes-own-tables.
+  FIRST READ (same evening, 4,800 of 6,236 tickers — matched tickers
+  only; VFF and the rest land next boot): THE DIALECT MATTERS, AND THE
+  EDGE LIVES IN 10/21/4. (1) The defect filter barely moves the
+  original record (post-2016 deep cohort 7.5% / 56.7% → 7.5% / 56.6%,
+  ~7% of dots removed) — medians were robust, as predicted. (2) 9/12/3
+  at the same −30 depth finds 66% MORE deep dots (2,856 vs 1,716
+  post-2016) and they grade 3.3% / 53.2% vs 7.5% / 56.6%; pre-2016
+  9.8 / 59.9 vs 13.2 / 61.9. Not a threshold-mapping artifact: the
+  9/12/3 depth ladder is FLAT post-2016 (−30…−60 all ≈3.3%, 53%) while
+  10/21/4 climbs (−30 → 7.5, −50 → 10.3); at equal selectivity
+  (9/12/3 ≤ −60, n=1,190 vs 10/21/4 ≤ −40, n=1,371) it is 3.5 / 53.7
+  vs 8.5 / 58.0. (3) The matching explains it: 9/12/3 deep dots WITH a
+  10/21/4 dot within ±24 days grade 8.0% / 57.1% (n=1,049 — the
+  original edge); 9/12/3 dots WITHOUT one — 63% of its deep cohort —
+  grade 0.5% / 50.9% (n=1,807). The faster wave fires more crosses
+  and the extra crosses are coin flips. 10/21/4-only dots (no fast-
+  wave dot nearby) still grade 8.3% / 56.4% post-2016 and 24.9% /
+  67.7% pre-2016. (4) Cipher's bottom-buy dot (wt1 < −60) on 9/12/3:
+  pre-2016 14.1% / 62.2%, post-2016 3.3% / 53.1% — era-unstable, no.
+  (5) Shallow 9/12/3 crosses are negative (−3.8%, 46.9%) — the depth
+  throttle holds in the other dialect too. VERDICT under the
+  pre-registered bar: 9/12/3 does NOT replicate; the engine KEEPS
+  10/21/4 for the dot record. The practical translation for the chart
+  Eric reads: a Compass dot with a slow-wave (10/21/4) dot beside it is
+  the loaded one; a Compass dot alone is not — a "confirmed by the
+  slow wave" screen rule, queued for `watchtower_greendot`. Final
+  numbers and the VFF archetype when the fleet completes.
 
 - **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
   trading system that beats the SPY… you are competing to beat the SPY
