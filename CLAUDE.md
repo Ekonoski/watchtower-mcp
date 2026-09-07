@@ -1691,6 +1691,25 @@ Rendering doctrine, same spirit as the rest of this file:
   and re-grade the deep cohort; if the edge holds on both settings the
   engine adopts Cipher B's numbers so the system and the chart speak one
   dialect — a definition change, so it waits on the re-grade.
+  ChatGPT's research handbook for the same script
+  (`docs/research/challenger_market_cipher_compass_handbook_v1.pdf`,
+  2026-09-07) confirms the read from its side: the reconstruction's
+  money flow is a volume-free price normalization (SMA-5 center, SMA-60)
+  and its "RSI"/"Sto RSI" are 40- and 81-bar PRICE stochastics — not
+  Cipher B's components — and its "verified" claim is port-vs-Pine
+  agreement on one TSLA 16D chart, with the waves differing from the
+  ORIGINAL Market Cipher B by up to 11 points early and converging by
+  late 2019. Two things it adds that we use: Cipher's lessons name TWO
+  dots — any wave cross-up (green dot) vs the BOTTOM BUY dot (cross-up
+  with the light wave below −60) — and our 16D record uses neither
+  exactly (wt2 ≤ 0 at the cross; deep cohort ≤ −30), so the queued
+  9/12/3 re-count also tags the bottom-dot flag (the depth throttle
+  already says the deeper definition is the loaded one); and the
+  taught core setup — a deep ANCHOR wave, a shallower TRIGGER wave,
+  flow rounding up while still red, confirmation on a completed candle
+  — is the pctr_hl → cipher_reversal → base_turn lifecycle in Cipher's
+  own vocabulary, which the exemplar museum's classification pass
+  should adopt. The rest is process doctrine this file already holds.
 
 - **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
   trading system that beats the SPY… you are competing to beat the SPY
