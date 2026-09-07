@@ -1801,6 +1801,29 @@ Rendering doctrine, same spirit as the rest of this file:
   ceiling under the rules, stated to Eric: ~12% in shares, ~14% with
   defined-risk calls, drawdown ~30%; the marketable asset is the
   measured process and a clean sealed record, not a headline number.
+  THE SEALED RUN (2026-09-07 16:27 UTC, commit 153dff1, once): FAILED
+  under its own rules. 2024-01-02 → 2026-09-04: system 24.43% CAGR /
+  −22.1% DD vs SPY TR 21.39% / −18.8% — return clause passed by 3.0
+  pts, drawdown clause FAILED by 3.3 pts (both troughs 2025-04-08, the
+  tariff crash; the book held QQQ); tie-break also to SPY (1.11 vs 1.14
+  return per unit of DD). The stated odds were backwards: the edge is
+  a bear-market edge (sits out 2008/2022) and a 32-month window with no
+  bear gave the absolute filter nothing to do. Holdings, the whole
+  trend sleeve: QQQ → SPY (Apr 2025) → QQQ (Feb 2026); dots 60 trades,
+  57% win, +$20k. AND THE OPTIONS EXPRESSION WAS VACUOUS: v8_lev3
+  printed numbers identical to shares — zero calls opened — because the
+  25% premium cap admits a 3× deep-ITM position only in unusually
+  low-vol months; the 14.14% build number rested on FIVE call trades in
+  18 years (QQQ 2017–18 alone +$161k). Rule: any overlay's number
+  states how many positions it rests on. Full readout in
+  `docs/research/compass_frozen_rules.md`. The record stands as run;
+  a new idea is a new name on a new window, never a second look at
+  this one. Fundamentals correction, same evening (Eric: "I would think
+  you would use fundamentals"): `fundamentals_quarterly` carries REAL
+  filing dates (`report_date`, ~32-day lag) for 2,100–4,000 names a year
+  back to 2008 — point-in-time fundamentals exist and the earlier
+  "thin before 2021" statement was wrong. A dated quality × momentum
+  single-name book is gradeable; queued as v9 on the build window.
 
 ## Numbers on one line must reconcile with each other
 
