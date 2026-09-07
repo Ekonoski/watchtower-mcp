@@ -1710,6 +1710,12 @@ Rendering doctrine, same spirit as the rest of this file:
   — is the pctr_hl → cipher_reversal → base_turn lifecycle in Cipher's
   own vocabulary, which the exemplar museum's classification pass
   should adopt. The rest is process doctrine this file already holds.
+  Eric's ruling (same day, after checking Market Cipher and Compass side
+  by side): "they are identical on every time frame I have checked. So,
+  they are good." The early-bar differences are burn-in, not
+  disagreement — on any bar a trader would read, Compass IS the chart.
+  So 9/12/3 is the eye's definition and the recount is the path to
+  adopting it, not a debate about whether to.
 
 - **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
   trading system that beats the SPY… you are competing to beat the SPY
