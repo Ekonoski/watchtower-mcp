@@ -1751,6 +1751,22 @@ Rendering doctrine, same spirit as the rest of this file:
   green-dot study's own dot table inherits the same exposure (queued:
   re-count deep dots with the defect filter; the medians are robust to
   a handful of 40× phantoms, the means never were).
+  THE CLEAN GRID (same afternoon, 55 variants re-run under the guard):
+  the phantoms were worth ~1 pt of CAGR everywhere (compass_v1 4.66 →
+  3.69%). One cell still beats SPY — v5_gem_skip21 at 9.76% / −28.4%
+  vs 9.61% / −55.2% — by 0.15 pts, with mom_skip=0 at 7.10%: a beat
+  that lives in one parameter cell is a curve fit until its neighbors
+  agree (v7 walks skip 10/15/30/42 and lookback 189/315). Bonds-only
+  defensive added +1.2 pts (v6_gem_bonds 8.29%). REFUSED: the
+  two-speed regime (fast 50-day re-entry) — 65 forced risk-off exits
+  for −$54k at a 47-day hold, a whipsaw machine (v6_ts_* 1.8–5.8%);
+  vol targeting is flat-to-marginal (vt15 6.36, vt20+2x calls 7.61 vs
+  7.10). And the dot universe held ~30 leveraged/inverse ETPs (JNUG,
+  NUGT, SCO, SQQQ, TSLQ…) — daily-reset decay products, not companies
+  in drawdown; excluded by name (`LEVERAGED_ETP_RE`, hygiene v2, the
+  guard1 rows kept). FCEL's 2019 6× (+$34k) was checked and STANDS:
+  the stored levels are off by a scale factor but every daily ratio
+  is a real print (the July 2019 double on the Exxon news).
 
 ## Numbers on one line must reconcile with each other
 
