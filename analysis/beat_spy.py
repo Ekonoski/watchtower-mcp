@@ -1057,4 +1057,25 @@ def run_build_grid() -> bool:
             run_variant(n, BUILD_VARIANTS[n], "build")
         except Exception as e:
             log.exception("[beat_spy] variant %s failed: %s", n, e)
+    run_sealed_grid()
     return not todo
+
+
+# FROZEN 2026-09-07 on Eric's "run it" — docs/research/compass_frozen_rules.md.
+# The primary (shares) and the declared options expression run ONCE on the
+# sealed window; run_variant refuses a second sealed run of the same name.
+# Nothing in this mapping changes after the run; a new idea is a new name
+# and a new window.
+SEALED_VARIANTS = {
+    "v7_skip21_bonds": BUILD_VARIANTS["v7_skip21_bonds"],     # Compass, primary
+    "v8_lev3": BUILD_VARIANTS["v8_lev3"],                     # Compass, options expression
+}
+
+
+def run_sealed_grid():
+    """Boot: the frozen sealed-window runs, each at most once."""
+    for n, overrides in SEALED_VARIANTS.items():
+        try:
+            run_variant(n, overrides, "sealed")
+        except Exception as e:
+            log.exception("[beat_spy] sealed variant %s failed: %s", n, e)

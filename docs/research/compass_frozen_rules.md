@@ -1,11 +1,12 @@
 # Compass — the frozen rules for the Beat-SPY sealed window
 
-Status: **PROPOSED FREEZE, 2026-09-07** — awaiting Eric's go before the
-sealed run. The moment the sealed run executes, this file's commit hash is
-the record and nothing below changes. Every number needed to reproduce the
-system is here; the code is `analysis/beat_spy.py`, variant
-`v7_skip21_bonds` (primary) and `v7_skip21_bonds_calls_1p5` (declared
-options expression, run once beside it).
+Status: **FROZEN 2026-09-07** on Eric's "run it". Rules content as of
+commit c039634 (the last edit before the freeze); the sealed run ships in
+the commit that follows, with `SEALED_VARIANTS` in `analysis/beat_spy.py`
+naming exactly two runs — `v7_skip21_bonds` (primary, shares) and `v8_lev3`
+(declared options expression) — each executed once on 2024-01-02 →
+2026-09-04 under the once-only guard. Nothing below changes after this
+line. Every number needed to reproduce the system is here.
 
 ## The system in one paragraph
 
