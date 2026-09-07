@@ -192,6 +192,41 @@ def test_series_defects_guard():
         assert not bs.is_leveraged_etp(name), name
 
 
+def test_v8_stock_sleeve():
+    """pool='stocks': names come from the monthly ranking, the absolute filter
+    and the tape-defect refusal apply, a thin month pads one slot with
+    bonds, and a held name whose tape breaks leaves at the last print."""
+    d0 = dt.date(2010, 1, 4)
+    cal = []
+    d = d0
+    while len(cal) < 900:
+        if d.weekday() < 5:
+            cal.append(d)
+        d += dt.timedelta(days=1)
+    flat = [100.0] * 900
+    up = [10 * (1.001 ** i) for i in range(900)]
+    down = [10 * (0.999 ** i) for i in range(900)]
+    spliced = [5.0] * 700 + [80.0] * 200                     # symbol reused at bar 700
+    px = {"SPY": _series(cal, [100 * (1.0003 ** i) for i in range(900)]), "TLT": _series(cal, up),
+          "GLD": _series(cal, flat), "AAA": _series(cal, up), "BBB": _series(cal, down), "CCC": _series(cal, spliced)}
+    me = bs.month_ends(cal)
+    cands = {cal[i]: [("AAA", 0.30), ("CCC", 0.20), ("BBB", -0.20)] for i in me}
+    p = dict(bs.DEFAULTS)
+    p.update(start=cal[300], end=cal[-1], top_n=3, a_weight=1.0, b_weight=0.0, b_slots=0, pool="stocks",
+             abs_mom=True, sma_filter=False, rebalance="monthly", regime="none", defensive="bonds")
+    res = bs.simulate(px, [], {}, p, stock_cands=cands)
+    held = {t["ticker"] for t in res["trades"]}
+    assert "AAA" in held and "BBB" not in held                    # absolute filter refused the faller
+    assert "TLT" in held                                          # thin month: a slot went to bonds
+    ccc = [t for t in res["trades"] if t["ticker"] == "CCC"]
+    assert ccc and ccc[0]["reason"] == "series_splice" and ccc[0]["exit_date"] == cal[700]
+    assert abs(ccc[0]["exit_px"] - 5.0) < 1e-9                     # last real print, never $80
+    assert res["stats"]["defect_exits"] >= 1
+    # after the splice CCC is refused for two years even though it still ranks
+    assert not any(t["ticker"] == "CCC" and t["entry_date"] > cal[700] for t in res["trades"])
+    assert res["stats"]["final_equity"] > 100_000
+
+
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src

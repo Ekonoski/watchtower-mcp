@@ -148,7 +148,14 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # for −$19.6k because gold ranked first on momentum into its crash)
                 defensive="all",
                 # series-hygiene version stamped into every run's params
-                defect_guard=2)
+                defect_guard=2,
+                # v8: pool='stocks' — single-name 12-1 momentum from the monthly
+                # ranking table (liquid AT THE DATE: dv60 >= stock_dv, close >=
+                # stock_min_px); the top stock_cands_mult × top_n names per
+                # month are loaded and ranked; slots no stock fills go to the
+                # defensive name if it qualifies, else cash.
+                stock_dv=10e6, stock_min_px=5.0, stock_cands_mult=3)
+STOCK_DV_MIN, STOCK_PX_MIN = 10e6, 5.0     # the ranking table's own floor
 VOL_SCALE_MIN = 0.30
 RESIZE_BAND = 0.20        # resize a share position only when it drifts 20% from target
 
@@ -373,11 +380,76 @@ def _dots(conn, p):
         return c.fetchall()
 
 
+def _ensure_stock_monthly(conn, me_dates):
+    """One-shot seeder (v8): a ranking row per (SPY month-end, ticker) that
+    was liquid AT THAT DATE, for every month-end not yet present. Window
+    functions over daily_prices — minutes, once."""
+    with conn.cursor() as c:
+        c.execute("SELECT DISTINCT me_date FROM beat_spy_stock_monthly")
+        have = {r[0] for r in c.fetchall()}
+    todo = sorted(d for d in me_dates if d not in have)
+    if not todo:
+        return 0
+    log.info("[beat_spy] seeding beat_spy_stock_monthly for %d month-ends (%s..%s)", len(todo), todo[0], todo[-1])
+    with conn.cursor() as c:
+        c.execute("""INSERT INTO beat_spy_stock_monthly (me_date, ticker, close, c21, c252, dv60)
+                     SELECT trade_date, ticker, close, c21, c252, dv60 FROM (
+                        SELECT ticker, trade_date, close,
+                               lag(close, 21) OVER w AS c21, lag(close, 252) OVER w AS c252,
+                               avg(close * COALESCE(volume, 0)) OVER (w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS dv60
+                        FROM daily_prices WHERE close IS NOT NULL AND trade_date >= %s
+                        WINDOW w AS (PARTITION BY ticker ORDER BY trade_date)) b
+                     WHERE trade_date = ANY(%s) AND c252 > 0 AND c21 > 0 AND dv60 >= %s AND close >= %s
+                     ON CONFLICT DO NOTHING""",
+                  (todo[0] - dt.timedelta(days=420), todo, STOCK_DV_MIN, STOCK_PX_MIN))
+        n = c.rowcount
+    conn.commit()
+    log.info("[beat_spy] stock ranking table: %d rows inserted", n)
+    return n
+
+
+def _stock_candidates(conn, p, me_dates):
+    """{month-end date: [(ticker, momentum), ...]} best-first, the top
+    stock_cands_mult × top_n per date, leveraged ETPs refused by name."""
+    with conn.cursor() as c:
+        c.execute("""SELECT m.me_date, m.ticker, m.c21 / m.c252 - 1 AS mom
+                     FROM beat_spy_stock_monthly m LEFT JOIN tickers t ON t.ticker = m.ticker
+                     WHERE m.me_date = ANY(%s) AND m.dv60 >= %s AND m.close >= %s
+                       AND NOT COALESCE(t.company_name ~* %s, false)
+                     ORDER BY m.me_date, mom DESC""",
+                  (list(me_dates), p["stock_dv"], p["stock_min_px"], LEVERAGED_ETP_RE))
+        out = {}
+        cap = p["stock_cands_mult"] * p["top_n"]
+        for d, tk, m in c.fetchall():
+            lst = out.setdefault(d, [])
+            if len(lst) < cap:
+                lst.append((tk, float(m)))
+    return out
+
+
+def _load_closes(conn, tickers):
+    """Close-only series (highs/lows alias the closes) — the momentum sleeve
+    needs no intrabar path, and a few hundred names at 4,500 bars is
+    memory that matters."""
+    out = {}
+    with conn.cursor() as c:
+        for tk in tickers:
+            c.execute("SELECT trade_date, close FROM daily_prices WHERE ticker=%s AND close IS NOT NULL ORDER BY trade_date", (tk,))
+            rows = c.fetchall()
+            if rows:
+                closes = [float(r[1]) for r in rows]
+                out[tk] = dict(dates=[r[0] for r in rows], highs=closes, lows=closes, closes=closes,
+                               idx={r[0]: i for i, r in enumerate(rows)})
+    return out
+
+
 # ── simulation ─────────────────────────────────────────────────────────
 
-def simulate(px, dots, spy_div, p, capital=100_000.0):
-    """One full run. px: {ticker: series}; dots: [(ticker, date, px)].
+def simulate(px, dots, spy_div, p, capital=100_000.0, stock_cands=None):
+    """One full run. px: {ticker: series}; dots: [(ticker, date, px)];
+    stock_cands: {date: [(ticker, momentum)]} when pool='stocks'.
     Returns dict(equity=[(date, eq, spy_tr)], trades=[...], stats)."""
+    stock_cands = stock_cands or {}
     cal = px["SPY"]["dates"]
     spy = px["SPY"]
     start_i = next(i for i, d in enumerate(cal) if d >= p["start"])
@@ -586,6 +658,12 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             if len(me_closes) >= n:
                 faber_on = me_closes[-1] > sum(me_closes[-n:]) / n
 
+        # v8: a held single name whose tape breaks today leaves at the last real print
+        for tk in [t for t, o in pos.items() if o["sleeve"] == "trend" and d in defect_at.get(t, {})]:
+            j = px[tk]["idx"][d]
+            close_pos(tk, d, "series_" + defect_at[tk][d], px_override=px[tk]["closes"][j - 1] if j > 0 else None)
+            n_defect_exits += 1
+
         # v6 two-speed regime: stepped daily on SPY; a state change forces a rebalance
         forced = False
         if p["regime"] == "two_speed":
@@ -612,7 +690,8 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 spy_sma = sma(spy["closes"], p["sma"], si)
                 risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
             ts_scale = vol_scale(p["vol_target"], realized_vol(spy["closes"], si), p["max_lev"])
-            pool = {"core": ETF_CORE, "index": ETF_INDEX, "index_eq": ETF_INDEX_EQ}.get(p["pool"], ETF_POOL)
+            stocks = p["pool"] == "stocks"
+            pool = () if stocks else {"core": ETF_CORE, "index": ETF_INDEX, "index_eq": ETF_INDEX_EQ}.get(p["pool"], ETF_POOL)
             defpool = DEFENSIVE_POOL if p.get("defensive", "all") == "all" else ("TLT",)
             cands = {}
             for tk in set(pool) | set(defpool):
@@ -632,10 +711,19 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 if p["abs_mom"] and m <= 0:
                     continue
                 cands[tk] = m
-            ranked_all = [t for t in rank_pool(cands) if t in pool]
+            if stocks:
+                # v8: names ranked by the monthly table, loaded series only, absolute
+                # filter, and no dot-style tape defect inside the prior two years
+                ranked_all = [tk for tk, m in stock_cands.get(d, [])
+                              if tk in px and (m > 0 or not p["abs_mom"])
+                              and not any(d - dt.timedelta(days=730) < dd_ <= d for dd_, _ in defects.get(tk, []))]
+            else:
+                ranked_all = [t for t in rank_pool(cands) if t in pool]
             defensive = [t for t in rank_pool({t: cands[t] for t in defpool if t in cands}) if cands[t] > 0]
             if risk_on and not ranked_all:
                 ranked_all = defensive          # GEM: equities fail the absolute filter -> bonds/gold
+            elif stocks and risk_on and len(ranked_all) < p["top_n"]:
+                ranked_all = ranked_all + [t for t in defensive if t not in ranked_all]   # a thin month: one slot to bonds
             current = [t for t, o in pos.items() if o["sleeve"] == "trend"]
             if risk_on:
                 target = target_holdings(ranked_all, current, p["top_n"])
@@ -709,7 +797,17 @@ def run_variant(name, overrides=None, window="build") -> dict:
         tickers = set(ETF_POOL) | {tk for tk, _, _ in dots}
         px = _load(conn, tickers)
         spy_div = _spy_dividends(conn)
-        res = simulate(px, dots, spy_div, p)
+        stock_cands = None
+        if p["pool"] == "stocks":
+            cal = px["SPY"]["dates"]
+            lo, hi = p["start"] - dt.timedelta(days=45), p["end"]
+            me_dates = [cal[i] for i in month_ends(cal) if lo <= cal[i] <= hi]
+            _ensure_stock_monthly(conn, me_dates)
+            stock_cands = _stock_candidates(conn, p, me_dates)
+            need = {tk for lst in stock_cands.values() for tk, _ in lst} - set(px)
+            px.update(_load_closes(conn, sorted(need)))
+            log.info("[beat_spy] %s: %d month-ends ranked, %d single names loaded", name, len(stock_cands), len(need))
+        res = simulate(px, dots, spy_div, p, stock_cands=stock_cands)
         st = res["stats"]
         with conn.cursor() as c:
             c.execute("DELETE FROM beat_spy_runs WHERE name=%s AND run_window=%s", (name, window))
@@ -886,6 +984,41 @@ BUILD_VARIANTS = {
     "v7_skip21_bonds_calls_1p5": dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
                                       mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
                                       rebalance="monthly", sma_filter=False, defensive="bonds", lev=1.5),
+    # v8 (Eric: "what about great returns?"): single-name 12-1 momentum, the
+    # long-hold fully-deployed dot sleeve, and the harder call overlay
+    "v8_stk10":          dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v8_stk20":          dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=20,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v8_stk5":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=5,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v8_stk10_reg200":   dict(regime="weekly200", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v8_stk10_nodots":   dict(regime="none", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v8_stk10_dv50":     dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="stocks", abs_mom=True, top_n=10,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", stock_dv=50e6),
+    "v8_dots252":        dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", b_hold=252),
+    "v8_dots252_single": dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", b_hold=252, ladder=(0.0,)),
+    "v8_dots252_heavy":  dict(regime="none", force_liquidate=False, a_weight=0.60, b_weight=0.40, b_slots=20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", b_hold=252),
+    "v8_lev2":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", lev=2.0),
+    "v8_lev3":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds", lev=3.0),
 }
 
 

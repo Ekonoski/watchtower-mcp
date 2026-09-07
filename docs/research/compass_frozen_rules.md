@@ -1,0 +1,109 @@
+# Compass — the frozen rules for the Beat-SPY sealed window
+
+Status: **PROPOSED FREEZE, 2026-09-07** — awaiting Eric's go before the
+sealed run. The moment the sealed run executes, this file's commit hash is
+the record and nothing below changes. Every number needed to reproduce the
+system is here; the code is `analysis/beat_spy.py`, variant
+`v7_skip21_bonds` (primary) and `v7_skip21_bonds_calls_1p5` (declared
+options expression, run once beside it).
+
+## The system in one paragraph
+
+Hold ONE US equity-index ETF at a time, chosen monthly by 12-month
+momentum that ignores the most recent month, only while that momentum is
+positive; when no index qualifies, hold long Treasuries if they qualify,
+otherwise cash. Beside it, a small washout sleeve buys deep 16-day
+green-dot bottoms on liquid stocks in major drawdown with a bounded
+three-tranche ladder and a fixed hold. That is all.
+
+## Sleeve A — index momentum (80% of equity)
+
+- Universe: SPY, QQQ, IWM, MDY, DIA, RSP. Defensive: TLT only.
+- Signal: on the last trading day of each month, for every fund,
+  `momentum = close[t−21] / close[t−252] − 1` (12 months, skipping the
+  last 21 trading days). A fund with no 252-bar history has no signal.
+- Absolute filter: a fund qualifies only if its momentum is > 0.
+- Ranking: qualifying equity funds best-first; hold the top 1. A current
+  holding is kept while it stays inside the top 2; otherwise it rotates to
+  the best. If NO equity fund qualifies, hold TLT if TLT's own momentum is
+  > 0, else cash.
+- Execution: at that month-end close, 5 bps per side. No stop inside the
+  month; the only exits are the monthly re-rank and the absolute filter.
+- No SPY-vs-200-day regime, no per-fund moving-average filter, no vol
+  targeting (all tested, none earned a place — see CLAUDE.md).
+
+## Sleeve B — deep green-dot ladder (20% of equity, 10 slots)
+
+- Universe: stocks whose trailing-90-day average dollar volume is
+  ≥ $10M as of the run date (a "liquid today" universe — survivorship and
+  liquidity lookahead, stated). Leveraged and inverse ETPs excluded by
+  name. Any ticker whose stored series is broken (a close 3× / ⅓ its
+  prior close, or > 10 calendar days between bars) inside the prior two
+  years is refused.
+- Signal: a 16-trading-day wavetrend cross-up (fixed-anchor blocks on
+  SPY's calendar, `greendot_dots`) with cross depth ≤ −30, on a stock
+  ≥ 50% below its 2-year high, price ≥ $2 at the dot.
+- Entry: slot budget = 20% of equity ÷ 10; three equal tranches — the
+  first at the dot bar's close, the second at a resting limit 15% below
+  it, the third 25% below it, each filling only when a later bar's low
+  prints through the limit (filled at the limit, or the close if the bar
+  closed below it).
+- Exit: all tranches sold at the close 126 trading days after the dot
+  bar (a fixed hold; no stop, no target). If the stock's stored tape
+  breaks first, sold at the last real print.
+- One position per ticker; a dot on a ticker already held is ignored;
+  no new slot when 10 are open.
+
+## Options expression (secondary, declared)
+
+Same rules; Sleeve A's equity position is expressed as ~0.80-delta calls
+with ~9 months to expiry on 1.5× the share notional, priced by
+Black–Scholes on 60-day realized vol × 1.15, 2% of premium per side
+plus $0.65 per contract, rolled when < 60 days remain, total premium
+≤ 25% of equity (falls back to shares when the cap or the vol proxy
+refuses). Modeled prices, stated. TLT and the dots stay shares.
+
+## Benchmark and grading
+
+Per `beat_spy_challenge_rules.md`: SPY total return with dividends
+reinvested; beat = higher compound return AND no deeper max drawdown.
+The system's own ETF dividends are NOT counted (price return only), a
+stated bias against the system of roughly a point a year.
+
+## Build-window record (2006-01-03 → 2023-12-31), hygiene v2
+
+| | CAGR | Max DD | 2006–2015 | 2016–2023 |
+|---|---|---|---|---|
+| SPY total return | 9.61% | −55.2% | 6.96% / −55.2% | 13.15% / −33.7% |
+| v7_skip21_bonds (primary) | 11.96% | −30.3% | 7.99% / −23.4% | 17.26% / −30.3% |
+| v7_skip21_bonds_calls_1p5 | 12.04% | −27.0% | 7.50% / −23.4% | 18.22% / −27.0% |
+| v7_skip21_bonds_nodots (Sleeve A alone) | 11.19% | −28.6% | 9.76% / −27.9% | 13.17% / −28.6% |
+
+Neighbors (same chassis): skip 15 → 10.38%, skip 30 → 9.98%, skip 42 →
+11.61%, skip 10 → 9.56%; lookback 189 → 8.92%, 315 → 9.41%. The skip is a
+plateau; the 12-month lookback is the published prior (Antonacci's GEM)
+and its neighbors trail SPY by 0.2–0.7 pts — stated.
+
+Sleeve split, primary: trend 29 trades, 21 wins, +$463k; dots 273 trades,
+176 wins (64%), +$199k, avg win $1,850 / avg loss −$1,305, 5 defect
+exits. Sleeve A alone beats in both halves on drawdown and ties SPY in
+2016–2023 on return; the dots supply the 2016–2023 outperformance and
+carry the survivorship caveat.
+
+## Caveats, all of them
+
+- Sleeve B universe is stocks liquid TODAY; the corpses' dots are unseen.
+- Fills at the signal bar's close (momentum) and at limits a later bar
+  traded through (ladder). No slippage beyond 5 bps.
+- Option prices are modeled, not historical chains.
+- `daily_prices` carries ticker-reuse splices and multi-year holes; the
+  guard exits at the last real print and refuses dots on broken tapes.
+  Stored price LEVELS on some names are off by a split factor while the
+  daily ratios are real (FCEL 2019); P&L is ratio-based and unaffected.
+- The build window was inspected many times (55 variants over ~3 hours).
+  The sealed window is inspected once.
+
+Stated odds before the sealed run: the drawdown clause is very likely to
+hold (a one-ETF momentum book with an absolute filter sat out most of
+2022); the return clause is close to a coin flip over 32 months in which
+SPY compounded hard.
