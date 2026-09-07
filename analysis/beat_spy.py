@@ -58,6 +58,10 @@ DEFENSIVE_POOL = ("TLT", "GLD")
 ETF_CORE = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP", "XLK", "XLF", "XLV", "XLB", "XLE",
             "XLI", "XLP", "XLU", "XLY", "XLRE", "XLC", "XBI", "IBB", "SMH", "SOXX", "XHB",
             "ITB", "XME", "XOP", "OIH", "KRE", "KBE", "XRT", "IYT", "VNQ", "GDX", "TLT", "GLD")
+# v4: the INDEX pool — dual momentum among the broad indexes only (the
+# Antonacci shape: one winner, or defensive). Sector/industry funds dilute
+# the concentration that beat SPY after 2010; the indexes carry it.
+ETF_INDEX = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP", "TLT", "GLD")
 CALL_DELTA = 0.80          # deep ITM: the option behaves like levered shares with a floor
 CALL_TENOR = 270 / 365.0   # ~9 months at entry
 CALL_ROLL_DAYS = 60        # roll when fewer than 60 calendar days remain
@@ -470,7 +474,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 spy_sma = sma(spy["closes"], p["sma"], si)
                 risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
             cands = {}
-            for tk in (ETF_CORE if p["pool"] == "core" else ETF_POOL):
+            for tk in {"core": ETF_CORE, "index": ETF_INDEX}.get(p["pool"], ETF_POOL):
                 s = px.get(tk)
                 if not s:
                     continue
@@ -605,6 +609,21 @@ BUILD_VARIANTS = {
                               mom_long=252, pool="core", abs_mom=True, lev=2.0),
     "v3_top3_calls_1p5": dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
                               mom_long=252, pool="core", abs_mom=True, top_n=3, lev=1.5),
+    # v4: index-only dual momentum (concentration), and a heavier washout sleeve
+    "v4_index_top1":     dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="index", abs_mom=True, top_n=1),
+    "v4_index_top2":     dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="index", abs_mom=True, top_n=2),
+    "v4_index_top1_nodots": dict(regime="faber", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0,
+                                 mom_long=252, pool="index", abs_mom=True, top_n=1),
+    "v4_index_top1_dots40": dict(regime="faber", force_liquidate=False, a_weight=0.60, b_weight=0.40, b_slots=20,
+                                 mom_long=252, pool="index", abs_mom=True, top_n=1),
+    "v4_dots_heavy":     dict(regime="faber", force_liquidate=False, a_weight=0.50, b_weight=0.50, b_slots=25,
+                              mom_long=252, pool="index", abs_mom=True, top_n=1),
+    "v4_index_top1_calls_1p5": dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                                    mom_long=252, pool="index", abs_mom=True, top_n=1, lev=1.5),
+    "v4_index_mom126":   dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=126, pool="index", abs_mom=True, top_n=1),
 }
 
 
