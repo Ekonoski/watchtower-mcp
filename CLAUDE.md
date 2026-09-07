@@ -1763,6 +1763,26 @@ Rendering doctrine, same spirit as the rest of this file:
   the loaded one; a Compass dot alone is not — a "confirmed by the
   slow wave" screen rule, queued for `watchtower_greendot`. Final
   numbers and the VFF archetype when the fleet completes.
+  FINAL (fleet complete, 6,236 tickers, 59,651 9/12/3 cross-ups,
+  20,356 of 20,406 original dots stamped — the 50 unstamped sit on
+  sub-700-bar tickers, holes): the verdict holds. Clean deep cohort
+  post-2016: 10/21/4 6.7% / 55.8% (n=2,345) vs 9/12/3 3.1% / 52.8%
+  (n=3,866); pre-2016 11.3 / 60.5 (901) vs 7.8 / 58.1 (1,326).
+  Matching: 9/12/3 dots WITH a slow-wave dot within ±24 days 7.6% /
+  56.7% (n=1,463 post-2016); WITHOUT — 62% of the cohort — 0.4% /
+  50.5% (n=2,403). Bottom-buy stays era-unstable (13.9 pre / 3.3
+  post); shallow 9/12/3 crosses negative (−2.3%, 48.6%). No stable
+  "both dots" rule either: the slow dot with a fast dot nearby is 7.0
+  vs 4.8 without post-2016 but 5.1 vs 21.8 pre-2016. VFF, the named
+  archetype, under 9/12/3: FOUR below-zero dots — 2023-07-03 (depth
+  −47, +19% / +53% at 6 / 12 mo), 2023-12-11 (−32, +37% / +13%),
+  2024-04-08 (the knife, −17: shallow in BOTH dialects, so the depth
+  throttle refuses it in both), 2025-06-02 (the launch, −49 vs −37
+  under 10/21/4: +229% / +98%); the 10/21/4 record's 2024-01-29
+  rally-not-bottom dot (−14) has no 9/12/3 twin. One ticker reads
+  better under the eye's numbers; 6,236 tickers say the slow wave
+  carries the edge. The engine keeps 10/21/4; the chart gains the
+  slow-wave-confirmation filter; task closed.
 
 - **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
   trading system that beats the SPY… you are competing to beat the SPY
