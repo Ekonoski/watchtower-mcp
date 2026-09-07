@@ -62,6 +62,9 @@ ETF_CORE = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP", "XLK", "XLF", "XLV", "XLB"
 # Antonacci shape: one winner, or defensive). Sector/industry funds dilute
 # the concentration that beat SPY after 2010; the indexes carry it.
 ETF_INDEX = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP", "TLT", "GLD")
+# v5: EQUITY indexes only compete in risk-on; the defensive pool is reached
+# only when nothing in the equity pool clears the absolute filter (GEM).
+ETF_INDEX_EQ = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP")
 CALL_DELTA = 0.80          # deep ITM: the option behaves like levered shares with a floor
 CALL_TENOR = 270 / 365.0   # ~9 months at entry
 CALL_ROLL_DAYS = 60        # roll when fewer than 60 calendar days remain
@@ -125,7 +128,11 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # on lev × the share notional, priced by model (bs_call on
                 # realized vol × VOL_PREMIUM), rolled at CALL_ROLL_DAYS, total
                 # premium capped at PREMIUM_CAP of equity. lev=1.0 = shares.
-                pool="all", abs_mom=False, lev=1.0)
+                pool="all", abs_mom=False, lev=1.0,
+                # v5: rebalance cadence ('weekly' | 'monthly'), and whether each
+                # fund must also sit above its own 200-day (sma_filter). GEM as
+                # published = monthly, no per-fund SMA, abs_mom only.
+                rebalance="weekly", sma_filter=True)
 
 
 def month_ends(dates):
@@ -463,7 +470,10 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 faber_on = me_closes[-1] > sum(me_closes[-n:]) / n
 
         # ── sleeve A: trend, on Fridays (or last trading day of the week) ──
-        is_rebalance = (i == end_i) or (i + 1 < len(cal) and cal[i + 1].weekday() < d.weekday()) or i == start_i
+        if p["rebalance"] == "monthly":
+            is_rebalance = (i in me_set) or i == start_i or i == end_i
+        else:
+            is_rebalance = (i == end_i) or (i + 1 < len(cal) and cal[i + 1].weekday() < d.weekday()) or i == start_i
         if is_rebalance:
             si = spy["idx"][d]
             if p["regime"] == "faber":
@@ -473,8 +483,9 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             else:
                 spy_sma = sma(spy["closes"], p["sma"], si)
                 risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
+            pool = {"core": ETF_CORE, "index": ETF_INDEX, "index_eq": ETF_INDEX_EQ}.get(p["pool"], ETF_POOL)
             cands = {}
-            for tk in {"core": ETF_CORE, "index": ETF_INDEX}.get(p["pool"], ETF_POOL):
+            for tk in set(pool) | set(DEFENSIVE_POOL):
                 s = px.get(tk)
                 if not s:
                     continue
@@ -482,12 +493,19 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 if j is None:
                     continue
                 m = momentum(s["closes"], j, p["mom_long"], p["mom_skip"])
-                t_sma = sma(s["closes"], p["sma"], j)
-                if m is not None and t_sma is not None and s["closes"][j] > t_sma \
-                        and (not p["abs_mom"] or m > 0):
-                    cands[tk] = m
-            ranked_all = rank_pool(cands)
+                if m is None:
+                    continue
+                if p["sma_filter"]:
+                    t_sma = sma(s["closes"], p["sma"], j)
+                    if t_sma is None or s["closes"][j] <= t_sma:
+                        continue
+                if p["abs_mom"] and m <= 0:
+                    continue
+                cands[tk] = m
+            ranked_all = [t for t in rank_pool(cands) if t in pool]
             defensive = [t for t in rank_pool({t: cands[t] for t in DEFENSIVE_POOL if t in cands}) if cands[t] > 0]
+            if risk_on and not ranked_all:
+                ranked_all = defensive          # GEM: equities fail the absolute filter -> bonds/gold
             current = [t for t, o in pos.items() if o["sleeve"] == "trend"]
             if risk_on:
                 target = target_holdings(ranked_all, current, p["top_n"])
@@ -624,6 +642,31 @@ BUILD_VARIANTS = {
                                     mom_long=252, pool="index", abs_mom=True, top_n=1, lev=1.5),
     "v4_index_mom126":   dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
                               mom_long=126, pool="index", abs_mom=True, top_n=1),
+    # v5: GEM as published — monthly, equity indexes only in risk-on, abs_mom the only filter
+    "v5_gem":            dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False),
+    "v5_gem_nodots":     dict(regime="none", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False),
+    "v5_gem_skip21":     dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False),
+    "v5_gem_top2":       dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=2,
+                              rebalance="monthly", sma_filter=False),
+    "v5_gem_faber":      dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False),
+    "v5_gem_calls_1p5":  dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, lev=1.5),
+    "v5_gem_dots40":     dict(regime="none", force_liquidate=False, a_weight=0.60, b_weight=0.40, b_slots=20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False),
+    "v5_core_monthly":   dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True, top_n=5,
+                              rebalance="monthly", sma_filter=True),
 }
 
 
