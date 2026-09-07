@@ -103,6 +103,48 @@ def test_option_model_and_overlay():
     assert bs.PREMIUM_CAP == 0.25 and bs.CALL_SPREAD == 0.02
 
 
+def test_v6_two_speed_and_vol_scale():
+    step = bs.two_speed_step
+    assert step("normal", 100, 90, 95, 94) == "normal"           # above the slow line: normal
+    assert step("normal", 80, 90, 95, 94) == "off"               # breaks the slow line: off
+    assert step("off", 96, 100, 95, 96) == "off"                 # above a FALLING fast line: stays off
+    assert step("off", 96, 100, 95, 94) == "recovery"            # above a rising fast line: re-enter
+    assert step("recovery", 94, 100, 95, 94) == "off"            # loses the fast line: out again
+    assert step("recovery", 101, 100, 95, 94) == "normal"        # regains the slow line
+    assert step("off", 96, None, 95, 94) == "off"                # a hole keeps the state
+    assert bs.vol_scale(None, 0.20, 1.5) == 1.0 and bs.vol_scale(0.15, None, 1.5) == 1.0
+    assert bs.vol_scale(0.15, 0.30, 1.5) == 0.5                  # half exposure at twice the target vol
+    assert bs.vol_scale(0.15, 0.05, 1.5) == 1.5                  # capped at max_lev
+    assert bs.vol_scale(0.15, 1.00, 1.5) == bs.VOL_SCALE_MIN     # floored
+    # on the synthetic collapse, two_speed re-enters before the slow line is regained
+    d0 = dt.date(2010, 1, 4)
+    cal = []
+    d = d0
+    while len(cal) < 1000:
+        if d.weekday() < 5:
+            cal.append(d)
+        d += dt.timedelta(days=1)
+    spy = [100 * (1.001 ** i) for i in range(600)]
+    spy += [spy[-1] * (1 - 0.006 * k) for k in range(1, 61)]                       # -36% in 60 bars
+    spy += [spy[-1] * (1.003 ** k) for k in range(1, 1000 - len(spy) + 1)]         # V recovery
+    px = {"SPY": _series(cal, spy), "TLT": _series(cal, [100.0] * 1000), "GLD": _series(cal, [100.0] * 1000)}
+    base = dict(bs.DEFAULTS)
+    base.update(start=cal[300], end=cal[-1], top_n=1, a_weight=1.0, b_weight=0.0, b_slots=0,
+                pool="index_eq", abs_mom=False, sma_filter=False, rebalance="monthly", force_liquidate=True)
+    slow = bs.simulate(px, [], {}, dict(base, regime="weekly200"))
+    fast = bs.simulate(px, [], {}, dict(base, regime="two_speed"))
+    re_slow = min(t["entry_date"] for t in slow["trades"] if t["entry_date"] > cal[660])
+    re_fast = min(t["entry_date"] for t in fast["trades"] if t["entry_date"] > cal[660])
+    assert re_fast < re_slow
+    assert fast["stats"]["final_equity"] > slow["stats"]["final_equity"]
+    # vol targeting without leverage never exceeds the plain slot; with max_lev it rides calls
+    vt = bs.simulate(px, [], {}, dict(base, regime="none", vol_target=0.05, max_lev=1.0))
+    assert not any(t["reason"].endswith("_call") for t in vt["trades"])
+    assert any(t["reason"] == "resize" for t in vt["trades"]) or vt["stats"]["n_trades"] >= 1
+    lv = bs.simulate(px, [], {}, dict(base, regime="none", vol_target=0.15, max_lev=1.5))
+    assert any(t["reason"].endswith("_call") for t in lv["trades"])
+
+
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src

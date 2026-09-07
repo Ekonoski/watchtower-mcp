@@ -132,7 +132,43 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # v5: rebalance cadence ('weekly' | 'monthly'), and whether each
                 # fund must also sit above its own 200-day (sma_filter). GEM as
                 # published = monthly, no per-fund SMA, abs_mom only.
-                rebalance="weekly", sma_filter=True)
+                rebalance="weekly", sma_filter=True,
+                # v6 (2026-09-07, after the v4 read — 2020: risk-off Mar 13, parked
+                # in TLT until Aug 21 while QQQ ran off the low; 2009 the same
+                # shape): regime='two_speed' leaves on the 200-day and RE-ENTERS
+                # on a close above a RISING fast_sma (the recovery state, whose
+                # stop is the fast line until the 200-day is regained). Evaluated
+                # daily; a state change forces a rebalance that day. And
+                # vol_target (annualized, e.g. 0.15): the trend sleeve's exposure
+                # is scaled by vol_target / SPY 60-day realized vol, clamped to
+                # [VOL_SCALE_MIN, max_lev]; scale > 1 rides the call overlay.
+                fast_sma=50, fast_rise=10, vol_target=None, max_lev=1.0)
+VOL_SCALE_MIN = 0.30
+RESIZE_BAND = 0.20        # resize a share position only when it drifts 20% from target
+
+
+def two_speed_step(state, close, slow, fast, fast_prev):
+    """Pure. One daily step of the v6 regime machine. States: 'normal'
+    (SPY above its slow line), 'off', 'recovery' (re-entered on a rising
+    fast line, stopped by it). Any hole in the lines keeps the state."""
+    if slow is None or fast is None:
+        return state
+    if close > slow:
+        return "normal"
+    if state == "normal":
+        return "off"
+    rising = fast_prev is not None and fast > fast_prev
+    if state == "off":
+        return "recovery" if (close > fast and rising) else "off"
+    return "recovery" if close > fast else "off"          # state == 'recovery'
+
+
+def vol_scale(vol_target, spy_vol, max_lev):
+    """Pure. Exposure multiplier for the trend sleeve; 1.0 when targeting is off
+    or the vol proxy is a hole."""
+    if not vol_target or spy_vol is None or spy_vol <= 0:
+        return 1.0
+    return max(VOL_SCALE_MIN, min(max_lev, vol_target / spy_vol))
 
 
 def month_ends(dates):
@@ -318,6 +354,8 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
     me_set = set(month_ends(cal))
     me_closes = []            # SPY month-end closes seen so far
     faber_on = True
+    ts_state = "normal"       # v6 two-speed regime state
+    ts_scale = 1.0            # v6 vol-target multiplier, refreshed at rebalance
 
     def price(tk, d):
         s = px.get(tk)
@@ -377,11 +415,32 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                            cost_basis=dollars, last=p_)
         return True
 
-    def open_call(tk, d, notional, sleeve, eq_now):
-        """Deep-ITM call on `notional` dollars of exposure. Premium is the
-        cash outlay; refused (falls back to shares) when it would breach
-        the premium cap or the vol proxy is a hole."""
+    def trim_pos(tk, d, dollars):
+        """Sell `dollars` of a share position (v6 resize). Records the sold
+        slice as its own trade row so the P&L stays auditable."""
         nonlocal cash
+        o = pos[tk]
+        p_ = price(tk, d)
+        if p_ is None or o["kind"] != "shares" or dollars <= 0:
+            return
+        qty = min(o["qty"], dollars / p_)
+        proceeds = qty * p_ * (1 - cost)
+        basis = o["cost_basis"] * (qty / o["qty"])
+        o["qty"] -= qty
+        o["cost_basis"] -= basis
+        cash += proceeds
+        trades.append(dict(sleeve=o["sleeve"], ticker=tk, entry_date=o["entry_date"], entry_px=o["entry"],
+                           exit_date=d, exit_px=p_, qty=qty, pnl=proceeds - basis, reason="resize"))
+        if o["qty"] <= 1e-9:
+            pos.pop(tk)
+
+    def open_call(tk, d, notional, sleeve, eq_now, fallback=None):
+        """Deep-ITM call on `notional` dollars of exposure. Premium is the
+        cash outlay; refused (falls back to `fallback` dollars of shares —
+        default notional / lev) when it would breach the premium cap or the
+        vol proxy is a hole."""
+        nonlocal cash
+        fb = notional / p["lev"] if fallback is None else fallback
         s = px.get(tk)
         j = s["idx"].get(d) if s else None
         if j is None:
@@ -389,7 +448,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
         S = s["closes"][j]
         sig = realized_vol(s["closes"], j)
         if sig is None:
-            return open_pos(tk, d, min(notional / p["lev"], cash), sleeve, "momentum")
+            return open_pos(tk, d, min(fb, cash), sleeve, "momentum")
         sig_i = max(0.10, sig * VOL_PREMIUM)
         K = strike_for_delta(S, CALL_TENOR, sig_i)
         prem_ps = bs_call(S, K, CALL_TENOR, sig_i)
@@ -397,7 +456,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
         outlay = prem_ps * qty * (1 + CALL_SPREAD) + CALL_COMMISSION * (qty / 100.0)
         at_risk = sum(o["cost_basis"] for o in pos.values() if o["kind"] == "call")
         if outlay > cash or at_risk + outlay > PREMIUM_CAP * eq_now:
-            return open_pos(tk, d, min(notional / p["lev"], cash), sleeve, "momentum")
+            return open_pos(tk, d, min(fb, cash), sleeve, "momentum")
         cash -= outlay
         pos[tk] = dict(kind="call", ticker=tk, sleeve=sleeve, qty=qty, entry=S, entry_date=d,
                        cost_basis=outlay, last=S, last_val=prem_ps * qty, strike=K,
@@ -469,20 +528,32 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             if len(me_closes) >= n:
                 faber_on = me_closes[-1] > sum(me_closes[-n:]) / n
 
+        # v6 two-speed regime: stepped daily on SPY; a state change forces a rebalance
+        forced = False
+        if p["regime"] == "two_speed":
+            prev_state = ts_state
+            ts_state = two_speed_step(ts_state, spy["closes"][i], sma(spy["closes"], p["sma"], i),
+                                      sma(spy["closes"], p["fast_sma"], i),
+                                      sma(spy["closes"], p["fast_sma"], i - p["fast_rise"]) if i >= p["fast_rise"] else None)
+            forced = (ts_state != prev_state) and ((ts_state == "off") != (prev_state == "off"))
+
         # ── sleeve A: trend, on Fridays (or last trading day of the week) ──
         if p["rebalance"] == "monthly":
             is_rebalance = (i in me_set) or i == start_i or i == end_i
         else:
             is_rebalance = (i == end_i) or (i + 1 < len(cal) and cal[i + 1].weekday() < d.weekday()) or i == start_i
-        if is_rebalance:
+        if is_rebalance or forced:
             si = spy["idx"][d]
             if p["regime"] == "faber":
                 risk_on = faber_on
             elif p["regime"] == "none":
                 risk_on = True
+            elif p["regime"] == "two_speed":
+                risk_on = ts_state != "off"
             else:
                 spy_sma = sma(spy["closes"], p["sma"], si)
                 risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
+            ts_scale = vol_scale(p["vol_target"], realized_vol(spy["closes"], si), p["max_lev"])
             pool = {"core": ETF_CORE, "index": ETF_INDEX, "index_eq": ETF_INDEX_EQ}.get(p["pool"], ETF_POOL)
             cands = {}
             for tk in set(pool) | set(DEFENSIVE_POOL):
@@ -521,12 +592,22 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                     close_pos(tk, d, "rotate" if risk_on else "risk_off")
             eq = cash + sum(value(o, d) for o in pos.values())
             slot = eq * p["a_weight"] / p["top_n"]
+            exposure = slot * ts_scale                      # v6: vol-targeted exposure per slot
+            use_calls = risk_on and (p["lev"] > 1.0 or ts_scale > 1.0)
             for tk in target:
                 if tk not in pos:
-                    if p["lev"] > 1.0 and risk_on and tk not in DEFENSIVE_POOL:
-                        open_call(tk, d, slot * p["lev"], "trend", eq)
+                    if use_calls and tk not in DEFENSIVE_POOL:
+                        open_call(tk, d, exposure * max(p["lev"], 1.0), "trend", eq, fallback=min(exposure, slot))
                     else:
-                        open_pos(tk, d, min(slot, cash), "trend", "momentum")
+                        open_pos(tk, d, min(exposure, cash), "trend", "momentum")
+                elif p["vol_target"] and pos[tk]["kind"] == "shares" and pos[tk]["sleeve"] == "trend":
+                    # resize held shares toward the new exposure (calls re-size at roll)
+                    held = value(pos[tk], d)
+                    want = min(exposure, slot) if not use_calls or tk in DEFENSIVE_POOL else exposure
+                    if held > want * (1 + RESIZE_BAND):
+                        trim_pos(tk, d, held - want)
+                    elif held < want * (1 - RESIZE_BAND):
+                        open_pos(tk, d, min(want - held, cash), "trend", "resize")
         equity.append((d, cash + sum(value(o, d) for o in pos.values()), spy_tr))
 
     # close everything at the end for accounting
@@ -667,6 +748,34 @@ BUILD_VARIANTS = {
     "v5_core_monthly":   dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
                               mom_long=252, pool="core", abs_mom=True, top_n=5,
                               rebalance="monthly", sma_filter=True),
+    # v6: the two-speed regime (fast re-entry after a crash) and vol targeting
+    "v6_ts_monthly":     dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False),
+    "v6_ts_weekly":      dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="weekly", sma_filter=False),
+    "v6_ts_mom126_weekly": dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                                mom_long=126, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                                rebalance="weekly", sma_filter=False),
+    "v6_vt15":           dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.0),
+    "v6_vt15_lev1p5":    dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.5),
+    "v6_vt20_lev2":      dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, vol_target=0.20, max_lev=2.0),
+    "v6_ts_vt15_lev1p5": dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.5),
+    "v6_ts_vt15_lev1p5_weekly": dict(regime="two_speed", force_liquidate=True, a_weight=0.80, b_weight=0.20,
+                                     mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                                     rebalance="weekly", sma_filter=False, vol_target=0.15, max_lev=1.5),
+    "v6_ts_vt15_lev1p5_nodots": dict(regime="two_speed", force_liquidate=True, a_weight=1.0, b_weight=0.0, b_slots=0,
+                                     mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
+                                     rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.5),
 }
 
 
