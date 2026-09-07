@@ -1646,6 +1646,32 @@ Rendering doctrine, same spirit as the rest of this file:
   (migration 057), marker darvas_v1, 20-minute passes until complete;
   `tests/test_darvas_study.py` pins the machine (close-only entry, the
   wick refusal, invalidation, the trail, the touch exit, the cap).
+  VERDICT (2026-09-07, 3,110 names, 13,436 box entries, R capped ±10):
+  REFUSED as an entry signal — the box breakout LOSES to its own
+  random control. Initial-stop-only (box_close): +0.29R post-2016 /
+  +0.23R pre-2016, 27-30% win, PF 1.3 — vs random same-stop entries on
+  the same names +0.59R / +0.46R, PF 1.5-1.65; random ≥ box in 18 of
+  21 years. Darvas's actual method (trail_close — the stop raised to
+  each new box bottom) collapses to +0.03R / −0.03R, 37% win, PF
+  1.06/0.94, avg hold 37 days: the trail sells the winners the
+  breakout was meant to catch (10,584 of 13,204 exits are trail
+  stops at +0.33R avg). Cuts, none earn a gate: SPY above its 200-day
+  (+0.30 vs −0.12) is the only cut that moves the number and it moves
+  the random control equally; vol_confirm, at_ath, box height all
+  flat. The reading: the box's "edge" was the bull market and
+  concentration, not the box — buying a 52-week-high breakout at the
+  close of the breakout bar is buying a local extreme, and the
+  desk's own record already said retest > breakout-close. Caveats
+  stated: breakout-close fills, no costs, survivors-only universe
+  (flatters everything, including the control), 250-bar cap, 11% of
+  box_close post-2016 trades are open-at-record-end holes. The
+  1%-risk compounding path is NOT reported — thousands of overlapping
+  trades compounded sequentially is meaningless; fixed-1R cumulative
+  sums are the honest profit line (box_close +2,624R / +732R vs
+  random +5,312R / +1,672R; trail +306R / −85R). And the LEAST/
+  GREATEST-ignores-NULL trap fired AGAIN on this readout (record_end
+  holes averaged as −10R in the exit-reason table until filtered) —
+  every capped aggregate guards NULL explicitly, no exceptions.
 
 ## Numbers on one line must reconcile with each other
 
