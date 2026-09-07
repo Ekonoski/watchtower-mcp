@@ -230,6 +230,13 @@ def test_v8_stock_sleeve():
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src
+    # the freeze: exactly two sealed runs, byte-identical to their build-window definitions
+    assert list(bs.SEALED_VARIANTS) == ["v7_skip21_bonds", "v8_lev3"]
+    for n, ov in bs.SEALED_VARIANTS.items():
+        assert ov == bs.BUILD_VARIANTS[n]
+    assert bs.SEALED_VARIANTS["v7_skip21_bonds"]["mom_skip"] == 21 and bs.SEALED_VARIANTS["v7_skip21_bonds"]["defensive"] == "bonds"
+    assert bs.SEALED_VARIANTS["v8_lev3"]["lev"] == 3.0
+    assert 'run_variant(n, overrides, "sealed")' in inspect.getsource(bs.run_sealed_grid)
     assert bs.SEALED_START == dt.date(2024, 1, 2) and bs.SEALED_END == dt.date(2026, 9, 4)
     assert bs.BUILD_END == dt.date(2023, 12, 31) and bs.COST_BPS == 5.0
     whole = inspect.getsource(bs)
