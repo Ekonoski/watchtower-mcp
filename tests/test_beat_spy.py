@@ -73,6 +73,36 @@ def test_v2_regime_and_no_forced_liquidation():
     assert v2["stats"]["final_equity"] > v1["stats"]["final_equity"]
 
 
+def test_option_model_and_overlay():
+    # deep-ITM call: ~0.80 delta strike sits below spot; value at expiry is intrinsic
+    K = bs.strike_for_delta(100.0, bs.CALL_TENOR, 0.25)
+    assert 80.0 < K < 97.0
+    assert abs(bs.bs_call(120.0, K, 0.0, 0.25) - (120.0 - K)) < 1e-9
+    assert bs.bs_call(100.0, K, bs.CALL_TENOR, 0.25) > 100.0 - K          # extrinsic > 0 before expiry
+    # the overlay on a rising synthetic: levered run beats shares, premium never breaches the cap
+    d0 = dt.date(2010, 1, 4)
+    cal = []
+    d = d0
+    while len(cal) < 900:
+        if d.weekday() < 5:
+            cal.append(d)
+        d += dt.timedelta(days=1)
+    import random
+    rng = random.Random(7)
+    spy = [100.0]
+    for _ in range(899):
+        spy.append(spy[-1] * (1 + 0.0006 + rng.gauss(0, 0.01)))
+    px = {"SPY": _series(cal, spy), "TLT": _series(cal, [100.0] * 900), "GLD": _series(cal, [100.0] * 900)}
+    base = dict(bs.DEFAULTS)
+    base.update(start=cal[300], end=cal[-1], top_n=1, a_weight=1.0, b_weight=0.0, b_slots=0,
+                regime="none", force_liquidate=False, pool="core")
+    sh = bs.simulate(px, [], {}, dict(base, lev=1.0))
+    cl = bs.simulate(px, [], {}, dict(base, lev=1.5))
+    assert any(t["reason"].endswith("_call") for t in cl["trades"])
+    assert cl["stats"]["final_equity"] != sh["stats"]["final_equity"]
+    assert bs.PREMIUM_CAP == 0.25 and bs.CALL_SPREAD == 0.02
+
+
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src

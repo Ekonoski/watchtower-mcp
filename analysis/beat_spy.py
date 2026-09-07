@@ -50,6 +50,58 @@ ETF_POOL = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP", "XLK", "XLF", "XLV", "XLB"
             "FXI", "KWEB", "IHI", "IGV", "ITA", "TAN", "ICLN", "URA", "LIT", "ARKK", "HYG",
             "TLT", "GLD")
 DEFENSIVE_POOL = ("TLT", "GLD")
+# v3 (2026-09-07): the CORE pool — broad indexes, the SPDR sectors and the
+# old-line industry ETFs. The thematic funds (ARKK, TAN, ICLN, URA, LIT,
+# KWEB, FXI, GDXJ, HYG, IHI, IGV, ITA) are excluded ex ante: most did not
+# exist before 2010, and a momentum ranking that can reach them buys the
+# 2020-21 bubble cohort at the top. Stated as a design choice, not a fit.
+ETF_CORE = ("SPY", "QQQ", "IWM", "MDY", "DIA", "RSP", "XLK", "XLF", "XLV", "XLB", "XLE",
+            "XLI", "XLP", "XLU", "XLY", "XLRE", "XLC", "XBI", "IBB", "SMH", "SOXX", "XHB",
+            "ITB", "XME", "XOP", "OIH", "KRE", "KBE", "XRT", "IYT", "VNQ", "GDX", "TLT", "GLD")
+CALL_DELTA = 0.80          # deep ITM: the option behaves like levered shares with a floor
+CALL_TENOR = 270 / 365.0   # ~9 months at entry
+CALL_ROLL_DAYS = 60        # roll when fewer than 60 calendar days remain
+CALL_SPREAD = 0.02         # 2% of premium per side (modeled prices, per the rules)
+CALL_COMMISSION = 0.65     # per contract per side
+VOL_PREMIUM = 1.15         # implied ≈ 1.15 × realized (the vol risk premium, stated)
+PREMIUM_CAP = 0.25         # total premium at risk ≤ 25% of equity (the rules)
+
+
+def _ncdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def bs_call(S, K, T, sigma):
+    """Black-Scholes call, r=0. T in years; T<=0 -> intrinsic."""
+    if T <= 0 or sigma <= 0:
+        return max(S - K, 0.0)
+    sq = sigma * math.sqrt(T)
+    d1 = (math.log(S / K) + 0.5 * sigma * sigma * T) / sq
+    return S * _ncdf(d1) - K * _ncdf(d1 - sq)
+
+
+def strike_for_delta(S, T, sigma, delta=CALL_DELTA):
+    lo, hi = -6.0, 6.0
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        if _ncdf(mid) < delta:
+            lo = mid
+        else:
+            hi = mid
+    d1 = (lo + hi) / 2
+    sq = sigma * math.sqrt(T)
+    return S * math.exp(-(d1 * sq - 0.5 * sigma * sigma * T))
+
+
+def realized_vol(closes, i, n=60):
+    """Annualized close-to-close vol of the n returns ending at bar i."""
+    lo = max(1, i - n + 1)
+    rets = [math.log(closes[k] / closes[k - 1]) for k in range(lo, i + 1) if closes[k - 1] > 0]
+    if len(rets) < 15:
+        return None
+    m = sum(rets) / len(rets)
+    var = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
+    return math.sqrt(var * 252)
 BUILD_END = dt.date(2023, 12, 31)
 SEALED_START, SEALED_END = dt.date(2024, 1, 2), dt.date(2026, 9, 4)
 
@@ -62,7 +114,14 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # against its 10-MONTH average on month-end closes only, and the
                 # regime governs NEW entries — holdings leave on their own 200-day
                 # or on falling out of the top 2N, never because SPY blinked.
-                regime="weekly200", regime_months=10, force_liquidate=True)
+                regime="weekly200", regime_months=10, force_liquidate=True,
+                # v3: pool ('all' | 'core'), absolute momentum (dual momentum —
+                # a name must also be UP over its own lookback), and the option
+                # overlay: lev>1 expresses each trend position as deep-ITM calls
+                # on lev × the share notional, priced by model (bs_call on
+                # realized vol × VOL_PREMIUM), rolled at CALL_ROLL_DAYS, total
+                # premium capped at PREMIUM_CAP of equity. lev=1.0 = shares.
+                pool="all", abs_mom=False, lev=1.0)
 
 
 def month_ends(dates):
@@ -256,16 +315,39 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
         i = s["idx"].get(d)
         return s["closes"][i] if i is not None else None
 
+    def call_mark(o, d):
+        """Model value of a call position at date d (per share × qty)."""
+        s = px[o["ticker"]]
+        j = s["idx"].get(d)
+        if j is None:
+            return o["last_val"]
+        S = s["closes"][j]
+        T = max(0.0, (o["expiry"] - d).days / 365.0)
+        sig = realized_vol(s["closes"], j) or o["sigma"]
+        return bs_call(S, o["strike"], T, sig * VOL_PREMIUM) * o["qty"]
+
+    def value(o, d):
+        if o["kind"] == "call":
+            return call_mark(o, d)
+        p_ = price(o["ticker"], d)
+        return (p_ if p_ is not None else o["last"]) * o["qty"]
+
     def close_pos(tk, d, reason):
         nonlocal cash
         o = pos.pop(tk)
-        p_ = price(tk, d)
-        if p_ is None:
-            p_ = o["last"]
-        proceeds = o["qty"] * p_ * (1 - cost)
+        if o["kind"] == "call":
+            gross = call_mark(o, d)
+            proceeds = gross * (1 - CALL_SPREAD) - CALL_COMMISSION * (o["qty"] / 100.0)
+            p_ = price(tk, d) or o["last"]
+        else:
+            p_ = price(tk, d)
+            if p_ is None:
+                p_ = o["last"]
+            proceeds = o["qty"] * p_ * (1 - cost)
         cash += proceeds
         trades.append(dict(sleeve=o["sleeve"], ticker=tk, entry_date=o["entry_date"], entry_px=o["entry"],
-                           exit_date=d, exit_px=p_, qty=o["qty"], pnl=proceeds - o["cost_basis"], reason=reason))
+                           exit_date=d, exit_px=p_, qty=o["qty"], pnl=proceeds - o["cost_basis"],
+                           reason=reason + ("" if o["kind"] == "shares" else "_call")))
 
     def open_pos(tk, d, dollars, sleeve, reason=""):
         nonlocal cash
@@ -280,7 +362,35 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             o["entry"] = (o["entry"] * o["qty"] + p_ * qty) / (o["qty"] + qty)
             o["qty"] += qty
         else:
-            pos[tk] = dict(sleeve=sleeve, qty=qty, entry=p_, entry_date=d, cost_basis=dollars, last=p_)
+            pos[tk] = dict(kind="shares", ticker=tk, sleeve=sleeve, qty=qty, entry=p_, entry_date=d,
+                           cost_basis=dollars, last=p_)
+        return True
+
+    def open_call(tk, d, notional, sleeve, eq_now):
+        """Deep-ITM call on `notional` dollars of exposure. Premium is the
+        cash outlay; refused (falls back to shares) when it would breach
+        the premium cap or the vol proxy is a hole."""
+        nonlocal cash
+        s = px.get(tk)
+        j = s["idx"].get(d) if s else None
+        if j is None:
+            return False
+        S = s["closes"][j]
+        sig = realized_vol(s["closes"], j)
+        if sig is None:
+            return open_pos(tk, d, min(notional / p["lev"], cash), sleeve, "momentum")
+        sig_i = max(0.10, sig * VOL_PREMIUM)
+        K = strike_for_delta(S, CALL_TENOR, sig_i)
+        prem_ps = bs_call(S, K, CALL_TENOR, sig_i)
+        qty = notional / S
+        outlay = prem_ps * qty * (1 + CALL_SPREAD) + CALL_COMMISSION * (qty / 100.0)
+        at_risk = sum(o["cost_basis"] for o in pos.values() if o["kind"] == "call")
+        if outlay > cash or at_risk + outlay > PREMIUM_CAP * eq_now:
+            return open_pos(tk, d, min(notional / p["lev"], cash), sleeve, "momentum")
+        cash -= outlay
+        pos[tk] = dict(kind="call", ticker=tk, sleeve=sleeve, qty=qty, entry=S, entry_date=d,
+                       cost_basis=outlay, last=S, last_val=prem_ps * qty, strike=K,
+                       expiry=d + dt.timedelta(days=int(CALL_TENOR * 365)), sigma=sig)
         return True
 
     for i in range(start_i, end_i + 1):
@@ -296,7 +406,15 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             p_ = price(tk, d)
             if p_ is not None:
                 o["last"] = p_
-        eq = cash + sum(o["qty"] * o["last"] for o in pos.values())
+            if o["kind"] == "call":
+                o["last_val"] = call_mark(o, d)
+        eq = cash + sum(value(o, d) for o in pos.values())
+        # roll calls approaching expiry (same name, fresh tenor)
+        for tk in [t for t, o in pos.items() if o["kind"] == "call" and (o["expiry"] - d).days < CALL_ROLL_DAYS]:
+            o = pos[tk]
+            notional = o["qty"] * (price(tk, d) or o["last"])
+            close_pos(tk, d, "roll")
+            open_call(tk, d, notional, o["sleeve"], eq)
 
         # ── sleeve B: ladders (daily) ──
         for tk in list(ladders):
@@ -352,7 +470,7 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 spy_sma = sma(spy["closes"], p["sma"], si)
                 risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
             cands = {}
-            for tk in ETF_POOL:
+            for tk in (ETF_CORE if p["pool"] == "core" else ETF_POOL):
                 s = px.get(tk)
                 if not s:
                     continue
@@ -361,7 +479,8 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                     continue
                 m = momentum(s["closes"], j, p["mom_long"], p["mom_skip"])
                 t_sma = sma(s["closes"], p["sma"], j)
-                if m is not None and t_sma is not None and s["closes"][j] > t_sma:
+                if m is not None and t_sma is not None and s["closes"][j] > t_sma \
+                        and (not p["abs_mom"] or m > 0):
                     cands[tk] = m
             ranked_all = rank_pool(cands)
             defensive = [t for t in rank_pool({t: cands[t] for t in DEFENSIVE_POOL if t in cands}) if cands[t] > 0]
@@ -378,12 +497,15 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
             for tk in current:
                 if tk not in target:
                     close_pos(tk, d, "rotate" if risk_on else "risk_off")
-            eq = cash + sum(o["qty"] * o["last"] for o in pos.values())
+            eq = cash + sum(value(o, d) for o in pos.values())
             slot = eq * p["a_weight"] / p["top_n"]
             for tk in target:
                 if tk not in pos:
-                    open_pos(tk, d, min(slot, cash), "trend", "momentum")
-        equity.append((d, cash + sum(o["qty"] * o["last"] for o in pos.values()), spy_tr))
+                    if p["lev"] > 1.0 and risk_on and tk not in DEFENSIVE_POOL:
+                        open_call(tk, d, slot * p["lev"], "trend", eq)
+                    else:
+                        open_pos(tk, d, min(slot, cash), "trend", "momentum")
+        equity.append((d, cash + sum(value(o, d) for o in pos.values()), spy_tr))
 
     # close everything at the end for accounting
     for tk in list(pos):
@@ -468,6 +590,21 @@ BUILD_VARIANTS = {
     "v2_trend_only":     dict(regime="faber", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0),
     "v2_faber_liq":      dict(regime="faber", force_liquidate=True, a_weight=0.80, b_weight=0.20),
     "v2_noregime":       dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20),
+    # v3: core pool, dual momentum (abs_mom), 252-21 lookback; then the call overlay
+    "compass_v3":        dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True),
+    "v3_top3":           dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True, top_n=3),
+    "v3_top8":           dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True, top_n=8),
+    "v3_no_dots":        dict(regime="faber", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0,
+                              mom_long=252, pool="core", abs_mom=True),
+    "v3_calls_1p5":      dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True, lev=1.5),
+    "v3_calls_2p0":      dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True, lev=2.0),
+    "v3_top3_calls_1p5": dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, pool="core", abs_mom=True, top_n=3, lev=1.5),
 }
 
 
