@@ -176,6 +176,24 @@ def _sma(s: pd.Series, n: int) -> pd.Series:
     return s.rolling(n).mean()
 
 
+WT_LAZYBEAR = (10, 21, 4)     # channel EMA, average EMA, wt2 SMA — the engine's defaults
+WT_CIPHER_B = (9, 12, 3)      # Market Cipher B / Compass (Eric, 2026-09-07: "identical on every time frame")
+
+
+def wavetrend(df: pd.DataFrame, channel: int = 10, average: int = 21, smooth: int = 4):
+    """The ONE wavetrend definition (hlc3 → esa/d → ci → wt1/wt2). The
+    engine calls it with LazyBear's 10/21/4; the 9/12/3 recount calls the
+    same function with Cipher B's numbers so the two dialects can never
+    drift apart in code. Returns (wt1, wt2) Series."""
+    ap = (df["high"] + df["low"] + df["close"]) / 3.0
+    esa = _ema(ap, channel)
+    d = _ema((ap - esa).abs(), channel)
+    ci = (ap - esa) / (0.015 * d.replace(0, np.nan))
+    wt1 = _ema(ci, average)
+    wt2 = _sma(wt1, smooth)
+    return wt1, wt2
+
+
 def compute_oscillator(df: pd.DataFrame) -> pd.DataFrame:
     """All indicator columns for a confirmed-bars OHLCV frame.
 
@@ -185,13 +203,8 @@ def compute_oscillator(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     rng = (out["high"] - out["low"]).replace(0, np.nan)   # doji guard
 
-    # WaveTrend (LazyBear): hlc3 → esa/d → ci → wt1/wt2
-    ap = (out["high"] + out["low"] + out["close"]) / 3.0
-    esa = _ema(ap, 10)
-    d = _ema((ap - esa).abs(), 10)
-    ci = (ap - esa) / (0.015 * d.replace(0, np.nan))
-    out["wt1"] = _ema(ci, 21)
-    out["wt2"] = _sma(out["wt1"], 4)
+    # WaveTrend (LazyBear defaults 10/21/4): hlc3 → esa/d → ci → wt1/wt2
+    out["wt1"], out["wt2"] = wavetrend(out)
     out["wt_diff"] = out["wt1"] - out["wt2"]
 
     # Money flow, candle-position style (visual match to the Cipher fill)
