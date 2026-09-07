@@ -2771,6 +2771,13 @@ def start_scheduler():
             _rsi_sweep()
         except Exception as e:
             log.warning(f"[scheduler] stale intraday sweep skipped: {e}")
+        # Beat-SPY challenge (2026-09-07): build-window variants run once
+        # each at boot; the sealed window is never run from here.
+        try:
+            from analysis.beat_spy import run_build_grid
+            run_build_grid()
+        except Exception as e:
+            log.warning(f"[scheduler] beat_spy build grid skipped: {e}")
         try:
             from analysis.ledger_audit import run as _laudit
             _laudit()
