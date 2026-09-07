@@ -1767,6 +1767,21 @@ Rendering doctrine, same spirit as the rest of this file:
   guard1 rows kept). FCEL's 2019 6× (+$34k) was checked and STANDS:
   the stored levels are off by a scale factor but every daily ratio
   is a real print (the July 2019 double on the Exxon news).
+  THE CANDIDATE (hygiene v2, 66 variants): `v7_skip21_bonds` — one
+  equity-index ETF by 12-1 momentum, monthly, absolute filter, TLT-else-
+  cash, plus the 20% deep-dot ladder — 11.96% / −30.3% vs SPY 9.61% /
+  −55.2%, and it beats in BOTH halves on both clauses (2006–15: 7.99 vs
+  6.96, DD −23.4 vs −55.2; 2016–23: 17.26 vs 13.15, DD −30.3 vs −33.7).
+  The skip is a plateau (15/21/30/42 all beat; 10 misses by 0.05), the
+  lookback is not (189 → 8.92, 315 → 9.41 — 252 is Antonacci's published
+  prior, stated). Sleeve A ALONE beats on drawdown in both halves and
+  ties SPY on return in 2016–23 (13.17 vs 13.15); the dots supply the
+  modern-era outperformance and carry the survivorship caveat. Removing
+  the leveraged ETPs RAISED the dot sleeve (v5_gem 7.10 → 8.40) — decay
+  products were net losers in it. Frozen rules, every number, in
+  `docs/research/compass_frozen_rules.md`; the sealed window runs once,
+  on Eric's go, with the 1.5× deep-ITM-call expression (12.04% / −27.0%)
+  beside it as the declared options version.
 
 ## Numbers on one line must reconcile with each other
 
