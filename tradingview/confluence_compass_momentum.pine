@@ -1,0 +1,104 @@
+// Saved 2026-09-07 at Eric's request. Origin: a ChatGPT reconstruction of the
+// Market Cipher B momentum panel ("Confluence Compass - Momentum (Research)").
+// Eric's read: dots, waves, money flow and RSIs line up with his chart.
+// Watchtower's comparison (analysis/oscillator.py, compute_oscillator):
+//   waves      this file: EMA 9 / EMA 9 / wt1 EMA 12 / wt2 SMA 3 (Cipher B defaults)
+//              ours:      EMA 10 / EMA 10 / wt1 EMA 21 / wt2 SMA 4 (LazyBear defaults)
+//   money flow this file: CCI-style (hlc3 vs SMA5, /0.015*dev) smoothed SMA 60
+//              ours:      Cipher B's RSI-MFI sma(((close-open)/(high-low))*150, 60)
+//   RSI lines  this file: price stochastics (40 and 81, 2-bar averaged)
+//              ours:      RSI(14) and StochRSI 14/14 smoothed 3/3
+//   buy dot    this file: wave cross-up with lt wave < -60
+//              ours:      cross-up recorded at any level; screens gate on wt2 level
+// Kept verbatim below the header. Do not publish.
+//@version=6
+indicator("Confluence Compass - Momentum (Research)", shorttitle="Compass M", overlay=false, precision=12, explicit_plot_zorder=true)
+// Private research source. Do not publish. This is an independent reconstruction,
+// not the protected Market Cipher B source or a claim of complete equivalence.
+// The numerical core inherits frozen candidates with separate sampled validation.
+// Static RGBA, widths and plot styles were observed in the original Style panel.
+// Visual v1.3: oscillator ordering and money-flow sign colors are supported by
+// observed SPY 15/60-minute cases. Ribbon current-bar coloring was observed.
+// UNVERIFIED: Buy layer revision and further zoom/pane checks, aliases,
+// alternate-resolution settings, equality branches and exceptional inputs.
+// No alerts, orders, external indicator inputs, or future/higher-timeframe requests.
+
+// FORMULA CORE V1 BEGIN - inherited frozen formulas; no external source inputs.
+f_ema(float value, int length) =>
+    var float state = na
+    if not na(value)
+        state := na(state) ? value : state + (2.0 / (length + 1)) * (value - state)
+    not na(value) ? state : na
+
+f_price_stochastic_pair(int length) =>
+    float lowest = ta.lowest(low, length)
+    float highest = ta.highest(high, length)
+    float raw = bar_index >= length - 1 and highest > lowest ? 100.0 * (close - lowest) / (highest - lowest) : na
+    (raw[1] + raw) / 2.0
+
+float source = (high + low + close) / 3.0
+float waveCenter = f_ema(source, 9)
+float waveDeviation = f_ema(math.abs(source - waveCenter), 9)
+float lightWave = f_ema(not na(waveDeviation) and waveDeviation != 0 ? (source - waveCenter) / (0.015 * waveDeviation) : na, 12)
+float blueWave = (lightWave[2] + lightWave[1] + lightWave) / 3.0
+float waveDifference = lightWave - blueWave
+float rsiOutput = f_price_stochastic_pair(40)
+float stochasticRsiOutput = f_price_stochastic_pair(81)
+float flowCenter = ta.sma(hlc3, 5)
+float flowDeviation = ta.sma(math.abs(hlc3 - flowCenter), 5)
+float flowNormalized = flowDeviation != 0 ? (hlc3 - flowCenter) / (0.015 * flowDeviation) : na
+float moneyFlow = ta.sma(flowNormalized, 60)
+bool wavesKnown = not na(lightWave) and not na(blueWave) and not na(lightWave[1]) and not na(blueWave[1])
+bool crossUp = wavesKnown and lightWave > blueWave and lightWave[1] <= blueWave[1]
+bool crossDown = wavesKnown and lightWave < blueWave and lightWave[1] >= blueWave[1]
+float buyFlag = wavesKnown ? (crossUp and lightWave < -60 ? 1.0 : 0.0) : na
+float crossingUp = crossUp ? blueWave : na
+float crossingDown = crossDown ? blueWave : na
+// FORMULA CORE V1 END
+
+
+const color LIGHT_WAVE = color.new(color.rgb(144, 202, 249), 30)
+const color BLUE_WAVE = color.new(color.rgb(13, 71, 161), 30)
+const color WAVE_DIFFERENCE = color.new(color.rgb(255, 235, 59), 25)
+const color FLOW_GREEN = color.new(color.rgb(63, 255, 0), 60)
+const color FLOW_RED = color.new(color.rgb(255, 17, 0), 60)
+const color BUY_GREEN = color.new(color.rgb(63, 255, 0), 20)
+const color CROSS_DOWN_RED = color.new(color.rgb(255, 0, 0), 35)
+const color WHITE_40 = color.new(color.rgb(255, 255, 255), 60)
+const color WHITE_50 = color.new(color.rgb(255, 255, 255), 50)
+const color RSI_MAGENTA = color.rgb(230, 0, 230)
+const color OSC_GREEN = color.rgb(63, 255, 0)
+const color OSC_RED = color.rgb(255, 17, 0)
+const color TRANSPARENT_REFERENCE = color.new(color.rgb(255, 17, 0), 100)
+
+// Default color rules supported by observed original SPY 15/60-minute cases.
+// Finite sampled agreement does not establish universal equivalence or exact-zero behavior.
+color flowColor = moneyFlow > 0 ? FLOW_GREEN : FLOW_RED
+color oscillatorColor = rsiOutput > stochasticRsiOutput ? OSC_GREEN : OSC_RED
+
+plot(lightWave, "Lt Blue Wave", color=LIGHT_WAVE, linewidth=1, style=plot.style_area)
+plot(blueWave, "Blue Wave", color=BLUE_WAVE, linewidth=1, style=plot.style_area)
+plot(waveDifference, "VWAP", color=WAVE_DIFFERENCE, linewidth=1, style=plot.style_area)
+// The original and candidate money-flow tracking lines aligned on ACHR 2D.
+plot(moneyFlow, "Mny Flow", color=flowColor, linewidth=2, style=plot.style_area, trackprice=true)
+plot(crossingUp, "Blue Wave Crossing UP", color=BUY_GREEN, linewidth=3, style=plot.style_circles)
+plot(crossingDown, "Blue Wave Crossing Down", color=CROSS_DOWN_RED, linewidth=3, style=plot.style_circles)
+// Original and candidate Zero tracking lines aligned in the ACHR 2D view.
+plot(0.0, "Zero", color=WHITE_40, linewidth=1, style=plot.style_line, trackprice=true)
+plot(100.0, "100%", color=WHITE_50, linewidth=1, style=plot.style_circles)
+plot(60.0, "OB 1 Solid", color=WHITE_40, linewidth=2, style=plot.style_line)
+plot(-60.0, "OS 1 Solid", color=WHITE_40, linewidth=2, style=plot.style_line)
+plot(53.0, "Trigger 1", color=WHITE_50, linewidth=1, style=plot.style_circles)
+plot(-53.0, "Trigger 2", color=WHITE_50, linewidth=1, style=plot.style_circles)
+plot(rsiOutput, "RSI", color=RSI_MAGENTA, linewidth=1, style=plot.style_line)
+plot(stochasticRsiOutput, "Sto RSI", color=oscillatorColor, linewidth=2, style=plot.style_line)
+// The observed lower ribbon spans -93 to -103. SPY 15-minute observations
+// support the current money-flow color for the segment ending on each bar.
+// Keep default fill alignment: no offset or lookahead is introduced.
+ribbonUpper = plot(-93.0, "Plot - first reference", color=TRANSPARENT_REFERENCE, linewidth=1, style=plot.style_line)
+ribbonLower = plot(-103.0, "Plot - second reference", color=TRANSPARENT_REFERENCE, linewidth=1, style=plot.style_line)
+fill(ribbonUpper, ribbonLower, color=flowColor, title="Plots Background")
+// ACHR 2D single-view comparison supports size.tiny: ~9px diameter and center y770.
+// Original Buy is bright above the ribbon; v1.2 was muted beneath it. With
+// explicit plot ordering, draw Buy after the fill. Verify other zoom/pane views.
+plotshape(buyFlag == 1, "Buy", style=shape.circle, location=location.bottom, color=BUY_GREEN, size=size.tiny)
