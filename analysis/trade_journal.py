@@ -242,6 +242,126 @@ def _skips_block(c, days) -> list:
     return lines
 
 
+def scoreboard(base, trades, spy_dates, spy_closes, spy_divs, start, end):
+    """Pure. Eric's account vs SPY total return under the Beat-SPY rules.
+    trades: [(exit_date, pnl_dollars)] for closed trades; spy_* are SPY's
+    daily calendar and closes; spy_divs {ex_date: cash}. Equity is
+    base + realized P&L booked on the exit date (open trades are not
+    marked — stated by the caller). Returns dict or None when the window
+    holds no SPY bars."""
+    idx = [i for i, d in enumerate(spy_dates) if start <= d <= end]
+    if not idx or base <= 0:
+        return None
+    units = base / spy_closes[idx[0]]
+    pnl_by_day = {}
+    for d, p in trades:
+        pnl_by_day[d] = pnl_by_day.get(d, 0.0) + float(p)
+    eq, spy, cum = [], [], 0.0
+    booked = set()
+    for i in idx:
+        d = spy_dates[i]
+        if d in spy_divs:
+            units += units * spy_divs[d] / spy_closes[i]
+        for dd, p in pnl_by_day.items():
+            if dd <= d and dd not in booked:
+                cum += p
+                booked.add(dd)
+        eq.append(base + cum)
+        spy.append(units * spy_closes[i])
+    unbooked = sum(p for dd, p in pnl_by_day.items() if dd not in booked)   # exits after the window
+    def _mdd(xs):
+        pk, worst = -1e18, 0.0
+        for x in xs:
+            pk = max(pk, x)
+            if pk > 0:
+                worst = min(worst, x / pk - 1.0)
+        return worst
+    sys_ret, spy_ret = eq[-1] / base - 1.0, spy[-1] / base - 1.0
+    sys_dd, spy_dd = _mdd(eq), _mdd(spy)
+    return dict(days=len(idx), first=spy_dates[idx[0]], last=spy_dates[idx[-1]],
+                sys_ret=sys_ret, spy_ret=spy_ret, sys_dd=sys_dd, spy_dd=spy_dd,
+                sys_eq=eq[-1], spy_eq=spy[-1], unbooked=unbooked,
+                clause_return=sys_ret > spy_ret, clause_dd=sys_dd >= spy_dd,
+                beats=(sys_ret > spy_ret) and (sys_dd >= spy_dd))
+
+
+def set_config(key, value, note=""):
+    """Write one journal_config row (starting_equity, scoreboard_start)."""
+    from screen.reversal_screen import _conn
+    if key not in ("starting_equity", "scoreboard_start"):
+        raise ValueError(f"unknown config key {key!r}; known: starting_equity, scoreboard_start")
+    if key == "starting_equity":
+        v = float(value)
+        if v <= 0:
+            raise ValueError("starting_equity must be positive")
+        value = f"{v:g}"
+    else:
+        dt.date.fromisoformat(value)
+    conn = _conn()
+    try:
+        with conn.cursor() as c:
+            c.execute("""INSERT INTO journal_config (key, value, note, updated_at) VALUES (%s,%s,%s,now())
+                         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, note=EXCLUDED.note, updated_at=now()""",
+                      (key, value, note or "set by Eric"))
+        conn.commit()
+        return f"journal_config {key} = {value}" + (f" ({note})" if note else "")
+    finally:
+        conn.close()
+
+
+def _scoreboard_block(c) -> list:
+    """Account vs SPY total return since scoreboard_start, both clauses of
+    the Beat-SPY rule. Never silently absent: a missing input renders as
+    a named hole."""
+    c.execute("SELECT key, value, note FROM journal_config")
+    cfg = {k: (v, n) for k, v, n in c.fetchall()}
+    if "starting_equity" not in cfg or "scoreboard_start" not in cfg:
+        return ["", "Scoreboard vs S&P 500: unavailable — journal_config missing starting_equity/scoreboard_start."]
+    base = float(cfg["starting_equity"][0])
+    base_note = cfg["starting_equity"][1] or ""
+    start = dt.date.fromisoformat(cfg["scoreboard_start"][0])
+    c.execute("SELECT trade_date, close FROM daily_prices WHERE ticker='SPY' AND trade_date >= %s AND close IS NOT NULL ORDER BY trade_date", (start,))
+    spy_rows = c.fetchall()
+    if not spy_rows:
+        return ["", f"Scoreboard vs S&P 500: unavailable — no SPY bars since {start}."]
+    spy_dates = [r[0] for r in spy_rows]
+    spy_closes = [float(r[1]) for r in spy_rows]
+    c.execute("SELECT ex_date, amount FROM beat_spy_dividends WHERE ticker='SPY' AND ex_date >= %s", (start,))
+    divs = {d: float(a) for d, a in c.fetchall()}
+    c.execute("""SELECT (exited_at AT TIME ZONE 'America/New_York')::date, pnl_dollars
+                 FROM trade_journal WHERE kind='trade' AND exited_at IS NOT NULL AND pnl_dollars IS NOT NULL
+                   AND exited_at >= %s""", (start,))
+    trades = [(d, float(p)) for d, p in c.fetchall()]
+    c.execute("""SELECT count(*) FILTER (WHERE exited_at IS NULL), count(*) FILTER (WHERE exited_at IS NOT NULL AND pnl_dollars IS NULL)
+                 FROM trade_journal WHERE kind='trade' AND entered_at >= %s""", (start,))
+    n_open, n_hole = c.fetchone()
+    sb = scoreboard(base, trades, spy_dates, spy_closes, divs, start, spy_dates[-1])
+    if sb is None:
+        return ["", "Scoreboard vs S&P 500: unavailable — empty window."]
+    assumed = "ASSUMED" in base_note.upper()
+    lines = ["", f"Scoreboard vs S&P 500 (the Beat-SPY rule: higher return AND no deeper drawdown) — "
+                 f"since {sb['first']} through {sb['last']}, {sb['days']} trading days, {len(trades)} closed trades"]
+    lines.append(f"  Account: {sb['sys_ret']*100:+.2f}% (${base:,.0f} → ${sb['sys_eq']:,.0f}) · worst drawdown {sb['sys_dd']*100:.1f}%"
+                 + ("  [starting equity ASSUMED — set it with watchtower_journal_config]" if assumed else ""))
+    lines.append(f"  SPY TR:  {sb['spy_ret']*100:+.2f}% (${base:,.0f} → ${sb['spy_eq']:,.0f}) · worst drawdown {sb['spy_dd']*100:.1f}%")
+    v1 = "pass" if sb["clause_return"] else "FAIL"
+    v2 = "pass" if sb["clause_dd"] else "FAIL"
+    lines.append(f"  Return clause: {v1} · Drawdown clause: {v2} · verdict so far: "
+                 f"{'BEATING' if sb['beats'] else 'NOT beating'} — {len(trades)} trades, "
+                 f"{'below ~30, anecdote' if len(trades) < 30 else 'n past the first gate'}")
+    holes = []
+    if n_open:
+        holes.append(f"{n_open} open (not marked)")
+    if n_hole:
+        holes.append(f"{n_hole} closed without P&L (holes)")
+    if sb["unbooked"]:
+        holes.append(f"${sb['unbooked']:+,.0f} exited after the last SPY bar (booked next session)")
+    if holes:
+        lines.append("  Not in the curve: " + "; ".join(holes))
+    lines.append("  Equity = starting equity + realized P&L on exit date; SPY with dividends reinvested at the ex-date close; no interest on cash.")
+    return lines
+
+
 def journal_summary(days=90) -> str:
     from screen.reversal_screen import _conn
     conn = _conn()
@@ -259,12 +379,17 @@ def journal_summary(days=90) -> str:
                                   entered_at DESC""", (int(days),))
             rows = c.fetchall()
             skip_lines = _skips_block(c, days)
+            try:
+                sb_lines = _scoreboard_block(c)
+            except Exception as e:          # the scoreboard is a section, never a crash — a hole says so
+                conn.rollback()
+                sb_lines = ["", f"Scoreboard vs S&P 500: unavailable — {type(e).__name__}: {str(e)[:300]}"]
     finally:
         conn.close()
     if not rows:
         return (f"Trade journal: 0 trades in the last {days} days. "
                 f"Zero is data — log with watchtower_journal_log."
-                + "\n".join(skip_lines))
+                + "\n".join(sb_lines) + "\n".join(skip_lines))
     closed = [r for r in rows if r[12] is not None]
     open_or_hole = [r for r in rows if r[12] is None]
     lines = [f"Trade journal — last {days} days · {len(rows)} entries "
@@ -334,5 +459,6 @@ def journal_summary(days=90) -> str:
     from analysis.journal_legs import leg_grade, render_grade
     # column order of the SELECT above: ... r_actual=17, chart_urls=18, legs=19
     lines.extend(render_grade(leg_grade((r[19], r[12]) for r in closed), len(closed)))
+    lines.extend(sb_lines)
     lines.extend(skip_lines)
     return "\n".join(lines)

@@ -804,6 +804,25 @@ def watchtower_journal(days: int = 90) -> str:
 
 
 @mcp.tool()
+def watchtower_journal_config(key: str, value: str, note: str = "") -> str:
+    """
+    Set a journal scoreboard input. The journal grades Eric's account
+    against SPY total return under the Beat-SPY rule (higher return AND
+    no deeper drawdown) from `scoreboard_start`, on a base of
+    `starting_equity`. Until the real starting equity is set the render
+    says ASSUMED. Keys: starting_equity (dollars), scoreboard_start
+    (YYYY-MM-DD).
+    """
+    try:
+        from analysis.trade_journal import set_config
+        return set_config(key, value, note)
+    except ValueError as e:
+        return f"Not set: {e}"
+    except Exception as e:
+        return f"Config write failed: {e}"
+
+
+@mcp.tool()
 def watchtower_fair_value(ticker: str, discount_rate: float = 10.0,
                           growth_rate: float = 0.0, years: int = 10) -> str:
     """
