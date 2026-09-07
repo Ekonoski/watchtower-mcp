@@ -1782,6 +1782,25 @@ Rendering doctrine, same spirit as the rest of this file:
   `docs/research/compass_frozen_rules.md`; the sealed window runs once,
   on Eric's go, with the 1.5× deep-ITM-call expression (12.04% / −27.0%)
   beside it as the declared options version.
+  "WHAT ABOUT GREAT RETURNS?" (v8, same evening — Eric: "life changing…
+  that maybe I can market"): three graded answers. SINGLE-NAME 12-1
+  MOMENTUM, REFUSED — `beat_spy_stock_monthly` (one row per SPY
+  month-end per ticker liquid AT THAT DATE, 158k rows / 218 months,
+  ~725 names a month) ranked top 5/10/20 with the absolute filter and
+  the defect guard: 6–10% CAGR at −58% to −80% drawdown, 2008 −56%,
+  five straight red years 2014–18, 2019 +104% — a lottery profile; the
+  200-day-regime version still breached SPY's drawdown in 2016–23
+  (−57.8 vs −33.7). The published stock-momentum premium did not show
+  up on this universe under these rules, survivorship and all. LONGER
+  DOT HOLDS (252 days): −0.5 pt of return for +3 pts of drawdown; the
+  heavy 40% version failed the first half. THE HARDER CALL OVERLAY is
+  the only thing that adds points: 2× 13.52% / −29.8%, 3× 14.14% /
+  −30.3%, both halves, because the 25% premium cap — not the
+  multiplier — sets the drawdown (the excess falls back to shares).
+  v8_lev3 replaces 1.5× as the declared options expression. The honest
+  ceiling under the rules, stated to Eric: ~12% in shares, ~14% with
+  defined-risk calls, drawdown ~30%; the marketable asset is the
+  measured process and a clean sealed record, not a headline number.
 
 ## Numbers on one line must reconcile with each other
 

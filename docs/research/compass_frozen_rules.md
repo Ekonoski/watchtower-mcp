@@ -57,11 +57,14 @@ three-tranche ladder and a fixed hold. That is all.
 ## Options expression (secondary, declared)
 
 Same rules; Sleeve A's equity position is expressed as ~0.80-delta calls
-with ~9 months to expiry on 1.5× the share notional, priced by
-Black–Scholes on 60-day realized vol × 1.15, 2% of premium per side
-plus $0.65 per contract, rolled when < 60 days remain, total premium
-≤ 25% of equity (falls back to shares when the cap or the vol proxy
-refuses). Modeled prices, stated. TLT and the dots stay shares.
+with ~9 months to expiry on **3.0×** the share notional (variant
+`v8_lev3`), priced by Black–Scholes on 60-day realized vol × 1.15, 2% of
+premium per side plus $0.65 per contract, rolled when < 60 days remain,
+total premium ≤ 25% of equity — the cap binds, so the realized leverage
+is well under 3× and the excess falls back to shares. Modeled prices,
+stated. TLT and the dots stay shares. (1.5× graded 12.04% / −27.0%,
+2.0× 13.52% / −29.8%, 3.0× 14.14% / −30.3%; all three beat in both
+halves; the cap, not the multiplier, sets the drawdown.)
 
 ## Benchmark and grading
 
@@ -77,7 +80,18 @@ stated bias against the system of roughly a point a year.
 | SPY total return | 9.61% | −55.2% | 6.96% / −55.2% | 13.15% / −33.7% |
 | v7_skip21_bonds (primary) | 11.96% | −30.3% | 7.99% / −23.4% | 17.26% / −30.3% |
 | v7_skip21_bonds_calls_1p5 | 12.04% | −27.0% | 7.50% / −23.4% | 18.22% / −27.0% |
+| **v8_lev3 (declared options expression)** | **14.14%** | **−30.3%** | 9.49% / −23.4% | 20.38% / −30.3% |
 | v7_skip21_bonds_nodots (Sleeve A alone) | 11.19% | −28.6% | 9.76% / −27.9% | 13.17% / −28.6% |
+
+Refused on the same window (v8, the "great returns" pass): single-name
+12-1 momentum on a liquid-at-the-date universe (top 5/10/20, with and
+without a 200-day regime) graded 6–10% CAGR at −58% to −80% drawdowns —
+2008 −56%, five straight losing years 2014–2018, 2019 +104%: a lottery
+profile, and the regime-filtered version still breached SPY's drawdown
+in 2016–2023 (−57.8% vs −33.7%). Longer dot holds (252 days) traded a
+half-point of return for three points of drawdown (11.46% / −26.9%) and
+the heavy version failed the first half (6.19% vs 6.96%); the 126-day
+hold stands as declared.
 
 Neighbors (same chassis): skip 15 → 10.38%, skip 30 → 9.98%, skip 42 →
 11.61%, skip 10 → 9.56%; lookback 189 → 8.92%, 315 → 9.41%. The skip is a
