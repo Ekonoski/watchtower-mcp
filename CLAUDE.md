@@ -1625,6 +1625,28 @@ Rendering doctrine, same spirit as the rest of this file:
   lower priority, stated: PITR, worker separation, a redesigned daily
   view — real costs, no trading decision changes this month.
 
+- **The Darvas Box study — pre-registered** (2026-09-05, Eric: "back
+  test the Nicolas Darvas box theory and tell me its win results and
+  profit"). Spec frozen in `analysis/darvas_study.py` before any number:
+  universe = currently-listed names with ≥500 stored bars and ≥$10M
+  trailing-90d dollar volume (survivorship stated); a box opens on a
+  52-week high, top confirms after three bars fail to exceed it, bottom
+  after three fail to undercut the lowest low since the top (Darvas's
+  own rule, daily bars); entry = first CLOSE above the top (wick rule);
+  stop = box bottom; three exits on the SAME entries — trail_close
+  (Darvas classic, stop raised to each new completed box bottom, exit on
+  a close through), trail_touch, box_close (never trailed) — all capped
+  at 250 bars (max_hold), record-cut trades are holes; control =
+  random_close (random bar, same ticker, same stop distance, no breakout
+  condition). Cuts, never gates: vol_confirm (≥1.5× 50d), spy_above_200,
+  at_ath (of the STORED record — shallow histories make it weak),
+  box height, era. R capped ±10 at readout; "profit" = expectancy per
+  trade and a 1%-risk-per-trade equity path with drawdown; no costs,
+  breakout-close fills, stated. Tables darvas_events/darvas_progress
+  (migration 057), marker darvas_v1, 20-minute passes until complete;
+  `tests/test_darvas_study.py` pins the machine (close-only entry, the
+  wick refusal, invalidation, the trail, the touch exit, the cap).
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a

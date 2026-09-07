@@ -2101,6 +2101,24 @@ def start_scheduler():
         id="index_1m_live", replace_existing=True,
     )
 
+    # Darvas Box study (2026-09-05): chunked universe passes every 20 min,
+    # any day, until the marker is claimed (a no-op afterwards). Boot
+    # seeder below runs the first passes.
+    def _darvas_pass():
+        try:
+            from analysis.darvas_study import run as _darvas
+            for _ in range(4):
+                if _darvas():
+                    break
+        except Exception:
+            log.exception("[darvas] pass failed")
+
+    scheduler.add_job(
+        _darvas_pass,
+        CronTrigger(minute="*/20", timezone=et),
+        id="darvas_study", replace_existing=True,
+    )
+
     # Premarket range, daily (2026-09-04): the table's owning job — the
     # one-shot backfill left every session after 9/3 a hole. 9:31 with a
     # 9:41 retry (an unclaimed day retries; a claimed day is a no-op).
@@ -2729,7 +2747,8 @@ def start_scheduler():
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
                             ("daystate", "analysis.daystate_study"),
-                            ("price_sanity", "analysis.price_sanity")):
+                            ("price_sanity", "analysis.price_sanity"),
+                            ("darvas", "analysis.darvas_study")):
             try:
                 import importlib
                 _run = importlib.import_module(_mod).run
