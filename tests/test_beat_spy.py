@@ -47,6 +47,32 @@ def test_simulate_tracks_spy_when_only_spy_qualifies():
     assert st["max_dd"] <= 0.0 and st["spy_max_dd"] <= 0.0
 
 
+def test_v2_regime_and_no_forced_liquidation():
+    dates = [dt.date(2020, 1, 30), dt.date(2020, 1, 31), dt.date(2020, 2, 3), dt.date(2020, 2, 28), dt.date(2020, 3, 2)]
+    assert bs.month_ends(dates) == [1, 3, 4]
+    # a holding above its own 200d in a risk-off month is KEPT under v2 and SOLD under v1
+    d0 = dt.date(2010, 1, 4)
+    cal = []
+    d = d0
+    while len(cal) < 900:
+        if d.weekday() < 5:
+            cal.append(d)
+        d += dt.timedelta(days=1)
+    # SPY: rises 600 bars, then collapses 40% over 100 bars and stays (risk-off); XLK keeps rising
+    spy = [100 * (1.001 ** i) for i in range(600)] + [100 * (1.001 ** 600) * (1 - 0.004 * k) for k in range(1, 101)]
+    spy += [spy[-1]] * (900 - len(spy))
+    xlk = [50 * (1.0012 ** i) for i in range(900)]
+    px = {"SPY": _series(cal, spy), "XLK": _series(cal, xlk),
+          "TLT": _series(cal, [100.0] * 900), "GLD": _series(cal, [100.0] * 900)}
+    base = dict(bs.DEFAULTS)
+    base.update(start=cal[300], end=cal[-1], top_n=1, a_weight=1.0, b_weight=0.0, b_slots=0)
+    v1 = bs.simulate(px, [], {}, dict(base, regime="weekly200", force_liquidate=True))
+    v2 = bs.simulate(px, [], {}, dict(base, regime="faber", force_liquidate=False))
+    assert any(t["reason"] == "risk_off" for t in v1["trades"])          # v1 dumped XLK when SPY broke
+    assert not any(t["reason"] == "risk_off" for t in v2["trades"])      # v2 held it (above its own 200d)
+    assert v2["stats"]["final_equity"] > v1["stats"]["final_equity"]
+
+
 def test_sealed_runs_once_and_scope():
     src = inspect.getsource(bs.run_variant)
     assert "refusing to re-run" in src and 'window == "sealed"' in src

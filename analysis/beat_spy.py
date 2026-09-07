@@ -55,7 +55,19 @@ SEALED_START, SEALED_END = dt.date(2024, 1, 2), dt.date(2026, 9, 4)
 
 DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 b_weight=0.20, b_slots=10, b_hold=126, b_depth=-30.0, b_dd=50.0,
-                ladder=(0.0, -0.15, -0.25), start=dt.date(2006, 1, 3), end=BUILD_END)
+                ladder=(0.0, -0.15, -0.25), start=dt.date(2006, 1, 3), end=BUILD_END,
+                # v1: weekly SPY-vs-200d regime that liquidates the trend sleeve on
+                # risk-off. v2 (2026-09-07, after the first build read — 172 forced
+                # 'risk_off' exits at 31% win, −$64k): regime='faber' checks SPY
+                # against its 10-MONTH average on month-end closes only, and the
+                # regime governs NEW entries — holdings leave on their own 200-day
+                # or on falling out of the top 2N, never because SPY blinked.
+                regime="weekly200", regime_months=10, force_liquidate=True)
+
+
+def month_ends(dates):
+    """Pure. Indices of the last trading day of each month."""
+    return [i for i in range(len(dates)) if i + 1 == len(dates) or dates[i + 1].month != dates[i].month]
 
 
 # ── pure rules ─────────────────────────────────────────────────────────
@@ -232,6 +244,10 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
     dots_by_date = {}
     for tk, d, dpx in dots:
         dots_by_date.setdefault(d, []).append((tk, float(dpx)))
+    # Faber regime: state changes only on month-end closes
+    me_set = set(month_ends(cal))
+    me_closes = []            # SPY month-end closes seen so far
+    faber_on = True
 
     def price(tk, d):
         s = px.get(tk)
@@ -317,15 +333,26 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 ladders[tk] = dict(dot_px=dpx, tranche=tranche, filled=[True] + [False] * (len(p["ladder"]) - 1),
                                    exit_i=j + p["b_hold"])
 
+        # ── regime ──
+        if i in me_set:
+            me_closes.append(spy["closes"][i])
+            n = p["regime_months"]
+            if len(me_closes) >= n:
+                faber_on = me_closes[-1] > sum(me_closes[-n:]) / n
+
         # ── sleeve A: trend, on Fridays (or last trading day of the week) ──
         is_rebalance = (i == end_i) or (i + 1 < len(cal) and cal[i + 1].weekday() < d.weekday()) or i == start_i
         if is_rebalance:
             si = spy["idx"][d]
-            spy_sma = sma(spy["closes"], p["sma"], si)
-            risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
-            pool = ETF_POOL if risk_on else DEFENSIVE_POOL
+            if p["regime"] == "faber":
+                risk_on = faber_on
+            elif p["regime"] == "none":
+                risk_on = True
+            else:
+                spy_sma = sma(spy["closes"], p["sma"], si)
+                risk_on = spy_sma is not None and spy["closes"][si] > spy_sma
             cands = {}
-            for tk in pool:
+            for tk in ETF_POOL:
                 s = px.get(tk)
                 if not s:
                     continue
@@ -336,11 +363,18 @@ def simulate(px, dots, spy_div, p, capital=100_000.0):
                 t_sma = sma(s["closes"], p["sma"], j)
                 if m is not None and t_sma is not None and s["closes"][j] > t_sma:
                     cands[tk] = m
-            ranked = rank_pool(cands)
-            if not risk_on:
-                ranked = [t for t in ranked if cands[t] > 0]      # defensive only if it is actually rising
+            ranked_all = rank_pool(cands)
+            defensive = [t for t in rank_pool({t: cands[t] for t in DEFENSIVE_POOL if t in cands}) if cands[t] > 0]
             current = [t for t, o in pos.items() if o["sleeve"] == "trend"]
-            target = target_holdings(ranked, current, p["top_n"])
+            if risk_on:
+                target = target_holdings(ranked_all, current, p["top_n"])
+            elif p["force_liquidate"]:
+                target = target_holdings(defensive, current, p["top_n"])
+            else:
+                # v2: keep what still qualifies on its own merits; new money only defensive
+                keep = [t for t in current if t in ranked_all[:2 * p["top_n"]]]
+                target = target_holdings(defensive, keep, p["top_n"]) if len(keep) < p["top_n"] else keep[:p["top_n"]]
+                target = list(dict.fromkeys(keep + target))[:p["top_n"]]
             for tk in current:
                 if tk not in target:
                     close_pos(tk, d, "rotate" if risk_on else "risk_off")
@@ -426,6 +460,14 @@ BUILD_VARIANTS = {
     "v1_no_dots":        dict(b_weight=0.0, b_slots=0),
     "v1_a90":            dict(a_weight=0.90, b_weight=0.10),
     "v1_dots_only":      dict(a_weight=0.0, b_weight=0.30, b_slots=15),
+    # v2: Faber monthly regime, no forced liquidation, full allocation
+    "compass_v2":        dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20),
+    "v2_mom252":         dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20, mom_long=252),
+    "v2_top3":           dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20, top_n=3),
+    "v2_top8":           dict(regime="faber", force_liquidate=False, a_weight=0.80, b_weight=0.20, top_n=8),
+    "v2_trend_only":     dict(regime="faber", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0),
+    "v2_faber_liq":      dict(regime="faber", force_liquidate=True, a_weight=0.80, b_weight=0.20),
+    "v2_noregime":       dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20),
 }
 
 
