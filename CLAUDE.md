@@ -1705,6 +1705,27 @@ Rendering doctrine, same spirit as the rest of this file:
   band, 16D deep-dot ladder, VIX-backwardation days, SPY-below-200d
   stand-aside), sized by the stop, product graded not parts; every
   option is model-priced (no historical chains) and says so.
+  THE FIRST "BEAT" WAS A SPLICED TICKER (same afternoon): v5_gem_skip21
+  printed 10.69% CAGR / −31.4% DD against SPY's 9.61% / −55.2% — and its
+  best trade was `AI` bought at $2.83 on 2020-07-07 and sold at $134.54
+  for +$118k. That symbol was Arlington Asset until C3.ai took it in
+  December 2020; `daily_prices` splices the two companies into one
+  series. The same query found TFIN (2008 bars, then nothing until
+  2022 — a ladder "held" 14 years for +$52k, in 28 of the stored runs)
+  and TNL (2010→2021, the pre-rename symbol). Ticker reuse + multi-year
+  holes are a disease of any single-name backtest on this table, and a
+  bar-count exit stalls across a hole. Now `series_defects` (a close
+  3× / ⅓ its prior close = splice; >10 calendar days between bars =
+  gap) stamps the first bar after a break; a held ladder exits at the
+  LAST REAL PRINT on that bar (`series_splice` / `series_gap`), a dot on
+  a tape broken inside the prior two years is refused, every run logs
+  both counts, params carry `defect_guard`, and the boot grid renames
+  pre-guard rows `*_pre_guard` (kept for the record) and re-runs the
+  canonical names. Rule, general: any study that ranks or holds single
+  names from `daily_prices` runs the splice/gap census first — the 16D
+  green-dot study's own dot table inherits the same exposure (queued:
+  re-count deep dots with the defect filter; the medians are robust to
+  a handful of 40× phantoms, the means never were).
 
 ## Numbers on one line must reconcile with each other
 
