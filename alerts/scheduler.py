@@ -2600,6 +2600,20 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot15 seed skipped: {e}")
 
+    def _seed_greendot_recount():
+        """The 9/12/3 recount + series-defect stamp (2026-09-07, Eric's
+        Compass-equals-Cipher ruling and the Beat-SPY splice/hole census).
+        Same blocks, one wavetrend function, two parameter sets; the
+        bottom-buy dot tagged; chunked with resume, readout logged when
+        the fleet completes."""
+        try:
+            from analysis.greendot_recount import run
+            for _ in range(12):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] greendot recount seed skipped: {e}")
+
     def _seed_greendot_entry():
         """The green-dot ENTRY-SCHEDULE study (2026-08-29, Eric's HA-doji
         refinement): five pre-registered variants per dot, graded on real
@@ -2707,6 +2721,7 @@ def start_scheduler():
         _seed_target_shadow()
         _seed_options_catchup()
         _seed_greendot_study()
+        _seed_greendot_recount()
         _seed_greendot_entry()
         _seed_greendot15()
         _seed_greendot_ema()

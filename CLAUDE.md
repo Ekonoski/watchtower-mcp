@@ -1716,6 +1716,26 @@ Rendering doctrine, same spirit as the rest of this file:
   disagreement — on any bar a trader would read, Compass IS the chart.
   So 9/12/3 is the eye's definition and the recount is the path to
   adopting it, not a debate about whether to.
+  THE RECOUNT IS RUNNING (shipped the same evening,
+  `analysis/greendot_recount.py`, tables `greendot_dots_cb` /
+  `greendot_recount_progress`, migration 062): `oscillator.wavetrend`
+  is now the ONE wavetrend definition with parameters —
+  `compute_oscillator` calls it with `WT_LAZYBEAR` (10/21/4) and the
+  recount calls the same function with `WT_CIPHER_B` (9/12/3) on the
+  same fixed-anchor 16D blocks, so the two dialects cannot drift apart
+  in code. Every cross-up is stored with Cipher's flags — `below_zero`
+  (wt2 ≤ 0, our leg) and `bottom_buy` (light wave wt1 < −60, Cipher's
+  own) — and BOTH records carry `defect_prior` / `defect_fwd` from
+  `beat_spy.series_defects` (a splice or hole inside the prior two
+  years or the forward year), the 10/21/4 rows also gaining
+  `wt1_at_cross` / `bottom_buy`. Pre-registered pass/fail: the clean
+  deep cohort (dd ≥ 50, cross ≤ −30, below-zero) under 9/12/3 must
+  land in the 10/21/4 neighborhood on median 6-mo forward and
+  %-positive, era-split; then the engine adopts 9/12/3. The bottom-buy
+  cohort grades separately; dialects match within ±1 block.
+  `READOUT_SQL` logs the comparison when the fleet completes;
+  `tests/test_greendot_recount.py` pins the one-definition property,
+  the flags, the defect windows, the matching, and writes-own-tables.
 
 - **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
   trading system that beats the SPY… you are competing to beat the SPY
