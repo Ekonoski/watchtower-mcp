@@ -122,3 +122,42 @@ Stated odds before the sealed run: the drawdown clause is very likely to
 hold (a one-ETF momentum book with an absolute filter sat out most of
 2022); the return clause is close to a coin flip over 32 months in which
 SPY compounded hard.
+
+## SEALED RESULT (run once, 2026-09-07 16:27 UTC, commit 153dff1)
+
+| 2024-01-02 → 2026-09-04 | CAGR | Max DD | Final equity | Trades |
+|---|---|---|---|---|
+| SPY total return | 21.39% | −18.8% | $167,862 | — |
+| v7_skip21_bonds (primary) | 24.43% | −22.1% | $179,313 | 63 (37 wins) |
+| v8_lev3 (options expression) | 24.43% | −22.1% | $179,313 | 63 — identical: zero calls opened |
+
+**Verdict: FAILED the window under its own rules.** Clause 1 (return)
+passed by 3.0 points; clause 2 (drawdown no deeper than SPY's) failed by
+3.3 points — both troughs on 2025-04-08, the tariff crash, where the
+system held QQQ against SPY's −18.8% and the dot sleeve fell with it.
+Tie-break (return per unit of drawdown) also goes to SPY: 1.11 vs 1.14.
+The stated odds were exactly backwards: the return clause held, the
+drawdown clause did not, because a 32-month window with no bear market
+gives the absolute filter nothing to sit out and leaves only the
+concentration cost.
+
+Year by year: 2024 +24.6% vs SPY +25.6%; 2025 +18.5% vs +18.0%; 2026 YTD
++20.3% vs +13.3%. Holdings, the entire trend sleeve: QQQ 2024-01-02 →
+2025-04-30 (+$14.4k), SPY 2025-04-30 → 2026-02-27 (+$22.0k), QQQ
+2026-02-27 → end (+$22.5k). Dots: 60 trades, 34 wins (57%), +$20.4k,
+avg win $981 / avg loss −$499, zero defect exits.
+
+**The options expression was vacuous out of sample.** In the build window
+the 3× overlay opened only FIVE call positions in 18 years (DIA 2006–07,
+DIA 2016, QQQ 2017–18 — the last two alone +$161k), because the 25%
+premium cap admits a 3× deep-ITM position only when realized vol is
+unusually low; 2024–26 never qualified, so the run collapsed to shares.
+The 14.14% build number was five trades wearing a system's clothes. Any
+future options expression must state how many positions its number
+rests on.
+
+Build → sealed drop-off: return went UP (11.96% → 24.43%, as did SPY's,
+9.61% → 21.39%); the drawdown edge went from 25 points better than SPY
+to 3 points worse. The system's edge is a bear-market edge and the
+window held none. That is the honest reading, reported in the same
+detail as a pass, per §7.
