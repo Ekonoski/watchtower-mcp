@@ -148,7 +148,7 @@ DEFAULTS = dict(a_weight=0.70, top_n=5, mom_long=126, mom_skip=21, sma=200,
                 # for −$19.6k because gold ranked first on momentum into its crash)
                 defensive="all",
                 # series-hygiene version stamped into every run's params
-                defect_guard=1)
+                defect_guard=2)
 VOL_SCALE_MIN = 0.30
 RESIZE_BAND = 0.20        # resize a share position only when it drifts 20% from target
 
@@ -346,14 +346,30 @@ def _spy_dividends(conn):
     return out
 
 
+# Leveraged / inverse ETPs are daily-reset decay products, not companies in
+# drawdown — the green-dot claim was about stocks. 2026-09-07 census: ~30
+# of them (JNUG, NUGT, SCO, SQQQ, SPXS, TSLQ…) sat in the deep-dot universe.
+LEVERAGED_ETP_RE = (r"(direxion daily|microsectors|proshares - ultra|proshares - short|tradr |velocityshares"
+                    r"|leveraged etn| [23]x |[23]x (bull|bear|leveraged|inverse|long|short)|(bull|bear) [23]x)")
+
+
+def is_leveraged_etp(company_name):
+    """Pure. True when a security name reads as a leveraged/inverse ETP."""
+    import re
+    return bool(company_name) and re.search(LEVERAGED_ETP_RE, company_name, re.I) is not None
+
+
 def _dots(conn, p):
-    """Deep dots on names liquid today (>= $10M/day trailing 90d)."""
+    """Deep dots on names liquid today (>= $10M/day trailing 90d), leveraged
+    and inverse ETPs excluded by name."""
     with conn.cursor() as c:
         c.execute("""WITH liq AS (SELECT ticker FROM daily_prices WHERE trade_date >= CURRENT_DATE - 90
                                   GROUP BY ticker HAVING avg(close*volume) >= 10e6)
                      SELECT g.ticker, g.dot_date, g.px_at_dot FROM greendot_dots g JOIN liq USING (ticker)
+                     LEFT JOIN tickers t ON t.ticker = g.ticker
                      WHERE g.cross_depth <= %s AND g.drawdown_pct >= %s AND g.px_at_dot >= 2
-                     ORDER BY g.dot_date""", (p["b_depth"], p["b_dd"]))
+                       AND NOT COALESCE(t.company_name ~* %s, false)
+                     ORDER BY g.dot_date""", (p["b_depth"], p["b_dd"], LEVERAGED_ETP_RE))
         return c.fetchall()
 
 
@@ -833,23 +849,66 @@ BUILD_VARIANTS = {
                                     mom_long=252, mom_skip=0, pool="index_eq", abs_mom=True, top_n=1,
                                     rebalance="monthly", sma_filter=False, vol_target=0.15, max_lev=1.5,
                                     defensive="bonds"),
+    # v7: the clean grid's only survivor was v5_gem_skip21 (9.76% vs 9.61%) and
+    # bonds-only defensive added +1.2 pts to v5_gem. Combine them, and walk the
+    # skip / lookback neighbors — a beat that lives in one cell is a curve fit.
+    "v7_skip21_bonds":   dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip10":         dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=10, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip15":         dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=15, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip30":         dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=30, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip42":         dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=252, mom_skip=42, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_mom189_skip21":  dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=189, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_mom315_skip21":  dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                              mom_long=315, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                              rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip21_bonds_top2": dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                                 mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=2,
+                                 rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip21_bonds_nodots": dict(regime="none", force_liquidate=False, a_weight=1.0, b_weight=0.0, b_slots=0,
+                                   mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                                   rebalance="monthly", sma_filter=False, defensive="bonds"),
+    "v7_skip21_bonds_vt20_lev2": dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                                      mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                                      rebalance="monthly", sma_filter=False, defensive="bonds",
+                                      vol_target=0.20, max_lev=2.0),
+    "v7_skip21_bonds_calls_1p5": dict(regime="none", force_liquidate=False, a_weight=0.80, b_weight=0.20,
+                                      mom_long=252, mom_skip=21, pool="index_eq", abs_mom=True, top_n=1,
+                                      rebalance="monthly", sma_filter=False, defensive="bonds", lev=1.5),
 }
 
 
-DEFECT_GUARD_VERSION = 1   # bump when series hygiene changes; older rows re-run
+DEFECT_GUARD_VERSION = 2   # bump when series hygiene changes; older rows re-run
+# v1: splice/gap guard on the dots sleeve. v2: leveraged/inverse ETPs excluded
+# from the dot universe by name.
 
 
 def run_build_grid() -> bool:
     """Boot: run every build-window variant not yet stored under the current
     series-hygiene version. Rows written before the guard (2026-09-07: TFIN's
     phantom $52k sat in 28 of them) are kept for the record as
-    <name>_pre_guard and the canonical name re-runs. True when done."""
+    <name>_pre_guard (v0) / <name>_guardN (later versions) and the canonical
+    name re-runs. True when done."""
     from screen.reversal_screen import _conn
     conn = _conn()
     try:
         with conn.cursor() as c:
-            c.execute("""UPDATE beat_spy_runs SET name = name || '_pre_guard'
-                         WHERE run_window='build' AND name NOT LIKE '%%_pre_guard'
+            c.execute("""UPDATE beat_spy_runs
+                         SET name = name || CASE WHEN COALESCE((params->>'defect_guard')::int, 0) = 0
+                                                 THEN '_pre_guard'
+                                                 ELSE '_guard' || (params->>'defect_guard') END
+                         WHERE run_window='build' AND name NOT LIKE '%%guard%%'
                            AND COALESCE((params->>'defect_guard')::int, 0) < %s""", (DEFECT_GUARD_VERSION,))
             if c.rowcount:
                 log.warning("[beat_spy] %d build runs predate series-hygiene v%d — kept as *_pre_guard, re-running.",

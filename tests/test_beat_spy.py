@@ -182,6 +182,14 @@ def test_series_defects_guard():
     # every run stamps the hygiene version it ran under; the boot grid re-runs older rows
     assert bs.DEFAULTS["defect_guard"] == bs.DEFECT_GUARD_VERSION
     assert "_pre_guard" in inspect.getsource(bs.run_build_grid)
+    # leveraged / inverse ETPs are refused by name; companies with unlucky names are not
+    for name in ("Direxion Daily Junior Gold Miners Index Bull 2X ETF", "ProShares - UltraShort Bloomberg Crude Oil",
+                 "ProShares - UltraPro Short QQQ", "MicroSectors U.S. Big Banks 3 Leveraged ETN",
+                 "Tradr 2X Short TSLA Daily ETF", "ProShares - Ultra QQQ", "Direxion Daily S&P 500 Bear 3X ETF"):
+        assert bs.is_leveraged_etp(name), name
+    for name in ("Build-A-Bear Workshop, Inc.", "UiPath Inc.", "Ultragenyx Pharmaceutical Inc.",
+                 "Ultra Clean Holdings, Inc.", "Ultrapar Participações S.A.", "FuelCell Energy, Inc.", None, ""):
+        assert not bs.is_leveraged_etp(name), name
 
 
 def test_sealed_runs_once_and_scope():

@@ -1691,6 +1691,31 @@ Rendering doctrine, same spirit as the rest of this file:
   and re-grade the deep cohort; if the edge holds on both settings the
   engine adopts Cipher B's numbers so the system and the chart speak one
   dialect — a definition change, so it waits on the re-grade.
+  ChatGPT's research handbook for the same script
+  (`docs/research/challenger_market_cipher_compass_handbook_v1.pdf`,
+  2026-09-07) confirms the read from its side: the reconstruction's
+  money flow is a volume-free price normalization (SMA-5 center, SMA-60)
+  and its "RSI"/"Sto RSI" are 40- and 81-bar PRICE stochastics — not
+  Cipher B's components — and its "verified" claim is port-vs-Pine
+  agreement on one TSLA 16D chart, with the waves differing from the
+  ORIGINAL Market Cipher B by up to 11 points early and converging by
+  late 2019. Two things it adds that we use: Cipher's lessons name TWO
+  dots — any wave cross-up (green dot) vs the BOTTOM BUY dot (cross-up
+  with the light wave below −60) — and our 16D record uses neither
+  exactly (wt2 ≤ 0 at the cross; deep cohort ≤ −30), so the queued
+  9/12/3 re-count also tags the bottom-dot flag (the depth throttle
+  already says the deeper definition is the loaded one); and the
+  taught core setup — a deep ANCHOR wave, a shallower TRIGGER wave,
+  flow rounding up while still red, confirmation on a completed candle
+  — is the pctr_hl → cipher_reversal → base_turn lifecycle in Cipher's
+  own vocabulary, which the exemplar museum's classification pass
+  should adopt. The rest is process doctrine this file already holds.
+  Eric's ruling (same day, after checking Market Cipher and Compass side
+  by side): "they are identical on every time frame I have checked. So,
+  they are good." The early-bar differences are burn-in, not
+  disagreement — on any bar a trader would read, Compass IS the chart.
+  So 9/12/3 is the eye's definition and the recount is the path to
+  adopting it, not a debate about whether to.
 
 - **The Beat-SPY challenge** (2026-09-07, Eric: "find and create a
   trading system that beats the SPY… you are competing to beat the SPY
@@ -1726,6 +1751,22 @@ Rendering doctrine, same spirit as the rest of this file:
   green-dot study's own dot table inherits the same exposure (queued:
   re-count deep dots with the defect filter; the medians are robust to
   a handful of 40× phantoms, the means never were).
+  THE CLEAN GRID (same afternoon, 55 variants re-run under the guard):
+  the phantoms were worth ~1 pt of CAGR everywhere (compass_v1 4.66 →
+  3.69%). One cell still beats SPY — v5_gem_skip21 at 9.76% / −28.4%
+  vs 9.61% / −55.2% — by 0.15 pts, with mom_skip=0 at 7.10%: a beat
+  that lives in one parameter cell is a curve fit until its neighbors
+  agree (v7 walks skip 10/15/30/42 and lookback 189/315). Bonds-only
+  defensive added +1.2 pts (v6_gem_bonds 8.29%). REFUSED: the
+  two-speed regime (fast 50-day re-entry) — 65 forced risk-off exits
+  for −$54k at a 47-day hold, a whipsaw machine (v6_ts_* 1.8–5.8%);
+  vol targeting is flat-to-marginal (vt15 6.36, vt20+2x calls 7.61 vs
+  7.10). And the dot universe held ~30 leveraged/inverse ETPs (JNUG,
+  NUGT, SCO, SQQQ, TSLQ…) — daily-reset decay products, not companies
+  in drawdown; excluded by name (`LEVERAGED_ETP_RE`, hygiene v2, the
+  guard1 rows kept). FCEL's 2019 6× (+$34k) was checked and STANDS:
+  the stored levels are off by a scale factor but every daily ratio
+  is a real print (the July 2019 double on the Exxon news).
 
 ## Numbers on one line must reconcile with each other
 
