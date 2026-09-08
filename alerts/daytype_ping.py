@@ -48,48 +48,80 @@ def _ratio(x):
     return "unavailable" if x is None else f"{float(x):.2f} ATR"
 
 
+RANGE_AT = 65.0      # pooled chop ≥ this → RANGE LIKELY   (labels on the number, not a rule — Eric, 2026-09-08)
+TRAVEL_AT = 35.0     # pooled chop ≤ this → TRAVEL LIKELY
+ERA_AGREE = 10.0     # eras within this many points agree; otherwise the verdict is UNDECIDED
+HUG_PCT = 0.3        # open within this % of the flip = the blender read (flipprox: 1.3–1.5 crosses/day)
+
+
+def verdict(rows):
+    """Pure. rows = prior() rows [(era, n, p_chop, p_trend, p_green_of_trend)].
+    Pools the eras into ONE number and runs the desk's both-eras check as a
+    flag: returns (word, n, chop, trend, green_of_trend, flag) where word is
+    RANGE LIKELY / TRAVEL LIKELY / UNDECIDED / NO READ and flag names why a
+    verdict was withheld (eras disagree, small n) or 'eras agree'. Small n
+    and disagreement never render as a confident word."""
+    rows = [r for r in rows if r and r[1]]
+    if not rows:
+        return "NO READ", 0, None, None, None, "no matching days"
+    n = sum(r[1] for r in rows)
+    chop = sum(float(r[2]) * r[1] for r in rows) / n
+    trend = sum(float(r[3]) * r[1] for r in rows) / n
+    gt = [(float(r[4]), r[1]) for r in rows if r[4] is not None]
+    green = (sum(g * k for g, k in gt) / sum(k for _, k in gt)) if gt else None
+    if n < SMALL_N:
+        return "UNDECIDED", n, chop, trend, green, "⚠ small n"
+    chops = [float(r[2]) for r in rows]
+    if len(rows) >= 2 and max(chops) - min(chops) > ERA_AGREE:
+        return "UNDECIDED", n, chop, trend, green, f"⚠ eras disagree ({' / '.join(f'{c:.0f}' for c in chops)})"
+    flag = "eras agree" if len(rows) >= 2 else "one era"
+    word = "RANGE LIKELY" if chop >= RANGE_AT else "TRAVEL LIKELY" if chop <= TRAVEL_AT else "UNDECIDED"
+    return word, n, chop, trend, green, flag
+
+
 def format_read(ticker, cp_key, feats, rows, raw):
-    """Pure: one ticker's line. feats = features() output (may be {}),
-    rows = prior() rows [(era, n, p_chop, p_trend, p_green_of_trend)],
-    raw = {'prev_rr': float|None, 'orb_rr': float|None, 'open_state',
+    """Pure: one ticker, ONE line. feats = features() output (may be {}),
+    rows = prior() rows, raw = {'prev_rr', 'orb_rr', 'open_state',
     'vix_backwardated', 'gamma_regime', 'flip_pct'}."""
+    tcut = {"f945": "9:45", "f1000": "10:00", "f1030": "10:30"}[cp_key]
+    head = f"📐 **DAY TYPE** {tcut} · **{ticker}**"
     if not feats:
-        return f"**{ticker}** — *unavailable* (no first bar / no daily context; a hole, not a read)"
-    post = next((r for r in rows if r[0] == "post2016"), None)
-    pre = next((r for r in rows if r[0] == "pre2016"), None)
-
-    def cell(r):
-        if r is None:
-            return "no matching days"
-        era, n, pc, pt, pg = r
-        tag = " ⚠ small n" if n < SMALL_N else ""
-        g = f", green {_pct(pg)} of trends" if pg is not None else ""
-        return f"chop {_pct(pc)} · trend {_pct(pt)}{g} (n={n}{tag})"
-
+        return f"{head} *unavailable* — no first bar / no daily context (a hole, not a read)"
+    word, n, chop, trend, green, flag = verdict(rows)
+    # direction rides the 10:30 break only: the break's job is COLOR, not trend
+    color = ""
+    if cp_key == "f1030" and word == "TRAVEL LIKELY" and green is not None and feats.get("orb_break") in ("up", "down"):
+        color = ", green favored" if green >= 60 else ", red favored" if green <= 40 else ""
+    numbers = ("no matching days" if chop is None else
+               f"chop {_pct(chop)} · trend {_pct(trend)} (n={n:,}, {flag})")
     legs = [f"ydy {_ratio(raw.get('prev_rr'))}",
             f"{'first bar' if cp_key == 'f945' else '30m range' if cp_key == 'f1000' else 'first hour'} {_ratio(raw.get('orb_rr'))}"]
     if cp_key == "f1030":
         ob = feats.get("orb_break")
-        legs.append("no close through the 30m range" if ob == "none" else f"closed {ob} through the 30m range" if ob else "30m break unavailable")
+        g = f" (green {_pct(green)} of trends)" if green is not None and ob in ("up", "down") else ""
+        legs.append("no close through the 30m range" if ob == "none" else
+                    f"closed {ob} through the 30m range{g}" if ob else "30m break unavailable")
     ctx = []
     if raw.get("open_state"):
         ctx.append({"above_pdh": "open > PDH", "below_pdl": "open < PDL", "inside": "open inside"}[raw["open_state"]])
     vb = raw.get("vix_backwardated")
     ctx.append("VIX backwardated" if vb else "VIX contango" if vb is False else "VIX unavailable")
-    if raw.get("gamma_regime"):
-        fp = raw.get("flip_pct")
-        ctx.append(f"gamma {raw['gamma_regime']}" + (f", flip {fp:.2f}% away" if fp is not None else ""))
-    return (f"**{ticker}** {' · '.join(legs)}\n"
-            f"   post-2016: {cell(post)}\n"
-            f"   pre-2016: {cell(pre)}\n"
-            f"   {' · '.join(ctx)}")
+    fp = raw.get("flip_pct")
+    if fp is not None:
+        ctx.append(f"flip {fp:.2f}% away" + (" ⚠ hugging" if fp < HUG_PCT else ""))
+    elif raw.get("gamma_regime"):
+        ctx.append(f"gamma {raw['gamma_regime']}")
+    return f"{head} **{word}{color}** — {numbers} · {' · '.join(legs)} · {' · '.join(ctx)}"
 
 
 def format_post(cp_key, tcut, lines):
-    head = {"f945": "first 15m bar", "f1000": "30-minute range", "f1030": "first hour + 30m break"}[cp_key]
-    return (f"📐 **DAY TYPE** {tcut:%H:%M} read ({head})\n" + "\n".join(lines) +
-            "\n_Priors: SPY 2005→ / QQQ 2011→, labeled at the close (chop = range < 0.75 ATR or mid close; "
-            "trend = ≥0.9 ATR closing in its top/bottom quarter). Measurement only — no book trades this line._")
+    """One line per index; the footnote rides only the 9:45 post so the
+    phone sees the definition once a day."""
+    body = "\n".join(lines)
+    if cp_key == "f945":
+        body += ("\n_Priors: SPY 2005→ / QQQ 2011→, labeled at the close (chop = range < 0.75 ATR or mid close; "
+                 "trend = ≥0.9 ATR closing in its top/bottom quarter). Measurement only — no book trades this line._")
+    return body
 
 
 def _rth_bars(client, ticker, today, tcut, et):
