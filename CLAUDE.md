@@ -2021,9 +2021,23 @@ Rendering doctrine, same spirit as the rest of this file:
   yesterday's ATR is the only one that exists at 9:46);
   `daily_facts()` is now the one definition for both, marker
   `daytype_v2`, the table re-seeded, and
-  `tests/test_daytype_ping.py` pins no-lookahead by construction. Read
-  the v2 numbers wherever they are stated; the v1 grid above is kept
-  as the first read, with its defect named.
+  `tests/test_daytype_ping.py` pins no-lookahead by construction.
+  V2 READOUT (same afternoon, 9,298 days re-seeded on the prior-close
+  ATR): the lookahead was cosmetic — every cell moved ≤ 3 pts and the
+  grid stays monotone in every cell, both eras, both tickers. Base
+  rates chop 53–57%, green 15%, red 11–13%, mixed 18–19%. The 9:45
+  corners: tight × tight → chop 78–82%, trend 7–9% (SPY n=268/256,
+  QQQ n=183/84); wide × wide → chop 18–28%, trend 48–60% (n=40–116).
+  Today's own cell (ydy 0.5–0.75 ATR × first bar 0.25–0.75) is the
+  middle of the grid: chop 43–53%, trend 26–34% — a coin flip, which
+  is what the day was. At 10:30 the first hour decides more than the
+  break: hour < 0.25 ATR → chop 80–93% regardless of a 30m break;
+  hour ≥ 0.75 → trend 46–60%; and the break's job is COLOR, not
+  trend — among trend days a CLOSE above the 30m high reads green
+  72–94% (up-break cells) vs 17–45% (down-break cells), no break
+  ~55%. The read is one sentence: yesterday's range and the first
+  bar say WHETHER the day trends; the 30-minute break says WHICH WAY.
+  Still a line, never a gate; the journal's skips grade it at n.
 
 ## Numbers on one line must reconcile with each other
 
