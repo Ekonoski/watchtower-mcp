@@ -1374,6 +1374,33 @@ Rendering doctrine, same spirit as the rest of this file:
   (filled days +51/+33 bps, 80%/73% win by era); QQQ's rows were
   lost to an event_id collision (fixed, regrades tonight).
 
+- **The day-type study — chop as a day type, pre-registered** (2026-09-08,
+  the first session after Labor Day, Eric after a −1.34R day of two
+  0DTE puts bought into a pinned range: "we need to identify chop vs a
+  red or green day… we know when a day will most likely be green 80% of
+  the time, but we don't know when it will be red, or definitively
+  choppy"). The known half, restated: open > PDH closes above the prior
+  close 79.5%; open < PDL closes below it 76% — the red BIAS is known,
+  the red ENTRY never graded. The unknown half is CHOP as a label:
+  `analysis/daytype_study.py` labels every SPY (2005→) / QQQ (2011→)
+  day at the close from range vs ATR20 and close position (trend_green
+  / trend_red / chop / mixed — continuous values stored so the cut can
+  be redrawn) beside what was readable at 9:45 / 10:00 / 10:30 with no
+  lookahead (open state, gap, prior close position, prior range ratio,
+  prior day direction, opening-range ratio and position, the 30-minute
+  range break on CLOSES, VIX term/level at the prior close, gamma regime
+  and flip proximity from 2026-07-15 — Eric's own read that morning:
+  "the days we are close to the GF have for sure been choppy… within
+  that .3%", which is the flipprox study's 1.3–1.5 crosses/day), the
+  bar the usual one: n ≥ 40, both eras, SPY vs QQQ. `prior()` serves
+  the live read for a 10:35 📐 line once — and only if — a state
+  clears it. Doctrine restated for the human book the same afternoon:
+  the machine's "stand aside" means "no graded entry either direction
+  today," never a color; his puts grade exactly like his calls
+  (2W/0L confirmed, 0W/3L anticipated); and a put above the flip in a
+  pinning regime pays theta to watch a range — the one short-side
+  read the machine can give him today is the gamma regime.
+
 - **Eric's entry rule: let the trend identify itself** (2026-09-02, his
   own diagnosis after two live days — losers GOOGL put pre-rank, MSFT
   mid-pack chase, QQQ put on an ANTICIPATED 15m lower high; winners
