@@ -20,7 +20,7 @@ def test_targets_cover_every_frozen_table():
     assert tables == {"index_intraday_bars", "mag7_1m_bars", "liquid_1m_bars"}
     by = {t[0]: t for t in ib.TARGETS}
     assert set(by["mag7_1m_bars"][1]) == set(ib.MAG7) and by["mag7_1m_bars"][2] == 1
-    assert set(by["liquid_1m_bars"][1]) == {"AMD", "IWM", "QQQ", "SPY"}
+    assert set(by["liquid_1m_bars"][1]) == {"AMD", "IWM", "QQQ", "SPY", "AVGO", "PLTR", "MU", "NFLX"}   # v2 seat-test names (2026-09-08)
     assert by["index_intraday_bars"][2] == 15 and by["index_intraday_bars"][3] == dt.time(15, 45)
     assert by["mag7_1m_bars"][3] == dt.time(15, 59)
 

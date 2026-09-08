@@ -2080,6 +2080,30 @@ Rendering doctrine, same spirit as the rest of this file:
   a trade (the journal's `kind='skip'` rows); the desk's own day was
   +1.23R on the same tape, most of it from the trades it did not take.
 
+- **The leader-board seat test — pre-registered** (2026-09-08 evening,
+  Eric: "tell me which names are the best for what I do and then run
+  it through to see if they are all good fits for the morning leader
+  board"). The 🏁/🎯 board is the mag-7 BY GRADE — the RS-leader study
+  replicated in all seven — so liquidity alone earns no seat. Five
+  candidates named for his style (penny-wide near-the-money options,
+  2%+ daily ranges, QQQ-correlated; COIN/MSTR excluded as
+  bitcoin-driven, INTC/BAC as too slow): AMD (bars already stored),
+  AVGO, PLTR, MU, NFLX (`liquid_bars.run_v2`, marker liquid_bars_v2,
+  appended daily by index_bars_daily). `analysis/rsl_universe_study.py`
+  (table rsl_universe_events, migration 064, marker rsl_universe_v1)
+  IMPORTS the graded study's rs_rank / find_go_entry / sim_bracket and
+  grades seven universes per day: mag7 (the control — must reproduce
+  rs_leader_events), mag7+X for each candidate (its own leader
+  sample), and mag12 (displacement: when the twelve-name leader
+  differs from the seven-name leader, which paid). BAR, frozen before
+  any number: a candidate earns a seat only if, as leader in mag7+X,
+  its GO expectancy (r_close, ±10R cap) is positive in BOTH year-halves
+  (split 2025-09-01) with n ≥ 15 per half, AND mag7+X's leader-day
+  expectancy is ≥ mag7's in both halves. Entries at closes, 2-year 1m
+  record, no costs — stated where the numbers surface.
+  `tests/test_rsl_universe_study.py` pins one-definition, explicit
+  universes (ETFs never ranked), the frozen bar, and writes-own-table.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
