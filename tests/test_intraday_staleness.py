@@ -69,6 +69,11 @@ def test_premarket_range_has_an_owner():
     # the module writes its own table only
     whole = inspect.getsource(pm)
     assert "INSERT INTO paper_" not in whole and "UPDATE paper_" not in whole
+    # 2026-09-07 (Labor Day): the job wrote eleven zero-bar rows for a session that
+    # never existed. SPY is fetched FIRST and a weekday with no SPY premarket bars is
+    # a market holiday: claimed, nothing written.
+    assert 'for tk in ("SPY",)' in src and "market holiday, nothing written" in src
+    assert src.index("market holiday") < src.index("INSERT INTO premarket_range")
 
 
 if __name__ == "__main__":

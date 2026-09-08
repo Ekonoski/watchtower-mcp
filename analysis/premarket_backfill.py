@@ -71,7 +71,12 @@ def run_today(day=None) -> bool:
             log.warning("[premarket] no Polygon client; today's range not written (hole).")
             return False
         complete = True
-        for tk in TICKERS:
+        # SPY first: it prints premarket bars every real session, so a weekday
+        # with none is a market holiday (2026-09-07, Labor Day: the job wrote
+        # eleven zero-bar rows for a session that never existed). A holiday
+        # is claimed and writes nothing — a fabricated session date is worse
+        # than a hole.
+        for tk in ("SPY",) + tuple(t for t in TICKERS if t != "SPY"):
             try:
                 aggs = client.get_aggs(tk, 1, "minute", day.isoformat(), day.isoformat(), limit=50000)
                 rows = [(x.timestamp, float(x.high), float(x.low)) for x in aggs]
@@ -80,6 +85,13 @@ def run_today(day=None) -> bool:
                 complete = False
                 continue
             r = premarket_ranges(rows, et).get(day)
+            if tk == "SPY" and (r is None or r[2] == 0):
+                log.info(f"[premarket] {day}: no SPY premarket bars — market holiday, nothing written.")
+                with conn.cursor() as c:
+                    c.execute("INSERT INTO scheduler_job_claims (job_name, run_date) VALUES (%s, CURRENT_DATE) "
+                              "ON CONFLICT DO NOTHING", (_day_claim(day),))
+                conn.commit()
+                return True
             with conn.cursor() as c:
                 c.execute("""INSERT INTO premarket_range (ticker, trade_date, pm_high, pm_low, pm_bars)
                              VALUES (%s,%s,%s,%s,%s)
