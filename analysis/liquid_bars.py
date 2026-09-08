@@ -17,6 +17,10 @@ log = logging.getLogger("watchtower.liquid_bars")
 
 COMPLETE_MARKER = "liquid_bars_v1"
 TICKERS = ("SPY", "QQQ", "IWM", "AMD")
+# v2 (2026-09-08, the leader-board seat test): the four candidates that
+# were not yet stored — AMD already rides v1. Same window, same START.
+V2_MARKER = "liquid_bars_v2"
+V2_TICKERS = ("AVGO", "PLTR", "MU", "NFLX")
 START = dt.date(2024, 9, 1)
 WINDOW_DAYS = 10
 RESPONSE_CAP_WARN = 4500
@@ -38,7 +42,11 @@ def _rth_rows(aggs, ticker):
     return rows
 
 
-def run() -> bool:
+def run_v2() -> bool:
+    return run(tickers=V2_TICKERS, marker=V2_MARKER)
+
+
+def run(tickers=TICKERS, marker=COMPLETE_MARKER) -> bool:
     """One budgeted pass; True when all tickers reach the present."""
     from analysis.polygon_data import get_client
     from screen.reversal_screen import _conn
@@ -53,11 +61,11 @@ def run() -> bool:
     try:
         with conn.cursor() as c:
             c.execute("SELECT 1 FROM scheduler_job_claims WHERE job_name=%s",
-                      (COMPLETE_MARKER,))
+                      (marker,))
             if c.fetchone():
                 return True
         all_done = True
-        for tk in TICKERS:
+        for tk in tickers:
             with conn.cursor() as cur:
                 cur.execute("SELECT max(trade_date) FROM liquid_1m_bars "
                             "WHERE ticker=%s", (tk,))
@@ -102,9 +110,9 @@ def run() -> bool:
                 cur.execute(
                     "INSERT INTO scheduler_job_claims (job_name, run_date) "
                     "VALUES (%s, CURRENT_DATE) ON CONFLICT DO NOTHING",
-                    (COMPLETE_MARKER,))
+                    (marker,))
             conn.commit()
-            log.info(f"[liquid-bars] complete — marker {COMPLETE_MARKER}.")
+            log.info(f"[liquid-bars] complete — marker {marker}.")
             return True
         return False
     finally:

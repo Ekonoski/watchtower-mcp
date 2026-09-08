@@ -2720,6 +2720,24 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] tapeentry seed skipped: {e}")
 
+    def _seed_rsl_universe():
+        """The leader-board seat test (2026-09-08, Eric: "which names are
+        the best for what I do… see if they are all good fits for the
+        morning leader board"): backfill AVGO/PLTR/MU/NFLX 1m bars, then
+        grade the RS-leader definitions on mag7 / mag7+X / mag12.
+        Marker-retired with resume."""
+        try:
+            from analysis.liquid_bars import run_v2 as run_bars
+            from analysis.rsl_universe_study import run as run_study
+            for _ in range(3):
+                if run_bars():
+                    break
+            for _ in range(3):
+                if run_study():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] rsl-universe seed skipped: {e}")
+
     def _seed_flipprox():
         """Flip-proximity character study (2026-09-01, the chop-day
         question): graded from recorded boards + stored 15m bars;
@@ -2791,6 +2809,7 @@ def start_scheduler():
         _seed_flipprox()
         _seed_rsleader()
         _seed_tapeentry()
+        _seed_rsl_universe()
         try:
             from analysis.hybrid_exit_study import run as _hybrid
             for _ in range(3):

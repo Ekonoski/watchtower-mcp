@@ -27,7 +27,7 @@ log = logging.getLogger("watchtower.index_bars")
 ET = "America/New_York"
 MAX_CATCHUP_DAYS = 40
 MAG7 = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA")
-LIQUID = ("AMD", "IWM", "QQQ", "SPY")
+LIQUID = ("AMD", "IWM", "QQQ", "SPY", "AVGO", "PLTR", "MU", "NFLX")   # v2 names: the leader-board seat test (2026-09-08)
 # (table, tickers, bar minutes, last RTH bar start)
 TARGETS = (
     ("index_intraday_bars", ("SPY", "QQQ", "IWM"), 15, dt.time(15, 45)),
