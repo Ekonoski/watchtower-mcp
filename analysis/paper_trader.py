@@ -396,6 +396,26 @@ def _qlvl(p: float) -> float:
     return round(p * 2) / 2.0
 
 
+# The gamma classes' NATIVE geometry — ONE source (2026-09-08, the QQQ
+# 697 case): every gamma spec is admitted at target room >= 1.5x stop
+# distance from the TRIGGER, and the close-through fill must survive the
+# same bar at the ACTUAL entry (the swing book has had this re-check since
+# 2026-08-08; the gamma book never did — 9 of its first 19 fills entered
+# under 1.5:1, 6 under 1:1, one BELOW its own target).
+GAMMA_GEOMETRY = 1.5
+# The entry-side bar for the same classes, at the ACTUAL close-through
+# price. It is NOT the admission ratio: a gamma entry is a confirmation
+# close by definition, and demanding 1.5 there refuses every flip-hold
+# whose premium exceeds ~9 cents (the ATRC lesson — a bar a class can never
+# clear is a lockout, and tests/test_gamma_entry_geometry.py proves each
+# class can fill). 1.0 = the reward from the real entry must at least equal
+# the real risk. Stated cost on the first 19 gamma fills: 6 entered under
+# 1:1 (0.34, 0.36, 0.80, 0.86, 0.86, and one below its own target) and
+# would have been refused — +2.12R foregone at n=6, near-target entries
+# that hit small targets often; the doctrine is geometry, not hit rate.
+GAMMA_ENTRY_GEOMETRY = 1.0
+
+
 def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
     """Playbook rules → paper_specs rows. The single source of truth: the live
     morning spec-writer, the intraday re-armer, and the replay harness
@@ -424,7 +444,7 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
         if regime == "pinning" and cw and spot < cw:
             tgt = max(flip or 0, (cw + pw) / 2 if pw else 0)
             stop = round(cw * 1.0015, 2)
-            if tgt and (cw - tgt) >= 1.5 * (stop - cw):
+            if tgt and (cw - tgt) >= GAMMA_GEOMETRY * (stop - cw):
                 specs.append((trade_date, book, tk, "short", f"wall_fade_{_qlvl(cw):g}",
                               cw, stop, round(tgt, 2), status,
                               f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
@@ -433,7 +453,7 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
         # Flip-hold long (pinning, flip below spot, room to CW).
         if regime == "pinning" and flip and cw and flip < spot < cw:
             stop = round(flip * 0.9985, 2)
-            if (cw - flip) >= 1.5 * (flip - stop):
+            if (cw - flip) >= GAMMA_GEOMETRY * (flip - stop):
                 specs.append((trade_date, book, tk, "long", f"flip_hold_{_qlvl(flip):g}",
                               flip, stop, cw, status,
                               f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
@@ -445,7 +465,7 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
             stack = max(cw, flip)
             stop = round(stack * 1.0015, 2)
             tgt = round(spot - (stack - spot), 2)  # symmetric room, capped by geometry
-            if (stack - tgt) >= 1.5 * (stop - stack):
+            if (stack - tgt) >= GAMMA_GEOMETRY * (stop - stack):
                 specs.append((trade_date, book, tk, "short", f"stack_fade_{_qlvl(stack):g}",
                               stack, stop, tgt, status,
                               f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
@@ -824,6 +844,46 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     return (None, None, None)
 
 
+def _gamma_fill(direction: str, trig: float, stop: float, tgt: float, live_bars: list):
+    """The gamma books' close-through entry, with the two guards the swing
+    book has carried since 2026-08-08 and this book lacked until the QQQ
+    697 case (2026-09-08): the 9:30 bar opened at 720.91, already through
+    the 720.10 stack, printed 721.89 above the 721.18 stop, and closed at
+    716.72 — BELOW the 717.56 target. 'Closed back under the wall' was true
+    and the book sold short 84 cents past its own target.
+
+    - DEAD ON ARRIVAL: a live bar that OPENS beyond the stop means the level
+      was lost before the setup could act — refused, never entered.
+    - TOUCH + CLOSE-THROUGH: a bar's range (or a close within _touch's
+      tolerance) reached the trigger and the latest completed 15m bar
+      closed back through it — the fill is that close.
+    - GEOMETRY MUST SURVIVE THE ENTRY: reward/risk from the ACTUAL close
+      against the class's native GAMMA_GEOMETRY, the same bar the spec was
+      admitted at. Collapsed geometry refuses instead of filling.
+
+    live_bars: [(ts, open, close, high, low, ...)] post-spec-creation only.
+    Returns ("fill", px, "close_through", None) | ("refuse", None, None, why)
+    | (None, None, None, None)."""
+    if not live_bars:
+        return (None, None, None, None)
+    sign = 1 if direction == "long" else -1
+    for _, bop, *_rest in live_bars:
+        if sign * (bop - stop) <= 0:
+            return ("refuse", None, None,
+                    f"dead on arrival — a bar opened at {bop:g}, beyond the stop {stop:g}; the level was lost")
+    touched = any((lo2 <= trig <= hi2) or _touch(trig, c2)
+                  for _, _, c2, hi2, lo2, *_xv in live_bars)
+    close = live_bars[-1][2]
+    if not (touched and sign * (close - trig) > 0):
+        return (None, None, None, None)
+    ok, ratio = _entry_geometry_ok(direction, close, stop, tgt, GAMMA_ENTRY_GEOMETRY)
+    if not ok:
+        return ("refuse", None, None,
+                f"entry_geometry — {ratio:.2f}:1 at entry {close:g} (target {tgt:g}, stop {stop:g}); "
+                f"the entry demands {GAMMA_ENTRY_GEOMETRY:g}:1")
+    return ("fill", close, "close_through", None)
+
+
 def _entry_geometry_ok(direction: str, entry: float, stop: float,
                        tgt: float, ratio: float = 1.5):
     """Geometry must survive the entry (Eric, 2026-08-08: same standard,
@@ -1156,10 +1216,12 @@ def run_trigger_loop():
                         continue
                     entered, entry_fill = (verdict == "fill"), px
                 else:
-                    touched = any((lo2 <= trig <= hi2) or _touch(trig, c2)
-                                  for _, _, c2, hi2, lo2, *_xv in live_bars)
-                    entered = touched and (sign * (close - trig) > 0)  # 15m close back through
-                    entry_fill, kind = close, "close_through"
+                    verdict, px, kind, why = _gamma_fill(direction, trig, stop, tgt, live_bars)
+                    if verdict == "refuse":
+                        _cancel(conn, sid, why)
+                        log.info("[paper] REFUSE %s %s %s — %s", book, tk, setup, why)
+                        continue
+                    entered, entry_fill = (verdict == "fill"), px
                 if entered and kind == "reclaim":
                     # The reclaim premium repriced the trade — the geometry
                     # the spec QUALIFIED on must survive the actual entry:
