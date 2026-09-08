@@ -2172,6 +2172,30 @@ def start_scheduler():
                     timezone=et),
         id="daybias_ping_open", replace_existing=True,
     )
+
+    # 📐 day-type reads (2026-09-08, Eric: "why will I only know at
+    # 10:30?" — he doesn't: the 9:45 state sorts the day). Three posts,
+    # one per study checkpoint, each the live read of the graded features
+    # against the graded record; the second minute is the fallback.
+    def _daytype_ping():
+        try:
+            from alerts.daytype_ping import run_daytype_ping
+            run_daytype_ping()
+        except Exception:
+            log.exception("[daytype-ping] failed")
+
+    scheduler.add_job(
+        _daytype_ping,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="46,48",
+                    second="30", timezone=et),
+        id="daytype_ping_945", replace_existing=True,
+    )
+    scheduler.add_job(
+        _daytype_ping,
+        CronTrigger(day_of_week="mon-fri", hour="10", minute="1,3,31,33",
+                    second="30", timezone=et),
+        id="daytype_ping_1000_1030", replace_existing=True,
+    )
     scheduler.add_job(
         _daybias_ping,
         CronTrigger(day_of_week="mon-fri", hour="10-15", minute="1-56/5",
