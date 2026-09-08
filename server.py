@@ -804,6 +804,26 @@ def watchtower_journal(days: int = 90) -> str:
 
 
 @mcp.tool()
+def watchtower_health() -> str:
+    """
+    🩺 The morning health census — Eric's daily audit as one call: every
+    feed's freshness in its own units (daily bars through which session
+    and for how many tickers; 1m feeds; premarket rows; gamma marks and
+    their sweep time; oscillator scans per timeframe; FVG; sector RS),
+    today's specs by book, the pings expected by now and which posted
+    (undelivered flagged), the overnight ingestion jobs with error counts
+    (usual no-data names vs something new), and the running commit.
+    Nothing summarizes into a checkmark; a hole is a hole. Also posts to
+    #desk at 9:55 ET each trading day.
+    """
+    try:
+        from alerts.health_check import health_report
+        return health_report()
+    except Exception as e:
+        return f"Health census failed: {type(e).__name__}: {e}"
+
+
+@mcp.tool()
 def watchtower_journal_config(key: str, value: str, note: str = "") -> str:
     """
     Set a journal scoreboard input. The journal grades Eric's account

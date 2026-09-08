@@ -1763,6 +1763,20 @@ def start_scheduler():
         id="gamma_board_morning", replace_existing=True,
     )
 
+    # 🩺 Morning health census — 9:55 ET (2026-09-08, the first session
+    # after Labor Day; Eric audits every morning — this is that audit as
+    # one post): feed freshness in its own units, specs, expected pings,
+    # overnight ingestion. Read-only; at-most-once per day by claim.
+    def _health_ping():
+        from alerts.health_check import run_health_ping
+        run_health_ping()
+
+    scheduler.add_job(
+        _health_ping,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="55", timezone=et),
+        id="health_morning", replace_existing=True,
+    )
+
     # Wall-touch prior — 16:50 ET (2026-09-02): grade today's first
     # board's levels against the recorded bars; the 🌅 board reads the
     # accumulated priors each morning. Boot pass backfills the record.
