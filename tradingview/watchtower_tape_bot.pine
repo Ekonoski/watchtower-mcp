@@ -8,7 +8,10 @@
 // today's own bar). Labels follow the study's cut: TIGHT < 0.75 ATR
 // (the chop label's range leg), MID 0.75–0.9, FULL ≥ 0.9 (a trend
 // day's range). Live all session, so the 10:30 read has a chart twin
-// that keeps updating. Display only; no alert logic touched.
+// that keeps updating. v2.8b: the cell also reads WHERE price sits in
+// the day's range and the word follows the study's label — CHOP /
+// TREND / MIXED — because a 0.80-ATR day closing mid-range IS chop
+// (QQQ, 2026-09-08). Display only; no alert logic touched.
 // WATCHTOWER TAPE BOT v2.7 (history below)
 // WATCHTOWER TAPE BOT v2.7
 // v2.7 (2026-09-02, the META "did it close below the 21?" morning and
@@ -508,11 +511,19 @@ momCol = momTxt == "STRONG" ? cGood : momTxt == "GOOD" ? color.new(#2e7d32, 20) 
 // the ATR is the 20-day simple average of daily true range through the
 // PRIOR completed day ([1] on the daily feed — today's forming bar never
 // divides itself), the range is today's daily high−low so far.
-[dAtr, dRng] = request.security(syminfo.tickerid, "D", [ta.sma(ta.tr(true), 20)[1], high - low])
+// v2.8b (same evening, Eric on QQQ's 0.80-ATR day: "it's saying mid but
+// it is choppy as hell") — the size was half the label. The study's chop
+// label has TWO legs: range < 0.75 ATR OR the close sitting mid-range
+// (0.35–0.65 of the day's range); a trend day needs range ≥ 0.9 AND a
+// close in its top/bottom quarter. So the cell now reads WHERE price
+// sits in the day's range too, and the word follows label_day():
+// CHOP / TREND / MIXED. Intraday the "close" is the current price.
+[dAtr, dRng, dPos] = request.security(syminfo.tickerid, "D", [ta.sma(ta.tr(true), 20)[1], high - low, high > low ? (close - low) / (high - low) : na])
 rrDay   = na(dAtr) or dAtr <= 0 ? na : dRng / dAtr
-rrLbl   = na(rrDay) ? "" : rrDay < 0.75 ? " · TIGHT" : rrDay < 0.9 ? " · MID" : " · FULL"
-rangeTxt = na(rrDay) ? "ATR UNAVAILABLE" : str.tostring(rrDay, "0.00") + " ATR ($" + str.tostring(dRng, format.mintick) + " of $" + str.tostring(dAtr, format.mintick) + ")" + rrLbl
-rangeCol = na(rrDay) ? cGray : rrDay < 0.75 ? cGray : rrDay < 0.9 ? cWarn : color.new(#2e7d32, 20)
+posTxt  = na(dPos) ? "" : dPos >= 0.75 ? " · at the HIGHS" : dPos <= 0.25 ? " · at the LOWS" : dPos >= 0.35 and dPos <= 0.65 ? " · MID-RANGE" : " · " + str.tostring(dPos * 100, "0") + "% up the range"
+dayWord = na(rrDay) or na(dPos) ? "" : (rrDay < 0.75 or (dPos >= 0.35 and dPos <= 0.65)) ? "CHOP" : (rrDay >= 0.9 and (dPos >= 0.75 or dPos <= 0.25)) ? "TREND" : "MIXED"
+rangeTxt = na(rrDay) ? "ATR UNAVAILABLE" : str.tostring(rrDay, "0.00") + " ATR ($" + str.tostring(dRng, format.mintick) + " of $" + str.tostring(dAtr, format.mintick) + ")" + posTxt + " · " + dayWord
+rangeCol = dayWord == "TREND" ? color.new(#2e7d32, 20) : dayWord == "MIXED" ? cWarn : cGray
 
 txSz = dashSz == "small" ? size.small : dashSz == "large" ? size.large : size.normal
 var table dash = table.new(position.top_right, 2, 8, border_width = 1, border_color = color.new(color.black, 60))
