@@ -2067,6 +2067,18 @@ Rendering doctrine, same spirit as the rest of this file:
   record — since 8/19 the daily board row for the drift names is
   overwritten by the last intraday re-price, so the "morning flip"
   survives only in the 9:20 drift baseline.
+  Eric's ruling at the end of the day (four trades, −$391, three of
+  them `anticipated` premium bought into a range every panel had
+  called; his verdict on the QQQ put, "the read was right, the
+  instrument was bad"): **"not trading a choppy day and sizing well on
+  a good day is how money is made."** That is the sentence the
+  day-type line serves — the verdict word picks the instrument
+  (TRAVEL LIKELY is when a 0DTE can pay; CHOP or UNDECIDED means
+  shares, an ITM option with time on it, or nothing), a close through
+  the level picks the entry, the stop is a price in the underlying on
+  closes, and the size comes from that stop. The skip is graded like
+  a trade (the journal's `kind='skip'` rows); the desk's own day was
+  +1.23R on the same tape, most of it from the trades it did not take.
 
 ## Numbers on one line must reconcile with each other
 
