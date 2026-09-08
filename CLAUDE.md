@@ -2038,6 +2038,35 @@ Rendering doctrine, same spirit as the rest of this file:
   ~55%. The read is one sentence: yesterday's range and the first
   bar say WHETHER the day trends; the 30-minute break says WHICH WAY.
   Still a line, never a gate; the journal's skips grade it at n.
+  ONE LINE PER INDEX (same evening, Eric: "why add post and pre 2016?
+  how should that help me?" — it helps only as a trust check, and a
+  check the reader has to do by eye is a check that gets skipped by
+  the third morning). `verdict()` pools the eras by n into one number
+  and runs the both-eras rule as a FLAG: RANGE LIKELY (pooled chop ≥
+  65) / TRAVEL LIKELY (≤ 35) / UNDECIDED between — and UNDECIDED
+  whenever the eras differ by > 10 points or n < 40, so small n and
+  disagreement can never wear a confident word. The thresholds are
+  labels on the number, picked round, not graded; they move at a flat
+  review once he has watched them beside real days. `⚠ hugging` rides
+  the line when the open is within 0.3% of the flip (the QQQ blender
+  of 2026-09-08: four 15m-close crosses of 720.10, range 0.80 ATR,
+  eight regime flips, on a board mostly under 1bn — which is the
+  magnitude-rule correction: net GEX decides whether the walls are
+  FORCES to trade against, not whether the flip is worth watching as
+  a chop NARRATOR; nine of the ten single-name crossing days since
+  July were decoration-magnitude boards and every 6+-cross day was
+  chop). Direction rides the 10:30 line only, and only on a CLOSE
+  through the 30m range ("green favored" ≥ 60% of trends). The
+  footnote prints once a day, on the 9:45 post.
+  The flip-proximity record behind the hugging tag, stated: opens
+  within 0.3% of the flip — QQQ 8 of 8 chop, SPY 5 of 8 ranged and 3
+  trended with ZERO crosses (they left at the open and never came
+  back); beyond 0.6% ≈ 0.1 crosses/day. Whether a hug becomes a range
+  or a trend is readable by 10:30 (still there / crossed vs gone);
+  that leg is queued with task #22 beside a durable morning-flip
+  record — since 8/19 the daily board row for the drift names is
+  overwritten by the last intraday re-price, so the "morning flip"
+  survives only in the 9:20 drift baseline.
 
 ## Numbers on one line must reconcile with each other
 
