@@ -614,6 +614,36 @@ Rendering doctrine, same spirit as the rest of this file:
   minute events), the evidence schema, and the module's read-only
   signature.
 
+- **A gamma fill must survive its own geometry** (2026-09-08, the first
+  session after Labor Day — Eric: "The QQQ entry doesn't make sense to
+  me I feel like there is an error"; he was right). Spec 697, a stack
+  fade short at 720.10 (stop 721.18, target 717.56): the 9:30 bar
+  opened 720.91 — already through the stack — printed 721.89 above the
+  stop and closed 716.72 BELOW the target; the close-through rule saw
+  "closed back under the wall" and sold short 84¢ past its own target,
+  then "hit target" at 10:01 for −0.19R. The gamma books never had the
+  two guards the swing book got on 2026-08-08: dead-on-arrival (a live
+  bar OPENING beyond the stop = the level was lost) and geometry
+  re-checked at the ACTUAL entry. Census of the first 19 gamma fills:
+  9 entered under 1.5:1, 6 under 1:1 (0.34, 0.36, 0.80, 0.86, 0.86, and
+  697's −0.19), one below its own target. Now `_gamma_fill` (one
+  function, both books, the replay harness inherits it) refuses DOA and
+  re-checks reward/risk from the real close against
+  `GAMMA_ENTRY_GEOMETRY` = 1.0 — NOT the 1.5 admission bar
+  (`GAMMA_GEOMETRY`, now the one source in `build_gamma_specs`),
+  because a gamma entry is a confirmation close by definition and 1.5
+  at the entry refuses every flip-hold whose premium exceeds ~9¢ — the
+  ATRC lockout again; `tests/test_gamma_entry_geometry.py` proves every
+  class can still fill and pins 697's bar as a refusal. Stated cost: the
+  six sub-1:1 fills were net +2.12R (near-target entries hit small
+  targets often) — the doctrine is geometry, not hit rate, small n.
+  Trade 697 VOIDED per the AGMB/META retroactive-convention precedent:
+  the trade row stays (entry 716.72, exit 717.56) with R as a hole,
+  exit_reason 'manual', the spec cancelled with the reason in its
+  rationale; the bar is certified by `paper_spec_bars` (9:30: o 720.909
+  h 721.886 l 716.56 c 716.72), not by the trade's own stamp. The
+  cheapest audit layer worked again: a human reading a price line.
+
 - **The cipher exemplar museum: the eye becomes data, one labeled
   chart at a time** (2026-08-27, Eric on his premarket cipher entries:
   "we just haven't been able to master those on a mechanical level
