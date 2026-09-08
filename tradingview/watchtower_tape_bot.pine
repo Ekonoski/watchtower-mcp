@@ -1,4 +1,15 @@
 //@version=5
+// WATCHTOWER TAPE BOT v2.8
+// v2.8 (2026-09-08, the chop day — Eric: "how would I know what an ATR
+// is?"): a DAY RANGE row — the session's range so far as a fraction of
+// the 20-day ATR, with the dollars beside it, the SAME yardstick the
+// desk's day-type study and the 📐 DAY TYPE line use (ATR = 20-day
+// simple average of daily true range through the PRIOR close; never
+// today's own bar). Labels follow the study's cut: TIGHT < 0.75 ATR
+// (the chop label's range leg), MID 0.75–0.9, FULL ≥ 0.9 (a trend
+// day's range). Live all session, so the 10:30 read has a chart twin
+// that keeps updating. Display only; no alert logic touched.
+// WATCHTOWER TAPE BOT v2.7 (history below)
 // WATCHTOWER TAPE BOT v2.7
 // v2.7 (2026-09-02, the META "did it close below the 21?" morning and
 // the Banks V2 comparison): (1) WT TRAIL — the rs_leader book's exit
@@ -493,8 +504,18 @@ cHead = color.new(#1c2230, 0)
 f_dir(txt) => txt == "CROSS UP" or txt == "BUYERS" or txt == "TRENDING BULL" or str.contains(txt, "BULL") or str.contains(txt, "ABOVE") or str.contains(txt, "RECLAIMED") ? cGood : txt == "CROSS DOWN" or txt == "SELLERS" or txt == "TRENDING BEAR" or str.contains(txt, "BEAR") or str.contains(txt, "BELOW") or str.contains(txt, "LOST") ? cBad : cGray
 momCol = momTxt == "STRONG" ? cGood : momTxt == "GOOD" ? color.new(#2e7d32, 20) : momTxt == "WEAK" ? cWarn : cGray
 
+// v2.8 — DAY RANGE vs ATR20, one definition with analysis/daytype_study.py:
+// the ATR is the 20-day simple average of daily true range through the
+// PRIOR completed day ([1] on the daily feed — today's forming bar never
+// divides itself), the range is today's daily high−low so far.
+[dAtr, dRng] = request.security(syminfo.tickerid, "D", [ta.sma(ta.tr(true), 20)[1], high - low])
+rrDay   = na(dAtr) or dAtr <= 0 ? na : dRng / dAtr
+rrLbl   = na(rrDay) ? "" : rrDay < 0.75 ? " · TIGHT" : rrDay < 0.9 ? " · MID" : " · FULL"
+rangeTxt = na(rrDay) ? "ATR UNAVAILABLE" : str.tostring(rrDay, "0.00") + " ATR ($" + str.tostring(dRng, format.mintick) + " of $" + str.tostring(dAtr, format.mintick) + ")" + rrLbl
+rangeCol = na(rrDay) ? cGray : rrDay < 0.75 ? cGray : rrDay < 0.9 ? cWarn : color.new(#2e7d32, 20)
+
 txSz = dashSz == "small" ? size.small : dashSz == "large" ? size.large : size.normal
-var table dash = table.new(position.top_right, 2, 7, border_width = 1, border_color = color.new(color.black, 60))
+var table dash = table.new(position.top_right, 2, 8, border_width = 1, border_color = color.new(color.black, 60))
 if dashOn and barstate.islast
     table.cell(dash, 0, 0, "WATCHTOWER", text_color = color.white, bgcolor = cHead, text_size = txSz)
     table.cell(dash, 1, 0, "WT - " + sessTxt, text_color = color.white, bgcolor = canVote ? cHead : cWarn, text_size = txSz)
@@ -510,6 +531,8 @@ if dashOn and barstate.islast
     table.cell(dash, 1, 5, momCell,  text_color = color.white, bgcolor = momCol,          text_size = txSz)
     table.cell(dash, 0, 6, "ST PRESSURE (1m)", text_color = color.white, bgcolor = cHead, text_size = txSz)
     table.cell(dash, 1, 6, pressTxt, text_color = color.white, bgcolor = f_dir(pressTxt), text_size = txSz)
+    table.cell(dash, 0, 7, "DAY RANGE", text_color = color.white, bgcolor = cHead, text_size = txSz)
+    table.cell(dash, 1, 7, rangeTxt, text_color = color.white, bgcolor = rangeCol, text_size = txSz)
 
 f_say(msg) =>
     m = syminfo.ticker + " " + timeframe.period + ": " + msg
