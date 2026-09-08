@@ -40,13 +40,15 @@ def test_verdict_pools_eras_and_withholds_on_disagreement_or_small_n():
 def test_one_line_per_index():
     feats = ds.features([BAR], PREV, 5.237, vix_row={"vix": 14.4, "vix3m": 17.56},
                         gamma={"regime": "slippery", "flip": 770.93})
-    raw = {"prev_rr": 0.739, "orb_rr": 0.498, "open_state": feats["open_state"],
+    raw = {"prev_rr": 0.739, "orb_rr": 0.498, "atr": 5.237, "open_state": feats["open_state"],
            "vix_backwardated": feats["vix_backwardated"], "gamma_regime": "slippery", "flip_pct": 0.24}
     msg = p.format_read("SPY", "f945", feats, AGREE, raw)
     assert "\n" not in msg                                            # one line
     assert msg.startswith("📐 **DAY TYPE** 9:45 · **SPY** **RANGE LIKELY**")
     assert "chop 69% · trend 18% (n=1,143, eras agree)" in msg      # pooled by n, not averaged
-    assert "ydy 0.74 ATR · first bar 0.50 ATR" in msg
+    # the yardstick carries its dollars (Eric: "how would I know what an ATR is?")
+    assert "ydy 0.74 ATR ($3.87) · first bar 0.50 ATR ($2.61) · ATR $5.24" in msg
+    assert "ydy 0.74 ATR · first bar 0.50 ATR" in p.format_read("SPY", "f945", feats, AGREE, {**raw, "atr": None})
     assert "open inside" in msg and "VIX contango" in msg and "flip 0.24% away ⚠ hugging" in msg
     assert "post-2016" not in msg and "pre-2016" not in msg          # the eras are a flag, not rows
     mid = p.format_read("SPY", "f945", feats, MIDDLE, {**raw, "flip_pct": 0.43})
