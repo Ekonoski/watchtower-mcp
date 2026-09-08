@@ -1,0 +1,86 @@
+// Watchtower WaveTrend 10/21/4 — the engine's dot, on the chart (2026-09-07)
+//
+// The same wavetrend Watchtower computes every night (analysis/oscillator.py,
+// wavetrend(): hlc3 -> EMA(10) channel -> EMA(21) average -> SMA(4) signal).
+// Every green-dot number in the record (20,404 dots, the deep cohort's
+// +6.7% / 56% post-2016, +11.3% / 61% pre-2016, depth <= -50 paying 10.3%)
+// was graded on THIS wave. The recount (same day) showed Cipher's 9/12/3
+// wave prints ~60% more dots and the extra ones grade as coin flips, so
+// the dot to trust is this one, at depth, on a stock in major drawdown.
+//
+// Use on the 16D chart (the graded timeframe). Optional overlay draws the
+// 9/12/3 (Compass / Market Cipher) waves in the same panel for comparison.
+//
+//@version=6
+indicator("Watchtower WaveTrend 10/21/4", shorttitle="WT 10/21/4", overlay=false)
+
+// ── inputs ────────────────────────────────────────────────────────────
+chanLen  = input.int(10, "Channel EMA (engine: 10)", minval=1)
+avgLen   = input.int(21, "Average EMA (engine: 21)", minval=1)
+sigLen   = input.int(4,  "Signal SMA (engine: 4)",   minval=1)
+deepLvl  = input.float(-30.0, "Deep cross level (graded cohort)", step=5)
+loadLvl  = input.float(-50.0, "Loaded cross level (10.3% median cohort)", step=5)
+showFast = input.bool(true, "Overlay Compass 9/12/3 waves")
+showDD   = input.bool(true, "Show 2-year drawdown % in the label")
+
+// ── the engine's wave ─────────────────────────────────────────────────
+wt(src, c, a, s) =>
+    esa = ta.ema(src, c)
+    d   = ta.ema(math.abs(src - esa), c)
+    ci  = (src - esa) / (0.015 * d)
+    w1  = ta.ema(ci, a)
+    w2  = ta.sma(w1, s)
+    [w1, w2]
+
+[wt1, wt2] = wt(hlc3, chanLen, avgLen, sigLen)
+[ft1, ft2] = wt(hlc3, 9, 12, 3)
+
+// ── dots ──────────────────────────────────────────────────────────────
+crossUp   = ta.crossover(wt1, wt2)
+belowZero = crossUp and wt2 <= 0              // the study's zero-line leg
+deep      = belowZero and wt2 <= deepLvl      // graded deep cohort
+loaded    = belowZero and wt2 <= loadLvl      // the best-paying cohort
+fastUp    = ta.crossover(ft1, ft2)
+
+// 2-year drawdown vs the highest close (the study's condition: >= 50%)
+hi2y = ta.highest(close, 504)
+dd   = hi2y > 0 ? (hi2y - close) / hi2y * 100 : 0.0
+
+// ── plots ─────────────────────────────────────────────────────────────
+hline(0,   "zero",  color=color.new(color.gray, 40))
+hline(60,  "+60",   color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+hline(-60, "-60",   color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+hline(deepLvl, "deep", color=color.new(color.orange, 60), linestyle=hline.style_dashed)
+hline(loadLvl, "loaded", color=color.new(color.red, 60), linestyle=hline.style_dashed)
+
+p1 = plot(wt1, "WT1 (10/21/4)", color=color.new(#26c6da, 0), linewidth=2)
+p2 = plot(wt2, "WT2 (10/21/4)", color=color.new(#0d47a1, 0), linewidth=2)
+fill(p1, p2, color=wt1 > wt2 ? color.new(#26c6da, 80) : color.new(#0d47a1, 80))
+
+plot(showFast ? ft1 : na, "Compass WT1 (9/12/3)", color=color.new(color.white, 55), linewidth=1)
+plot(showFast ? ft2 : na, "Compass WT2 (9/12/3)", color=color.new(color.gray, 55), linewidth=1)
+
+// engine dots: grey = any cross-up, green = below zero, orange = deep, red = loaded
+plotshape(crossUp and not belowZero, "cross-up (above zero)", style=shape.circle, location=location.absolute,
+          color=color.new(color.gray, 30), size=size.tiny)
+plotshape(belowZero and not deep, "below-zero dot", style=shape.circle, location=location.absolute,
+          color=color.new(color.lime, 0), size=size.small)
+plotshape(deep and not loaded, "DEEP dot (<= -30)", style=shape.circle, location=location.absolute,
+          color=color.new(color.orange, 0), size=size.normal)
+plotshape(loaded, "LOADED dot (<= -50)", style=shape.circle, location=location.absolute,
+          color=color.new(color.red, 0), size=size.large)
+// the Compass dot, small and hollow, so a lone fast dot is visibly not an engine dot
+plotshape(showFast and fastUp, "Compass dot (9/12/3)", style=shape.diamond, location=location.absolute,
+          color=color.new(color.white, 40), size=size.tiny)
+
+// ── label at the engine's below-zero dots ─────────────────────────────
+if belowZero
+    txt = "WT2 " + str.tostring(wt2, "#") + (showDD ? "\nDD " + str.tostring(dd, "#") + "%" : "")
+    tag = loaded ? "LOADED" : deep ? "DEEP" : "dot"
+    label.new(bar_index, wt2, tag + "\n" + txt, style=label.style_label_up,
+              color=loaded ? color.new(color.red, 20) : deep ? color.new(color.orange, 20) : color.new(color.green, 40),
+              textcolor=color.white, size=size.small)
+
+// ── alerts ────────────────────────────────────────────────────────────
+alertcondition(deep,   "WT 10/21/4 deep dot",   "Watchtower deep dot (WT2 <= -30, below zero) on {{ticker}} {{interval}}")
+alertcondition(loaded, "WT 10/21/4 loaded dot", "Watchtower LOADED dot (WT2 <= -50, below zero) on {{ticker}} {{interval}}")
