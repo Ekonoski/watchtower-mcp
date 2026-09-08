@@ -44,8 +44,13 @@ def _pct(x):
     return "—" if x is None else f"{float(x):.0f}%"
 
 
-def _ratio(x):
-    return "unavailable" if x is None else f"{float(x):.2f} ATR"
+def _ratio(x, atr=None):
+    """'0.71 ATR ($3.71)' — the yardstick and the dollars beside it (Eric,
+    2026-09-08: "how would I know what an ATR is?")."""
+    if x is None:
+        return "unavailable"
+    s = f"{float(x):.2f} ATR"
+    return s + (f" (${float(x) * float(atr):.2f})" if atr else "")
 
 
 RANGE_AT = 65.0      # pooled chop ≥ this → RANGE LIKELY   (labels on the number, not a rule — Eric, 2026-09-08)
@@ -94,8 +99,11 @@ def format_read(ticker, cp_key, feats, rows, raw):
         color = ", green favored" if green >= 60 else ", red favored" if green <= 40 else ""
     numbers = ("no matching days" if chop is None else
                f"chop {_pct(chop)} · trend {_pct(trend)} (n={n:,}, {flag})")
-    legs = [f"ydy {_ratio(raw.get('prev_rr'))}",
-            f"{'first bar' if cp_key == 'f945' else '30m range' if cp_key == 'f1000' else 'first hour'} {_ratio(raw.get('orb_rr'))}"]
+    atr = raw.get("atr")
+    legs = [f"ydy {_ratio(raw.get('prev_rr'), atr)}",
+            f"{'first bar' if cp_key == 'f945' else '30m range' if cp_key == 'f1000' else 'first hour'} {_ratio(raw.get('orb_rr'), atr)}"]
+    if atr:
+        legs.append(f"ATR ${float(atr):.2f}")
     if cp_key == "f1030":
         ob = feats.get("orb_break")
         g = f" (green {_pct(green)} of trends)" if green is not None and ob in ("up", "down") else ""
@@ -181,7 +189,7 @@ def run_daytype_ping() -> dict:
                 raw = {}
                 if feats:
                     hi, lo = max(b[2] for b in bars), min(b[3] for b in bars)
-                    raw = {"prev_rr": prev.get("range_ratio"), "orb_rr": (hi - lo) / atr,
+                    raw = {"prev_rr": prev.get("range_ratio"), "orb_rr": (hi - lo) / atr, "atr": atr,
                            "open_state": feats.get("open_state"), "vix_backwardated": feats.get("vix_backwardated"),
                            "gamma_regime": feats.get("gamma_regime"),
                            "flip_pct": (abs(bars[0][1] - gamma["flip"]) / bars[0][1] * 100)
