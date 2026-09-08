@@ -2614,6 +2614,18 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] greendot15 seed skipped: {e}")
 
+    def _seed_daytype():
+        """The day-type study (2026-09-08, Eric: "identify chop vs a red or
+        green day"): every SPY/QQQ day labeled at the close, the 9:45 /
+        10:00 / 10:30 reads stored beside it. One pass, marker-retired."""
+        try:
+            from analysis.daytype_study import run
+            for _ in range(3):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] daytype seed skipped: {e}")
+
     def _seed_greendot_recount():
         """The 9/12/3 recount + series-defect stamp (2026-09-07, Eric's
         Compass-equals-Cipher ruling and the Beat-SPY splice/hole census).
@@ -2735,6 +2747,7 @@ def start_scheduler():
         _seed_target_shadow()
         _seed_options_catchup()
         _seed_greendot_study()
+        _seed_daytype()
         _seed_greendot_recount()
         _seed_greendot_entry()
         _seed_greendot15()
