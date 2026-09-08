@@ -494,6 +494,16 @@ def _fetch_technicals_for_alert(ticker: str) -> dict:
         return {}
 
 
+SNAPSHOT_BATCH = 120          # tickers per snapshot URL — well under the proxy's URI limit
+
+
+def snapshot_batches(tickers, size: int = SNAPSHOT_BATCH):
+    """Pure. Split a ticker list into URL-safe batches, order preserved, no
+    empty batches."""
+    tickers = [t for t in tickers if t]
+    return [tickers[i:i + size] for i in range(0, len(tickers), size)]
+
+
 def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
     """Fetch Polygon snapshots for a list of tickers to get live price/volume."""
     client = _get_polygon_client()
@@ -503,14 +513,22 @@ def _fetch_snapshot_map(tickers: List[str]) -> Dict[str, dict]:
     import logging as _log
     _logger = _log.getLogger(__name__)
     out = {}
-    try:
-        # Pass tickers as a direct kwarg — Polygon client forwards extra kwargs as
-        # query params. Wrapping in list() forces the lazy iterator to execute now
-        # so any HTTP error is caught here rather than silently swallowed mid-loop.
-        snaps = list(client.get_snapshot_all("stocks", tickers=",".join(tickers)))
-        _logger.info(f"[news_scanner] Snapshot returned {len(snaps)} results for {len(tickers)} tickers.")
-    except Exception as e:
-        _logger.warning(f"[news_scanner] Snapshot fetch failed: {e}")
+    # 2026-09-08: one URL with every ticker drew "414 Request-URI Too Large" from
+    # Polygon's proxy on every 15-minute scan, and the whole snapshot came back
+    # empty. Batches keep each URL short; a failed batch logs and is a hole for
+    # its names only, never for the scan.
+    snaps, failed = [], 0
+    for batch in snapshot_batches(tickers):
+        try:
+            # Pass tickers as a direct kwarg — Polygon client forwards extra kwargs as
+            # query params. list() forces the lazy iterator so an HTTP error surfaces here.
+            snaps.extend(list(client.get_snapshot_all("stocks", tickers=",".join(batch))))
+        except Exception as e:
+            failed += len(batch)
+            _logger.warning(f"[news_scanner] Snapshot fetch failed for a batch of {len(batch)}: {str(e)[:300]}")
+    _logger.info(f"[news_scanner] Snapshot returned {len(snaps)} results for {len(tickers)} tickers"
+                 + (f" ({failed} in failed batches — holes)." if failed else "."))
+    if not snaps:
         return out
 
     def _attr(obj, *names, default=None):
