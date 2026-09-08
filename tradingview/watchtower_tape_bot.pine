@@ -11,7 +11,9 @@
 // that keeps updating. v2.8b: the cell also reads WHERE price sits in
 // the day's range and the word follows the study's label — CHOP /
 // TREND / MIXED — because a 0.80-ATR day closing mid-range IS chop
-// (QQQ, 2026-09-08). Display only; no alert logic touched.
+// (QQQ, 2026-09-08). v2.8c: regular session only (post-market prints
+// had moved IWM's "close" to the highs) and the word decides on the
+// displayed 2-decimal number. Display only; no alert logic touched.
 // WATCHTOWER TAPE BOT v2.7 (history below)
 // WATCHTOWER TAPE BOT v2.7
 // v2.7 (2026-09-02, the META "did it close below the 21?" morning and
@@ -518,8 +520,15 @@ momCol = momTxt == "STRONG" ? cGood : momTxt == "GOOD" ? color.new(#2e7d32, 20) 
 // close in its top/bottom quarter. So the cell now reads WHERE price
 // sits in the day's range too, and the word follows label_day():
 // CHOP / TREND / MIXED. Intraday the "close" is the current price.
-[dAtr, dRng, dPos] = request.security(syminfo.tickerid, "D", [ta.sma(ta.tr(true), 20)[1], high - low, high > low ? (close - low) / (high - low) : na])
-rrDay   = na(dAtr) or dAtr <= 0 ? na : dRng / dAtr
+// v2.8c (IWM, 4:33 PM): (1) the daily feed is pinned to the REGULAR
+// session — with extended hours on the chart, the 295.62 post-market
+// print became the day's "close" and read "at the HIGHS" when the 4:00
+// close was mid-range; the study reads RTH daily bars, so does this.
+// (2) the word is decided on the same 2-decimal number the cell shows —
+// 0.897 printed "0.90" and still read MIXED under the 0.9 cut.
+rthTicker = ticker.new(syminfo.prefix, syminfo.ticker, session.regular)
+[dAtr, dRng, dPos] = request.security(rthTicker, "D", [ta.sma(ta.tr(true), 20)[1], high - low, high > low ? (close - low) / (high - low) : na])
+rrDay   = na(dAtr) or dAtr <= 0 ? na : math.round(dRng / dAtr, 2)
 posTxt  = na(dPos) ? "" : dPos >= 0.75 ? " · at the HIGHS" : dPos <= 0.25 ? " · at the LOWS" : dPos >= 0.35 and dPos <= 0.65 ? " · MID-RANGE" : " · " + str.tostring(dPos * 100, "0") + "% up the range"
 dayWord = na(rrDay) or na(dPos) ? "" : (rrDay < 0.75 or (dPos >= 0.35 and dPos <= 0.65)) ? "CHOP" : (rrDay >= 0.9 and (dPos >= 0.75 or dPos <= 0.25)) ? "TREND" : "MIXED"
 rangeTxt = na(rrDay) ? "ATR UNAVAILABLE" : str.tostring(rrDay, "0.00") + " ATR ($" + str.tostring(dRng, format.mintick) + " of $" + str.tostring(dAtr, format.mintick) + ")" + posTxt + " · " + dayWord
