@@ -43,8 +43,9 @@ def test_read_only_and_expected_pings():
     for forbidden in ("INSERT INTO", "UPDATE ", "DELETE FROM"):
         assert forbidden not in src, forbidden
     kinds = [k for k, _, _ in hc.EXPECTED_PINGS]
-    assert kinds == ["gamma_board", "flipprox", "rsl_rank", "day_bias"]
-    assert hc.EXPECTED_PINGS[-1][2] == dt.time(9, 51)          # the 📐 verdict
+    assert kinds == ["gamma_board", "flipprox", "rsl_rank", "day_bias", "daytype_945"]
+    assert hc.EXPECTED_PINGS[-2][2] == dt.time(9, 51)          # the 📐 verdict
+    assert hc.EXPECTED_PINGS[-1][2] == dt.time(9, 46)          # the 📐 day-type read (2026-09-08)
     assert hc.KIND_HEALTH == "health" and hc.CHANNEL == "desk"
 
 

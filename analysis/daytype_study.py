@@ -47,7 +47,7 @@ import logging
 
 log = logging.getLogger("watchtower.daytype")
 
-COMPLETE_MARKER = "daytype_v1"
+COMPLETE_MARKER = "daytype_v2"   # v1 divided by an ATR holding today's own bar; re-seeded 2026-09-08
 TICKERS = ("SPY", "QQQ")
 GAMMA_FROM = dt.date(2026, 7, 15)
 CHECKPOINTS = ((dt.time(9, 45), "f945"), (dt.time(10, 0), "f1000"), (dt.time(10, 30), "f1030"))
@@ -136,6 +136,31 @@ def features(bars, prev, atr20, vix_row=None, gamma=None, weekday=None):
     return out
 
 
+def daily_facts(daily):
+    """Pure. daily: [(date, open, high, low, close)] ascending. Returns
+    (atr, prevd), both keyed by date d and built ONLY from bars before d:
+    atr[d] is the 20-bar ATR through the PRIOR close (the first cut of
+    the seeder divided today's opening range by an ATR that already held
+    today's full-day true range — a 1/20 lookahead that flattered the
+    tight-first-bar → chop read; found 2026-09-08 building the live line,
+    which can only ever know yesterday's ATR); prevd[d] is yesterday's
+    bar with its own range_ratio and direction. One definition for the
+    study and the 9:46 ping."""
+    atr, prevd = {}, {}
+    trs = []
+    for i, (d, o, h, l, cl) in enumerate(daily):
+        if i > 0:
+            pd_ = daily[i - 1]
+            if len(trs) >= 20:
+                atr[d] = sum(trs[-20:]) / 20.0
+            prev_atr = atr.get(d)          # through yesterday's close: one ATR per day
+            prevd[d] = dict(open=pd_[1], high=pd_[2], low=pd_[3], close=pd_[4],
+                            range_ratio=((pd_[2] - pd_[3]) / prev_atr) if prev_atr else None,
+                            dir=("up" if i >= 2 and pd_[4] > daily[i - 2][4] else "down" if i >= 2 else None))
+            trs.append(true_range(h, l, pd_[4]))
+    return atr, prevd
+
+
 # ── seeder ───────────────────────────────────────────────────────────
 
 def _process_ticker(conn, tk, et):
@@ -156,19 +181,7 @@ def _process_ticker(conn, tk, et):
         t = ts.astimezone(et)
         if dt.time(9, 30) <= t.time() < dt.time(16, 0):
             by_day.setdefault(d, []).append((t, float(o), float(h), float(l), float(cl)))
-    # ATR20 and prior-day facts, indexed by date
-    atr, prevd = {}, {}
-    trs = []
-    for i, (d, o, h, l, cl) in enumerate(daily):
-        if i > 0:
-            pd_ = daily[i - 1]
-            trs.append(true_range(h, l, pd_[4]))
-            if len(trs) >= 20:
-                atr[d] = sum(trs[-20:]) / 20.0
-            prev_atr = atr.get(pd_[0])
-            prevd[d] = dict(open=pd_[1], high=pd_[2], low=pd_[3], close=pd_[4],
-                            range_ratio=((pd_[2] - pd_[3]) / prev_atr) if prev_atr else None,
-                            dir=("up" if i >= 2 and pd_[4] > daily[i - 2][4] else "down" if i >= 2 else None))
+    atr, prevd = daily_facts(daily)
     n = 0
     with conn.cursor() as c:
         for d, o, h, l, cl in daily:
@@ -248,6 +261,33 @@ def run() -> bool:
 
 
 # ── the live read ───────────────────────────────────────────────────
+
+def live_context(conn, ticker, today):
+    """What the 9:46 line may know before the first bar: yesterday's bar
+    with its range_ratio / direction, the ATR20 through yesterday's close,
+    the prior-close VIX row and today's gamma board row — every one
+    computed by the SAME functions the study used (daily_facts,
+    _vix_before), so the live read and the graded record cannot drift.
+    Missing pieces are None (holes), never defaults."""
+    with conn.cursor() as c:
+        c.execute("""SELECT trade_date, open, high, low, close FROM daily_prices
+                     WHERE ticker=%s AND trade_date < %s AND open IS NOT NULL AND close IS NOT NULL
+                     ORDER BY trade_date DESC LIMIT 40""", (ticker, today))
+        daily = [(r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4])) for r in reversed(c.fetchall())]
+        c.execute("SELECT as_of, vix, vix3m FROM vix_history WHERE as_of < %s ORDER BY as_of DESC LIMIT 1", (today,))
+        r = c.fetchone()
+        vix_row = {"vix": float(r[1]), "vix3m": float(r[2]) if r[2] is not None else None} if r else None
+        c.execute("SELECT regime, gamma_flip FROM gex_levels WHERE ticker=%s AND as_of=%s", (ticker, today))
+        r = c.fetchone()
+        gamma = {"regime": r[0], "flip": float(r[1]) if r[1] is not None else None} if r else None
+    if not daily:
+        return None, None, vix_row, gamma
+    # a placeholder row for today lets daily_facts key its prior-close
+    # facts by today's date; the placeholder's own values are never read
+    pc = daily[-1][4]
+    atr, prevd = daily_facts(daily + [(today, pc, pc, pc, pc)])
+    return prevd.get(today), atr.get(today), vix_row, gamma
+
 
 def prior(conn, ticker, checkpoint_key, state):
     """P(chop) / P(trend) / P(green | trend) for the days whose checkpoint

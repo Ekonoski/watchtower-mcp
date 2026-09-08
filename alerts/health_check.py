@@ -26,6 +26,7 @@ EXPECTED_PINGS = (
     ("flipprox", "🧭 flip proximity", dt.time(9, 31)),
     ("rsl_rank", "🏁 leader rank", dt.time(9, 45)),
     ("day_bias", "📐 day-bias verdict", dt.time(9, 51)),
+    ("daytype_945", "📐 day-type 9:45 read", dt.time(9, 46)),
 )
 # the usual overnight "errors": names with no such data (preferreds, warrants, CEFs)
 USUAL_FMP_MISSES = {"fmp_news_sentiment": 40, "fmp_analyst_estimates": 120,

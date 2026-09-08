@@ -1984,6 +1984,47 @@ Rendering doctrine, same spirit as the rest of this file:
   journal's own config upsert. R per week against a yearly index number
   flatters the trader; this is the fair comparison.
 
+- **The day-type study: chop is knowable by 9:45, and the read ships
+  as a line, not a gate** (2026-09-08, Eric after a −1.34R chop day:
+  "we need to identify chop vs a red or green day… we know green 80%,
+  but not red, or definitively choppy" → "why will I only know at
+  10:30?"). `analysis/daytype_study.py` (tables daytype_days /
+  daytype_progress, migration 063) labels every SPY (2005→) and QQQ
+  (2011→) day at the close — trend_green / trend_red (range ≥ 0.9 ATR20
+  closing in its top/bottom quarter), chop (range < 0.75 ATR or a
+  mid-range close), mixed — beside what was readable at 9:45 / 10:00 /
+  10:30 with no lookahead. Base rate: chop ~54%. FIRST READ (9,300
+  days, v1 ATR): the two-leg grid — yesterday's range vs ATR ×
+  the first 15m bar's range vs ATR — is MONOTONE IN EVERY CELL, both
+  eras, both tickers: tight × tight (ydy < 0.5 ATR, first bar < 0.25)
+  → chop 79–82%, trend 6–10% (SPY n=263/252, QQQ n=176/80); wide ×
+  wide (ydy ≥ 1 ATR, first bar 0.5–0.75) → chop 20–24%, trend 51–56%;
+  the middle cells step ~10 pts per bucket in each direction. Single
+  legs read the same way (prev day UP, prior close top-fifth, open
+  above PDH each → chop 60–63%); at 10:30 an opening range < 0.25 ATR
+  → chop 80–88%, ≥ 0.75 → trend 47–55%, and a CLOSE through the 30m
+  high → 75–83% green among trends. VIX backwardated → trend 48%
+  (n=64). Gamma cells (from 2026-07-15, 38 days, exploratory): the
+  window itself was 60–79% chop; flip within 0.3% of the open read
+  100% chop on QQQ (n=7) and 56% on SPY (n=9) — Eric's "within .3%
+  has been choppy" is consistent, and it is n=16. The answer to his
+  question: the 9:45 state already carries ~80% in the corners; 10:00
+  and 10:30 REFINE it. So the 📐 DAY TYPE line (`alerts/daytype_ping.py`)
+  posts at 9:46, 10:01 and 10:31 — the live read of the SAME features
+  (`features`, imported) against the SAME record (`prior`), both eras
+  with n, small n stated, holes stated, context beside it (open state,
+  VIX term structure, gamma regime + flip distance). Measurement only:
+  no book reads the line, and a state earns STAND-ASIDE status the
+  usual way — on the journal's skips at n. Building the live line
+  found the study's one defect: v1's ATR for day d included d's OWN
+  true range (a 1/20 lookahead the live read can never have —
+  yesterday's ATR is the only one that exists at 9:46);
+  `daily_facts()` is now the one definition for both, marker
+  `daytype_v2`, the table re-seeded, and
+  `tests/test_daytype_ping.py` pins no-lookahead by construction. Read
+  the v2 numbers wherever they are stated; the v1 grid above is kept
+  as the first read, with its defect named.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
