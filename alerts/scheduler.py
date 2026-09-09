@@ -1949,6 +1949,23 @@ def start_scheduler():
         id="index_bars_append", replace_existing=True,
     )
 
+    # daytype_days owner (2026-09-09: the table froze at 9/4 — the seeder
+    # was marker-retired and nothing appended). Labels today's SPY/QQQ
+    # day once the 16:20 pass has landed its bars; boot catch-up rides
+    # _seed_all right after the index-bars catch-up.
+    def _daytype_append():
+        try:
+            from analysis.daytype_study import run_append
+            run_append()
+        except Exception:
+            log.exception("[daytype-append] failed")
+
+    scheduler.add_job(
+        _daytype_append,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="32", timezone=et),
+        id="daytype_append", replace_existing=True,
+    )
+
     # Desk event stream — the paper desk narrating fills/exits to Discord
     # (#desk). Polls the record on the trigger-loop cadence plus one pass
     # at 16:25 to catch the 16:20 settle verdicts. At-most-once per trade
@@ -2806,6 +2823,11 @@ def start_scheduler():
             _idx_append()   # refresh the index 15m record BEFORE the
         except Exception as e:  # studies that read it grade this boot
             log.warning(f"[scheduler] index-bars catch-up skipped: {e}")
+        try:
+            from analysis.daytype_study import run_append as _dt_append
+            _dt_append()    # label the days those bars completed
+        except Exception as e:
+            log.warning(f"[scheduler] daytype catch-up skipped: {e}")
         _seed_flipprox()
         _seed_rsleader()
         _seed_tapeentry()

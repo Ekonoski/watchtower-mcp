@@ -260,6 +260,41 @@ def run() -> bool:
         conn.close()
 
 
+def run_append() -> int:
+    """The table's OWNER after the seed (2026-09-09: daytype_days sat
+    frozen at 2026-09-04 while the 📐 line read its priors from it —
+    the marker-retired seeder never ran again; every stored record
+    needs an owning job). Re-runs the SAME _process_ticker over the
+    whole record: ON CONFLICT DO NOTHING keeps every labeled day, so
+    only days that gained their bars since the last pass are added.
+    16:32 ET after the 16:20 index-bars append, plus a boot catch-up.
+    Returns rows written (0 on a current table is data, not a fault)."""
+    from zoneinfo import ZoneInfo
+    from screen.reversal_screen import _conn
+    et = ZoneInfo("America/New_York")
+    conn = _conn()
+    try:
+        written = 0
+        for tk in TICKERS:
+            with conn.cursor() as c:
+                c.execute("SELECT count(*) FROM daytype_days WHERE ticker=%s", (tk,))
+                before = c.fetchone()[0]
+            try:
+                _process_ticker(conn, tk, et)
+            except Exception as e:
+                conn.rollback()
+                log.warning("[daytype] append %s failed: %s", tk, str(e)[:300])
+                continue
+            with conn.cursor() as c:
+                c.execute("SELECT count(*), max(trade_date) FROM daytype_days WHERE ticker=%s", (tk,))
+                after, last = c.fetchone()
+            written += after - before
+            log.info("[daytype] %s: +%d day(s), labeled through %s", tk, after - before, last)
+        return written
+    finally:
+        conn.close()
+
+
 # ── the live read ───────────────────────────────────────────────────
 
 def live_context(conn, ticker, today):

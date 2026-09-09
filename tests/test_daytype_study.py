@@ -71,3 +71,17 @@ if __name__ == "__main__":
         fn()
         print(f"ok  {fn.__name__}")
     print(f"\n{len(fns)} test(s) passed.")
+
+
+def test_table_has_an_owner_after_the_seed():
+    """2026-09-09: daytype_days froze at 9/4 — the seeder was marker-
+    retired and nothing appended. run_append re-runs the one labeler
+    without the marker gate; the scheduler owns it nightly and at boot."""
+    src = inspect.getsource(ds.run_append)
+    assert "_process_ticker(conn, tk, et)" in src
+    assert "COMPLETE_MARKER" not in src            # the seed's marker never retires the owner
+    assert "ON CONFLICT (ticker, trade_date) DO NOTHING" in inspect.getsource(ds._process_ticker)
+    sched = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "alerts", "scheduler.py")).read()
+    assert 'id="daytype_append"' in sched
+    assert sched.count("from analysis.daytype_study import run_append") == 2   # cron + boot catch-up
