@@ -53,6 +53,22 @@ def test_ledger_audit_logic():
     rows2 = [("swing", "AAA", 10.0, "d9", 99.0, "d9", "stop", -1.0)]
     a2, _, _ = audit(rows2, {("AAA", "d9"): (9.0, 11.0)})
     assert any("OUTSIDE" in x for x in a2)
+    # a VOIDED trade (2026-09-08, QQQ 697: manual exit, R a hole by
+    # ruling) is a named hole, never a nightly anomaly; a manual exit
+    # with NO exit price is still incomplete.
+    rows3 = [("gamma", "QQQ", 716.72, "d5", 717.56, "d5", "manual", None),
+             ("gamma", "QQQ", 716.72, "d5", None, "d5", "manual", None)]
+    a3, h3, _ = audit(rows3, {("QQQ", "d5"): (716.0, 722.0)})
+    assert len(a3) == 1 and "missing" in a3[0]
+    assert any("voided" in h for h in h3)
+
+
+def test_ledger_audit_claims_the_et_date():
+    import inspect
+    from analysis import ledger_audit
+    src = inspect.getsource(ledger_audit.run)
+    assert 'ZoneInfo("America/New_York")' in src
+    assert "dt.date.today()" not in src       # UTC date rolled the claim at 20:00 ET
 
 
 def test_go_alert_sizing_signature():

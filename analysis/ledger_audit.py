@@ -48,7 +48,15 @@ def audit(rows, bar_ranges):
         if reason is not None and reason not in legal:
             anomalies.append(f"{book}/{tk} {x_day}: illegal exit_reason "
                              f"'{reason}' (allowed: {sorted(legal)})")
-        if reason is not None and (x_px is None or r is None):
+        if reason == "manual" and x_px is not None and r is None:
+            # a VOIDED trade (2026-09-08, QQQ spec 697): the row stays,
+            # exit_reason 'manual', R deliberately a hole by Eric's
+            # ruling. A declared hole is counted and named, never
+            # re-flagged as a defect every night — an alarm that fires
+            # on a known state trains the reader to ignore alarms.
+            holes.append(f"{book}/{tk} {x_day}: voided (manual exit, R "
+                         f"recorded as a hole)")
+        elif reason is not None and (x_px is None or r is None):
             anomalies.append(f"{book}/{tk} {x_day}: exited but "
                              f"exit_px/r_multiple missing")
         for label, px, day in (("entry", e_px, e_day), ("exit", x_px, x_day)):
@@ -138,7 +146,12 @@ def run() -> str:
                          WHERE kind='rsl_exit' AND ref=CURRENT_DATE::text""")
             pings = [r[0] for r in c.fetchall()]
         anomalies += reconcile_pings(trades, pings)
-        today = dt.date.today().isoformat()
+        # the claim is stamped with the ET trading date: the nightly pass
+        # runs after 20:00 ET, when the container's UTC date has already
+        # rolled — 2026-09-08's 20:18 post claimed '2026-09-09' and the
+        # next morning's boot audit was silently suppressed by it.
+        from zoneinfo import ZoneInfo
+        today = dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
         if anomalies:
             msg = ("🚨 **Ledger audit: " + str(len(anomalies)) +
                    " anomal" + ("y" if len(anomalies) == 1 else "ies") +
