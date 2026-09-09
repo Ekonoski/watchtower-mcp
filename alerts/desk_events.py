@@ -50,21 +50,34 @@ def format_exit(ticker, direction, setup, entry_px, exit_px, reason,
 KIND_BOOKS = "books_daily"
 
 
-def format_scoreboard(rows, disagreements, today) -> str:
+def format_scoreboard(rows, disagreements, today, experimental=()) -> str:
     """Pure (2026-09-02, Eric: "let's run both and see which wins"):
     per-book running record, worst total R first, plus the day's
     morning-vs-live gamma disagreements. rows = [(book, n, wins,
     losses, total_r)]; disagreements = [(ticker, setup, entered_book,
-    cancelled_book)]. Small-n stated on every line."""
+    cancelled_book)]; experimental = [(book, ticker, n, wins, losses,
+    total_r)] — an experimental seat's own record, printed under its
+    book every day (2026-09-09, PLTR: zero resolved is data, and a seat
+    graded only inside the book's total is a seat nobody can read).
+    Small-n stated on every line."""
     lines = [f"📒 **Books — {today:%a %b %-d}** (running record since "
              f"2026-08-07; n beside every rate — under ~30 it is anecdote)"]
     for book, n, w, l, r in sorted(rows, key=lambda x: (x[4] if x[4] is not None else 0)):
         if not n:
             lines.append(f"{book}: 0 resolved")
-            continue
-        rate = f"{100.0 * w / n:.0f}%" if n else "n/a"
-        lines.append(f"{book}: {n} resolved · {w}-{l} ({rate}) · "
-                     f"{r:+.2f}R total")
+        else:
+            rate = f"{100.0 * w / n:.0f}%" if n else "n/a"
+            lines.append(f"{book}: {n} resolved · {w}-{l} ({rate}) · "
+                         f"{r:+.2f}R total")
+        for xb, tk, xn, xw, xl, xr in experimental:
+            if xb != book:
+                continue
+            if not xn:
+                lines.append(f"  ↳ {tk} (experimental seat): 0 resolved "
+                             f"— own n, gate ~30")
+            else:
+                lines.append(f"  ↳ {tk} (experimental seat): {xn} resolved "
+                             f"· {xw}-{xl} · {xr:+.2f}R — own n, gate ~30")
     g = {b: (n, w, l, r) for b, n, w, l, r in rows if b in ("gamma", "gamma_iday")}
     if "gamma" in g and "gamma_iday" in g:
         (n1, w1, l1, r1), (n2, w2, l2, r2) = g["gamma"], g["gamma_iday"]
@@ -114,7 +127,23 @@ def run_books_scoreboard() -> str:
                       (today,))
             dis = [(tk, st, ent, canc) for tk, st, ent, canc in
                    {(r[0], r[1], r[2], r[3]) for r in c.fetchall()}]
-        msg = format_scoreboard(rows, dis, today)
+            # the experimental seat's own record (a row exists even at 0)
+            from analysis.rs_leader_book import BOOK as RSL_BOOK, EXPERIMENTAL
+            exp = []
+            for tk in EXPERIMENTAL:
+                c.execute("""SELECT count(*),
+                                    count(*) FILTER (WHERE t.r_multiple > 0),
+                                    count(*) FILTER (WHERE t.r_multiple <= 0),
+                                    round(sum(t.r_multiple)::numeric, 2)
+                             FROM paper_trades t JOIN paper_specs s ON s.id=t.spec_id
+                             WHERE t.exited_at IS NOT NULL AND s.book=%s
+                               AND s.ticker=%s""", (RSL_BOOK, tk))
+                n, w, l, r = c.fetchone()
+                exp.append((RSL_BOOK, tk, int(n), int(w), int(l),
+                            float(r) if r is not None else 0.0))
+            if not any(b == RSL_BOOK for b, *_ in rows):
+                rows.append((RSL_BOOK, 0, 0, 0, None))
+        msg = format_scoreboard(rows, dis, today, experimental=exp)
         return claim_and_send(KIND_BOOKS, today.isoformat(), "desk", msg,
                               conn=conn)
     finally:

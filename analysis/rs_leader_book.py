@@ -10,7 +10,9 @@ definitions IMPORTED, never reimplemented):
   - 9:45 ET: rank the mag 7 by return-from-open minus QQQ's; the
     leader qualifies at rank 1 with RS >= +0.4%. No qualifier ->
     'skipped_rank' (zero is data). Laggard shorts are NOT traded
-    (refused, era flip).
+    (refused, era flip). Since 2026-09-09 the rank runs over
+    LIVE_TICKERS — the graded seven plus the EXPERIMENTAL seat(s),
+    tagged everywhere and graded on this book's own n.
   - Entry: the FIRST 1m bar 9:45-11:00 that touches the 1m 8/21 EMA
     and CLOSES holding (wick rule), at that close. No GO by 11:00 ->
     'cancelled' (no_qualifier — a recorded decision).
@@ -43,6 +45,46 @@ BOOK = "rs_leader"
 SETUP = "rsl_go_trail"
 DISASTER_PCT = 0.01
 EOD = dt.time(15, 59)
+
+# THE LIVE UNIVERSE (2026-09-09, the leader-board seat test — Eric:
+# "add PLTR as the 8th name experimental"). rsleader_study.TICKERS is the
+# GRADED universe and the seat test's control; it never changes here.
+# An EXPERIMENTAL name rides the 9:45 rank beside the seven, TAGGED on
+# every post and in every rationale, and is graded on this book's own n
+# — the tag-not-gate doctrine. PLTR's own prior as leader in mag7+PLTR:
+# positive in both year-halves; the dilution leg was a statistical tie
+# (0.35 vs 0.37R, h1, n=231) and Eric ruled the tie in. A name leaves
+# this tuple at a flat review, never after a hot or cold week. AMD /
+# AVGO / MU / NFLX sign-flipped by half and stay off.
+EXPERIMENTAL = ("PLTR",)
+EXPERIMENTAL_PRIOR = {
+    "PLTR": "+0.58R (n=65, 52%) / +1.07R (n=58, 53%) by year-half as "
+            "leader, hold-to-close, closes as fills, no costs — seat test "
+            "2026-09-09; the live book grades it on its own n",
+}
+LIVE_TICKERS = TICKERS + EXPERIMENTAL
+
+
+def label(ticker: str) -> str:
+    """The name as every post and rationale prints it: an experimental
+    seat is never rendered as a graded one."""
+    return f"{ticker} (experimental)" if ticker in EXPERIMENTAL else ticker
+
+
+def rank_live(rets_by_ticker: dict, qqq_ret: float):
+    """Pure: the 9:45 rank over the LIVE universe, with the mag-7-only
+    rank beside it so an experimental leader states whom it displaced.
+    rets_by_ticker may omit an experimental name (a bar hole drops the
+    seat, never the read — the graded seven are ranked without it).
+    Returns (leader, laggard, midpack, rs, displaced) where `displaced`
+    is the mag-7 leader the experimental name took the seat from, or
+    None."""
+    leader, laggard, midpack, rs = rs_rank(rets_by_ticker, qqq_ret)
+    displaced = None
+    if leader in EXPERIMENTAL:
+        seven = {t: r for t, r in rets_by_ticker.items() if t in TICKERS}
+        displaced = rs_rank(seven, qqq_ret)[0] if seven else None
+    return leader, laggard, midpack, rs, displaced
 
 
 def lifecycle_state(bars, i_go, entry, stop, *, arm_px=None, trail=True,
@@ -152,13 +194,14 @@ def run_rsl_tick():
             spec = c.fetchone()
 
         if spec is None:
-            # 9:45 rank from persisted bars, all 8 references
-            rets = {}
-            for tk in TICKERS + ("QQQ",):
+            # 9:45 rank from persisted bars: the live universe + QQQ.
+            # A hole in a GRADED name or QQQ = no read (retry next tick);
+            # a hole in an EXPERIMENTAL name drops the seat for the day
+            # and says so — the seven's read never waits on the eighth.
+            rets, holes = {}, []
+            for tk in LIVE_TICKERS + ("QQQ",):
                 bars = _persist_1m(conn, tk, today)
-                if not bars:
-                    return                       # feed hole; retry next tick
-                o930 = bars[0][1]
+                o930 = bars[0][1] if bars else None
                 px = None
                 for b in bars:
                     if b[0].time() < MEASURE:
@@ -166,10 +209,18 @@ def run_rsl_tick():
                     else:
                         break
                 if px is None:
-                    return
+                    if tk in EXPERIMENTAL:
+                        holes.append(tk)
+                        continue
+                    return                       # feed hole; retry next tick
                 rets[tk] = (px / o930 - 1) * 100
             qqq = rets.pop("QQQ")
-            leader, _laggard, _mid, rs = rs_rank(rets, qqq)
+            leader, _laggard, _mid, rs, displaced = rank_live(rets, qqq)
+            hole_txt = (" " + ", ".join(f"{t} bar hole — ranked without "
+                                        f"it" for t in holes) + "."
+                        if holes else "")
+            board = ", ".join(f"{label(t)} {rs[t]:+.2f}" for t in
+                              sorted(rs, key=rs.get, reverse=True))
             if leader is None:
                 with conn.cursor() as c:
                     c.execute("""INSERT INTO paper_specs
@@ -181,13 +232,22 @@ def run_rsl_tick():
                         ON CONFLICT DO NOTHING""",
                         (today, BOOK, SETUP,
                          f"{SETUP}: no name cleared +{RS_MIN}% vs QQQ at "
-                         f"9:45 — stand-aside (zero is data). Board: " +
-                         ", ".join(f"{t} {rs[t]:+.2f}" for t in
-                                   sorted(rs, key=rs.get, reverse=True))))
+                         f"9:45 — stand-aside (zero is data). Board: "
+                         f"{board}.{hole_txt}"))
                 conn.commit()
                 log.info(f"[rsl-book] {today}: skipped_rank")
                 return
             ref = rets[leader]
+            if leader in EXPERIMENTAL:
+                prior_txt = (f"EXPERIMENTAL SEAT: {leader}'s own prior "
+                             f"{EXPERIMENTAL_PRIOR[leader]}. Exit lifecycle "
+                             f"is the mag-7-graded trail-after-1R. "
+                             + (f"Displaced mag-7 leader {displaced}."
+                                if displaced else
+                                "The mag-7 alone would have stood aside."))
+            else:
+                prior_txt = ("Prior +0.40/+0.27R by half, ~40% win, n=377 "
+                             "(closes as fills, no costs).")
             with conn.cursor() as c:
                 c.execute("""INSERT INTO paper_specs
                     (trade_date, book, ticker, direction, setup,
@@ -197,16 +257,15 @@ def run_rsl_tick():
                             'rsleader_study')
                     ON CONFLICT DO NOTHING""",
                     (today, BOOK, leader, SETUP, 0, 0, 0,
-                     f"{SETUP}: leader {leader} {ref:+.2f}% vs QQQ "
+                     f"{SETUP}: leader {label(leader)} {ref:+.2f}% vs QQQ "
                      f"(bar +{RS_MIN}%). Entry = first 1m 8/21 hold "
                      f"9:45-11:00 at its close; stop under the pullback "
                      f"bar on 5m CLOSES; -1% disaster on touch; trail "
                      f"(5m close < 5m 21EMA) after +1R; eod for "
-                     f"survivors. Prior +0.40/+0.27R by half, ~40% win, "
-                     f"n=377 (closes as fills, no costs). "
+                     f"survivors. {prior_txt} Board: {board}.{hole_txt} "
                      f"entry_trigger/stop are 0 until the GO sets them."))
             conn.commit()
-            log.info(f"[rsl-book] {today}: armed on {leader}")
+            log.info(f"[rsl-book] {today}: armed on {label(leader)}")
             return
 
         sid, ticker, status, stop_db = spec
