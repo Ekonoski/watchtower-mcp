@@ -2103,6 +2103,40 @@ Rendering doctrine, same spirit as the rest of this file:
   record, no costs — stated where the numbers surface.
   `tests/test_rsl_universe_study.py` pins one-definition, explicit
   universes (ETFs never ranked), the frozen bar, and writes-own-table.
+  VERDICT (2026-09-09 00:40, 505 days, 13,394 rows; the mag7 control
+  reproduced rs_leader_events exactly — 900 leader rows, 0 mismatches,
+  8 rows the original had not graded — and read +0.37/+0.54R by half,
+  the recorded +0.38/+0.52): NO SEAT EARNED under the frozen bar.
+  Each candidate as leader in its own mag7+X universe (r_close, ±10R,
+  h1 = 2024-09..2025-08 / h2 = 2025-09..):
+    AMD   −1.50R (n=42, 38%) / +1.54R (n=58, 59%)  — sign-flips by half
+    AVGO  +1.03R (n=39)      / −0.06R (n=36)       — sign-flips
+    MU    −0.39R (n=53)      / +0.62R (n=85)       — sign-flips
+    NFLX  +1.34R (n=25)      / −1.16R (n=40)       — sign-flips
+    PLTR  +0.58R (n=65, 52%) / +1.07R (n=58, 53%)  — POSITIVE BOTH HALVES
+  PLTR is the one name that behaved like a leader in both halves; it
+  misses the second leg by a statistical tie — mag7+PLTR's leader-day
+  expectancy 0.35/0.76 vs mag7's 0.37/0.54, two hundredths of an R in
+  half 1 on n=231. Under the wording as frozen ("≥ mag7 in BOTH
+  halves") that is a miss; h1 is fixed history, so it will never clear
+  as written. Eric rules the tie. If ruled in, PLTR rides the 🏁 as an
+  8th name TAGGED experimental and graded on the live rs_leader book's
+  own n (the tag-not-gate doctrine) — never silently added.
+  The 12-name board as a WHOLE beats the seven in both halves
+  (+0.45/+0.74 vs +0.37/+0.54; on the 119/139 days the twelve-name
+  leader differed from the seven-name leader it paid +0.70/+0.70 vs
+  the displaced mag-7 leader's +0.17/+0.26) — but it is carried by
+  different names in different halves, which is exactly the
+  per-name-replication failure the rank-ladder study refused; the
+  aggregate is stated, not adopted. The 2R bracket expression stays
+  negative on every candidate (the frequency-night finding again):
+  hold-to-close is the graded expression. Caveats: closes as fills,
+  no costs, two-year 1m record, the candidates' 9:45 rank measured
+  against QQQ like the incumbents'. The four names' bars are now
+  owned daily, so the halves keep growing; the seat test re-reads at
+  a flat review, never after a hot week. SNDK (spun Feb 2025) has half
+  a first half and waits for a full one before it is graded to the
+  same bar.
 
 ## Numbers on one line must reconcile with each other
 
