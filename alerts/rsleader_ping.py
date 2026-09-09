@@ -36,8 +36,13 @@ import datetime as dt
 import logging
 
 from alerts.discord_notify import claim_and_send
-from analysis.rsleader_study import (ENTRY_CUTOFF, MEASURE, RS_MIN, TICKERS,
-                                     ema, find_go_entry, rs_rank)
+# The live universe and its rank come from the BOOK (LIVE_TICKERS =
+# the graded TICKERS + the EXPERIMENTAL seat; rank_live wraps the
+# study's rs_rank), so the 🏁 and the ledger name the same leader.
+from analysis.rs_leader_book import (EXPERIMENTAL, EXPERIMENTAL_PRIOR,
+                                     LIVE_TICKERS, label, rank_live)
+from analysis.rsleader_study import (ENTRY_CUTOFF, MEASURE, RS_MIN, ema,
+                                     find_go_entry)
 
 log = logging.getLogger("watchtower.rsleader_ping")
 
@@ -78,15 +83,16 @@ def _today_1m(client, ticker, today):
 
 
 def _rank_now(client, today):
-    """The study's 9:45 rank from live 1m bars: returns per-ticker
-    return-from-open through the last bar BEFORE 9:45, QQQ the same
-    way. None on data holes."""
-    rets = {}
-    for tk in TICKERS + ("QQQ",):
+    """The study's 9:45 rank from live 1m bars over the LIVE universe:
+    returns per-ticker return-from-open through the last bar BEFORE
+    9:45, QQQ the same way. None on a data hole in a graded name or
+    QQQ; a hole in an EXPERIMENTAL name drops that seat for the day
+    (listed in `holes`) — the seven's read never waits on the eighth.
+    Returns ((leader, laggard, mid, rs, displaced), rets, qqq, holes)."""
+    rets, holes = {}, []
+    for tk in LIVE_TICKERS + ("QQQ",):
         bars = _today_1m(client, tk, today)
-        if not bars:
-            return None
-        o930 = bars[0][1]
+        o930 = bars[0][1] if bars else None
         px = None
         for ts, o, h, l, c in bars:
             if ts.time() < MEASURE:
@@ -94,10 +100,13 @@ def _rank_now(client, today):
             else:
                 break
         if px is None:
+            if tk in EXPERIMENTAL:
+                holes.append(tk)
+                continue
             return None
         rets[tk] = (px / o930 - 1) * 100
     qqq = rets.pop("QQQ")
-    return rs_rank(rets, qqq), rets, qqq
+    return rank_live(rets, qqq), rets, qqq, holes
 
 
 def run_flipprox_open_ping() -> str:
@@ -164,28 +173,44 @@ def run_rank_ping() -> str:
             return claim_and_send(KIND_RANK, today.isoformat(), CHANNEL,
                                   "🏁 RS rank 9:45: *unavailable* (bar feed "
                                   "hole)", conn=conn)
-        (leader, laggard, _mid, rs), rets, qqq = got
+        (leader, laggard, _mid, rs, displaced), rets, qqq, holes = got
         _rank_cache.clear()
         _rank_cache[today] = (leader, laggard, rs)
         ordered = sorted(rs, key=lambda t: rs[t], reverse=True)
-        board = " · ".join(f"{t} {rs[t]:+.2f}" for t in ordered)
+        board = " · ".join(f"{t}{'*' if t in EXPERIMENTAL else ''} "
+                           f"{rs[t]:+.2f}" for t in ordered)
+        if any(t in EXPERIMENTAL for t in rs):
+            board += "   _(* experimental seat — graded on the live " \
+                     "book's own n)_"
+        if holes:
+            board += "\n" + " · ".join(f"{t}: *bar hole* — ranked without "
+                                       f"the seat today" for t in holes)
+        if leader in EXPERIMENTAL:
+            prior = (f"_EXPERIMENTAL SEAT — {leader}'s own prior as leader: "
+                     f"{EXPERIMENTAL_PRIOR[leader]}. "
+                     + (f"It displaced mag-7 leader {displaced} today."
+                        if displaced else
+                        "The mag-7 alone would have stood aside today.")
+                     + " Hold to close — same expression as the seven._")
+        else:
+            prior = (f"_Prior: +0.45R avg (capped) held to the close, 52% "
+                     f"of days positive, n=446, both year-halves, all 7 "
+                     f"names. Hold to close — the 2R-target version failed "
+                     f"replication._")
         if leader:
-            msg = (f"🏁 **RS leader 9:45: {leader}** "
+            msg = (f"🏁 **RS leader 9:45: {label(leader)}** "
                    f"({rs[leader]:+.2f}% vs QQQ — clears the +{RS_MIN}% bar)\n"
                    f"{board}\n"
                    f"Watch {leader}'s 1m chart (Scanner 1M column): first "
                    f"8/21 touch that CLOSES holding, 9:45–11:00, is the "
                    f"graded entry — 🎯 alert fires at that candle's close.\n"
-                   f"_Prior: +0.45R avg (capped) held to the close, 52% of "
-                   f"days positive, n=446, both year-halves, all 7 names. "
-                   f"Hold to close — the 2R-target version failed "
-                   f"replication._")
+                   f"{prior}")
         else:
             msg = (f"🏁 RS rank 9:45: **STAND-ASIDE** — no name clears "
                    f"+{RS_MIN}% vs QQQ. Zero is data.\n{board}")
         if laggard:
-            msg += (f"\n_Laggard {laggard} ({rs[laggard]:+.2f}%): context "
-                    f"only — the short graded REFUSED (era flip)._")
+            msg += (f"\n_Laggard {label(laggard)} ({rs[laggard]:+.2f}%): "
+                    f"context only — the short graded REFUSED (era flip)._")
         return claim_and_send(KIND_RANK, today.isoformat(), CHANNEL, msg,
                               conn=conn)
     finally:
@@ -284,8 +309,17 @@ def run_go_watch() -> str:
                             f"(spec_id={row[0]})._" if row else
                             "_Desk spec not written yet — journal by "
                             "ticker/date; the id links when it exists._")
-            msg = (f"🎯 **GO — {leader}** 1m {bar_ts:%H:%M} candle closed "
-                   f"holding the 1m 8/21.{late}\n"
+            if leader in EXPERIMENTAL:
+                graded = (f"_EXPERIMENTAL SEAT: {leader}'s own prior "
+                          f"{EXPERIMENTAL_PRIOR[leader]}. The exit lifecycle "
+                          f"below is the mag-7-graded trail-after-1R; this "
+                          f"name's live record is the grade._")
+            else:
+                graded = (f"_Graded: trail-after-1R, the only exit positive "
+                          f"in both year-halves (+0.40/+0.27 avg R, ~40% "
+                          f"win, n=377). No profit target._")
+            msg = (f"🎯 **GO — {label(leader)}** 1m {bar_ts:%H:%M} candle "
+                   f"closed holding the 1m 8/21.{late}\n"
                    f"**Entry {entry:.2f}** · stop level **{stop:.2f}** "
                    f"(5m CLOSE through = out; a touch is not a stop) · "
                    f"disaster **{disaster:.2f}** (touch = out, no waiting)\n"
@@ -295,16 +329,14 @@ def run_go_watch() -> str:
                    f"{size_line}\n"
                    f"_(One 0.70Δ contract ≈ ±${per_ct:.0f} at stop/switch — "
                    f"the fallback division if you buy another strike.)_\n"
-                   f"_Graded: trail-after-1R, the only exit positive in "
-                   f"both year-halves (+0.40/+0.27 avg R, ~40% win, "
-                   f"n=377). No profit target._\n"
+                   f"{graded}\n"
                    f"{journal_line}")
             return claim_and_send(KIND_GO, today.isoformat(), CHANNEL, msg,
                                   conn=conn)
         if now.time() >= ENTRY_CUTOFF:
             return claim_and_send(
                 KIND_GO, today.isoformat(), CHANNEL,
-                f"🎯 {res[1]}: no 1m 8/21 hold printed by 11:00 — window "
+                f"🎯 {label(res[1])}: no 1m 8/21 hold printed by 11:00 — window "
                 f"closed, NO TRADE today. The no-qualifier day is a "
                 f"recorded decision.", conn=conn)
         return "waiting"
@@ -365,20 +397,20 @@ def run_trade_watch() -> str:
         if exit_hit is not None:
             reason, px = exit_hit
             r = (px - entry) / risk
-            msg = (f"🚪 **EXIT — {leader}**: {reason} at {px:.2f} "
+            msg = (f"🚪 **EXIT — {label(leader)}**: {reason} at {px:.2f} "
                    f"({r:+.2f}R from entry {entry:.2f}). Close the "
                    f"position now. Log it: `watchtower_journal_log`.")
             return claim_and_send(KIND_EXIT, today.isoformat(), CHANNEL,
                                   msg, conn=conn)
         if armed and KIND_ARM not in kinds:
-            msg = (f"📈 **{leader} touched +1R ({arm_px:.2f}) — TRAIL "
+            msg = (f"📈 **{label(leader)} touched +1R ({arm_px:.2f}) — TRAIL "
                    f"LIVE.** From here: out on a 5m CLOSE below the 5m "
                    f"21 EMA (I'll ping it). The fixed stop no longer "
                    f"applies; the disaster cap {disaster:.2f} still does.")
             return claim_and_send(KIND_ARM, today.isoformat(), CHANNEL,
                                   msg, conn=conn)
         if now.time() >= dt.time(15, 55) and KIND_BELL not in kinds:
-            msg = (f"🔔 **{leader} still in at 3:55** — exit AT THE CLOSE. "
+            msg = (f"🔔 **{label(leader)} still in at 3:55** — exit AT THE CLOSE. "
                    f"The graded exit is the closing print; don't hold "
                    f"overnight.")
             return claim_and_send(KIND_BELL, today.isoformat(), CHANNEL,

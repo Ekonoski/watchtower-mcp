@@ -2137,6 +2137,24 @@ Rendering doctrine, same spirit as the rest of this file:
   a flat review, never after a hot week. SNDK (spun Feb 2025) has half
   a first half and waits for a full one before it is graded to the
   same bar.
+  ERIC RULED THE TIE IN (2026-09-09, 00:50: "add PLTR as the 8th name
+  experimental" — and, asked, only PLTR: the other four sign-flipped
+  by half and stay off). The seat is built the tag-not-gate way:
+  `rs_leader_book.LIVE_TICKERS = TICKERS + EXPERIMENTAL` (`("PLTR",)`)
+  is the ONE live universe — the 🏁/🎯 pings and the book's tick both
+  rank it through `rank_live` (which wraps the study's `rs_rank`),
+  while `rsleader_study.TICKERS` stays the graded seven and the seat
+  test's control. Every post and every rationale prints the name as
+  `PLTR (experimental)` with PLTR's OWN prior beside it (never the
+  seven's n=446 line); an experimental leader names the mag-7 leader
+  it displaced, or that the seven would have stood aside; a bar hole
+  in the seat drops the seat for the day and says so — the seven's
+  read never waits on the eighth. The 📒 scoreboard prints the seat's
+  own record under rs_leader every day (zero resolved is data; gate
+  ~30 on its own n). PLTR's bars ride liquid_1m_bars / rsl_book_bars,
+  never mag7_1m_bars, so the graded record's control stays clean.
+  `tests/test_experimental_seat.py` pins all of it. A name leaves the
+  tuple at a flat review, never after a hot or cold week.
 
 ## Numbers on one line must reconcile with each other
 
