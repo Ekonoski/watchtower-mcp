@@ -2156,6 +2156,40 @@ Rendering doctrine, same spirit as the rest of this file:
   `tests/test_experimental_seat.py` pins all of it. A name leaves the
   tuple at a flat review, never after a hot or cold week.
 
+- **The MACD-extension leg: the eye's third correct skip did not
+  replicate on the record** (2026-09-09 evening, Eric on skipping the
+  TSLA 🎯 that the desk lost −1.77R on: "the MACD was above the zero
+  line on the 1 min and the 5 min and 15 min even in pre-market and
+  when I've seen that in the past it does not have a lot of juice left"
+  → "Run that now"). `analysis/rsl_macd_study.py` (table
+  rsl_macd_events, migration 065, marker rsl_macd_v1): MACD(12,26,9)
+  line at the GO bar on 1m / 5m / 15m, each on the CONTINUOUS RTH
+  series across days, 5m/15m on completed blocks only (premarket bars
+  are not stored — that clause stays eye-only, stated), beside
+  hold-to-close bps, r_close on the GO unit and r_book through the
+  live lifecycle_state; bar frozen first: both halves and ≥5/7 names.
+  READOUT (446 GOs, 2 warmup holes): "extended" — all three lines
+  above zero — is the NORMAL state at a GO (252 of 444; a leader has,
+  by definition, been going up), and it SIGN-FLIPS by half: h1
+  extended +25.9 bps / 55.4% / +0.93R vs not-extended −3.6 / 47.8% /
+  −0.40R; h2 extended +10.6 / 48.4% / +0.36R vs not-extended +15.4 /
+  57.0% / +0.72R. Per name on r_close, extended is the BETTER cohort
+  in 6 of 7. MFE is a little lower when extended (−6 to −24 bps) —
+  the "less juice" read is directionally real and too small to trade.
+  No monotone gradient in n_above (0..3; the 0 and 1 cells are under
+  40). The one leg that replicates points the OTHER way: the 1m MACD
+  BELOW zero at the GO is the knife — −24.7 / −6.2 bps, 46-49% win vs
+  +22.7 / +16.3, 53-54% above (n=39/35 below, small-n) — a pullback
+  that took the 1m line negative before the hold is the late one.
+  VERDICT: no veto earned; no line on the 🎯; the skip scoreboard
+  stays what it is (3 skips, 3 desk losses avoided, −3.60R, n=3 —
+  the eye is 3-for-3 on days the rule was 0-for-3, and the record
+  says that is not the MACD). Candidate journal tag `macd_extended`
+  stays a candidate for the flat review, now with its grade beside it.
+  `tests/test_rsl_macd_study.py` pins the MACD math against the
+  study's ema, the completed-block rule, warmup holes, one-definition,
+  and writes-own-table.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
