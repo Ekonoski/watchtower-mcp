@@ -2488,6 +2488,23 @@ def start_scheduler():
         id="target_shadow_daily", replace_existing=True,
     )
 
+    # Swing MAE-vs-stop read (2026-09-10): re-grades every swing fill
+    # from its recorded bars after the settle, so pending post-exit
+    # windows and open trades keep grading (a hole today is data
+    # tomorrow).
+    def _swing_mae_daily():
+        try:
+            from analysis.swing_mae_study import run as _mae
+            _mae()
+        except Exception:
+            log.exception("[swing-mae] daily pass failed")
+
+    scheduler.add_job(
+        _swing_mae_daily,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="49", timezone=et),
+        id="swing_mae_daily", replace_existing=True,
+    )
+
     # 16D green-dot screen upkeep (2026-08-29): after the nightly price
     # settle, append dots when a 16D block completed and fill forward
     # outcomes whose history has arrived.
@@ -2852,6 +2869,7 @@ def start_scheduler():
                             ("rsl_confirm", "analysis.rsl_confirm_study"),
                             ("rsl_macd", "analysis.rsl_macd_study"),
                             ("failtest", "analysis.failtest_study"),
+                            ("swing_mae", "analysis.swing_mae_study"),
                             ("riskmgmt", "analysis.riskmgmt_study"),
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
