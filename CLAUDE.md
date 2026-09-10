@@ -2223,6 +2223,62 @@ Rendering doctrine, same spirit as the rest of this file:
   both stop rules, the target touch, the same-bar tie, and
   writes-own-tables.
 
+- **The swing book's MAE read: the stops were not the problem, and the
+  loop was still deciding the daily close on the wrong bar** (2026-09-10
+  evening, Eric: "run the MAE read tonight" — the rs_leader rule applied
+  to the swing book: an R unit is a claim about where the trade fails,
+  grade the claim first). `analysis/swing_mae_study.py` (table
+  swing_mae_events, migrations 067/068, one row per swing fill upserted
+  by a 16:49 pass + boot): excursion from the trade's own recorded 15m
+  bars, stop shape in % and ATR14 (prior days only), the post-exit
+  20-day path for stopped trades (shakeout / failure / PENDING — pending
+  is a hole, never a failure), and 1.5× / 2× / 1-ATR stops replayed
+  through the book's own rule (stop on the daily close, target on a
+  touch) with `live_match` as a free audit of the replay. READOUT, 33
+  resolved (5 W / 28 L), small n on every line: (1) the five winners
+  never touched their stops (MAE −0.12R avg, worst −0.34R, resolved in
+  2 days); (2) all 28 losers touched theirs, reached +0.25R MFE on
+  average — six ever saw +0.5R, none +1R — and after the stop the best
+  high over the following days sat ~0.9R BELOW entry; three shakeouts
+  (SYF reclaimed entry in 2 days, DOO 8, AGMB 15), zero targets touched
+  post-exit, 25 windows still pending (the record is five weeks old);
+  (3) no wider stop rescued a single trade — at 1.5× the 14 that
+  resolved all stopped again at −1.73R on the original unit (five wins
+  unchanged, 14 still alive), at 2× six stopped at −2.28R, and a
+  TIGHTER 1-ATR stop lost the same 27 trades for LESS (−19.7R vs
+  −23.3R live on the same trades). The losers' stops averaged 1.6 ATR /
+  7%; the winners' 2.6 ATR / 13% and never needed. VERDICT: the stop
+  sits where these trades fail; the trades fail. It is a selection /
+  entry read (the confirmation-shadow direction again: a touch bought
+  into a level that then breaks), not a stop-placement one — and it
+  waits on the per-class gates like everything else. Open book (95):
+  MAE −0.45R avg, 59 never saw −0.5R, 35 have seen +0.5R and 11 +1R,
+  seven have touched a stop, none has closed through one; the
+  inverse_hs stops are 24–38% of price (4–9 ATR, measured-move
+  geometry on huge patterns) — stated, a class-shape note.
+  THE DEFECT the audit surfaced (`live_match` false on 16 rows): the
+  intraday loop's `eod` flag (now ≥ 15:55) still fired swing stops on
+  the 15:30–15:45 bar's close — the exact bar the AGMB fix named as
+  NOT the daily close; the fix added the 16:20 settle but left the
+  loop's branch armed. 21 of the book's 28 stops printed there, and on
+  SIX the OFFICIAL close held above the stop (UNTY, HBB, RHP, NEXN,
+  UI, DRVN — phantom stops, `phantom_stop` on the row); AGMB is a
+  seventh by the vendor's daily close (13.22) though not by the
+  recorded 15:45 bar (13.03) the settle read — thin names print a
+  closing auction the last 15m bar does not carry, a convention
+  question for Eric (official close vs recorded final bar as the
+  settle authority). On the 15 loop stops that were through anyway
+  the wrong bar cost +0.74R net (noise). Replaying the six under the
+  rule: HBB, NEXN, RHP, UNTY stop again 5–8 days later at −1.04 to
+  −1.23R; DRVN and UI (exited 9/9–9/10) are undecided. The loop fix
+  shipped (`swing_loop_decision`, pure, pinned in
+  tests/test_swing_settle.py with HBB's bar): the loop stops only on a
+  bar starting ≥ 15:45, which it never holds completed, so the settle
+  owns every swing stop by construction. The ledger rows are NOT
+  edited — whether the six are corrected retroactively (AGMB/META
+  precedent) is Eric's ruling. Stated: official closes as the replay's
+  daily close, ±10R cap, no costs.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
