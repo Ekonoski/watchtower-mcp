@@ -2190,6 +2190,39 @@ Rendering doctrine, same spirit as the rest of this file:
   study's ema, the completed-block rule, warmup holes, one-definition,
   and writes-own-table.
 
+- **The range-edge failure test: REFUSED** (2026-09-10 AM, Eric: "Run
+  the failure test study now" — the auction-theory range trade from
+  `docs/research/level_trading_practice.md` §4, the one candidate the
+  note had for RANGE LIKELY days). `analysis/failtest_study.py` (tables
+  failtest_events / failtest_days, migration 066, marker failtest_v1):
+  on the SPY (2005→) / QQQ (2011→) 15m record, the FIRST bar to CLOSE
+  beyond PDH / PDL / ORBH / ORBL whose NEXT bar closes back inside —
+  entry at that close against the break, stop at the probe's extreme
+  (close rule AND touch rule recorded), target the opposite edge of the
+  same range on touch, eod otherwise; a second close beyond is
+  acceptance (no event); 85 hole days recorded as holes. READOUT
+  (4,656 events on 9,344 days): a coin flip that pays its stop. Win
+  rates 38–49% by ticker × era × direction; stops 47–48% of exits,
+  targets 27–32%, median declared reward/risk 2.4; R on the close rule
+  SPY +0.03 / +0.01 / −0.07 / +0.05 (pre/post × long/short), QQQ
+  −0.25 / +0.01 / −0.09 / −0.15 — nothing clears both eras AND both
+  tickers. Touch-rule stops are worse everywhere. ON RANGE LIKELY DAYS
+  — the days it was built for — it is WORSE than the pool: SPY −0.18 /
+  −0.10R, QQQ −0.36 / −0.05R, win 42–45%. Early vs late probe: no
+  separation. The only positive-both-eras cells are the ACCEPTANCE
+  direction wearing a fade's clothes: SPY low-side failure bought on
+  an open-above-PDH day +0.16 / +0.01R, 56% / 48% (n=149/116) — the
+  day-bias trade with extra steps — and SPY ORBL-failure longs +0.04 /
+  +0.06R, 52.8% / 52.6%, which QQQ refuses (−0.41R pre-2016). Verdict:
+  no range trade; the short side of a range edge is negative in every
+  cell; range days stay stand-aside for premium per Eric's 2026-09-08
+  ruling, and the everyday trade on the rest of the days remains the
+  GO in shares. Stated: closes as fills, no costs, 15m granularity,
+  same-bar target-and-stop scored as a stop. `tests/test_failtest_
+  study.py` pins the event definition, the wick refusal, acceptance,
+  both stop rules, the target touch, the same-bar tie, and
+  writes-own-tables.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
