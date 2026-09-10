@@ -147,13 +147,23 @@ it. Its nearest graded cousins say: fading PDL at the index fails
 queued, ungraded; the tapebot "flip" (a crossing close re-arming the
 machine the other way) was a signal family that graded as chop.
 
-Pre-registrable (not built): on RANGE LIKELY days only, a bar closes
-beyond ORB-high / PDH (or below ORB-low / PDL) and the next 15m bar
-closes back inside — enter at that close against the break, stop beyond
-the probe's extreme on a 15m close, target the opposite range edge, exit
-at the close if neither. Both eras, SPY and QQQ replication, the usual
-bar. Until it grades, a range day is a stand-aside day for premium, per
-Eric's 2026-09-08 ruling.
+GRADED 2026-09-10 (`analysis/failtest_study.py`, 4,656 events on 9,344
+SPY/QQQ days): REFUSED. A bar closes beyond ORB-high / PDH (or below
+ORB-low / PDL) and the next 15m bar closes back inside; enter at that
+close against the break, stop at the probe's extreme (close rule and
+touch rule both recorded), target the opposite range edge on touch, eod
+otherwise. Win rates 38–49% in every ticker × era × direction cell;
+stops 47–48% of exits against targets 27–32% at a median declared 2.4:1;
+R within a few hundredths of zero on SPY and negative on QQQ; nothing
+clears both eras and both tickers. On RANGE LIKELY days, the days it was
+built for, it is worse than the pool (SPY −0.18 / −0.10R, QQQ −0.36 /
+−0.05R by era). The only cells positive in both eras are the acceptance
+direction in a fade's clothes: buying a failed low-side probe on a day
+that opened above PDH (+0.16 / +0.01R, the day-bias trade with extra
+steps) and SPY ORB-low failures (+0.04 / +0.06R), which QQQ refuses. The
+short side of a range edge is negative in every cell. A range day stays
+a stand-aside day for premium, per Eric's 2026-09-08 ruling; the
+everyday trade on the other days remains the leader GO in shares.
 
 ## 5. Literature notes (frame, not rules)
 
