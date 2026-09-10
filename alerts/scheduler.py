@@ -2851,6 +2851,7 @@ def start_scheduler():
                             ("rsl_exit", "analysis.rsl_exit_study"),
                             ("rsl_confirm", "analysis.rsl_confirm_study"),
                             ("rsl_macd", "analysis.rsl_macd_study"),
+                            ("failtest", "analysis.failtest_study"),
                             ("riskmgmt", "analysis.riskmgmt_study"),
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
