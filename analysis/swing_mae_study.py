@@ -22,8 +22,11 @@ SPEC (frozen before any number):
   unit        R = entry − stop from the ACTUAL fill (the book's unit).
   excursion   mae_touch_r  worst 15m LOW vs entry, in R, through exit
               mae_close_r  worst 15m CLOSE vs entry, in R
-              mae_daily_r  worst DAILY CLOSE vs entry, in R (the rule
-                           the book's stop actually reads)
+              mae_daily_r  worst OFFICIAL daily close vs entry, in R,
+                           over the held days (daily_prices_clean — the
+                           vendor's close; the ledger settles on the
+                           recorded 15:45 bar, and the two differ on
+                           thin names: AGMB 13.03 vs 13.22. Stated.)
               mfe_r        best 15m HIGH vs entry before the exit
               mfe_pre_mae_r best high BEFORE the MAE bar
               t_mae_days / t_exit_days  trading days from the fill date
@@ -45,17 +48,22 @@ SPEC (frozen before any number):
               won:      won_clean / won_after_touch by touched_stop_first.
               open:     open (running excursion only).
   counterfactual (secondary, declared): the SAME entries and target,
-              the book's own exit rule — stop on the DAILY close (the
-              15:45 bar while the trade was open, the daily close after
-              the live exit), target on a HIGH touch — re-run with the
-              stop at 1.5× and 2.0× the original distance and at 1.0
-              ATR14, capped at 40 trading days after the fill. Bars:
-              the recorded 15m tape for the live hold, then daily bars
-              from daily_prices_clean. Unresolved at the record's end =
-              hole. R on the ORIGINAL unit so variants compare on one
-              scale. Variant x1_0 replays the live stop through the
+              the book's own exit rule — stop on the DAILY close, target
+              on a HIGH touch — re-run with the stop at 1.5× and 2.0×
+              the original distance and at 1.0 ATR14, capped at 40
+              trading days after the fill. Decision sequence, per day:
+              the recorded 15m bars (target touches; the fill day's
+              post-fill bars only) then ONE close bar carrying the
+              official daily close (fill day: high/low from the post-
+              fill 15m bars — the daily high would be lookahead); after
+              the live exit, daily bars only. Unresolved at the record's
+              end = hole. R on the ORIGINAL unit so variants compare on
+              one scale. Variant x1_0 replays the live stop through the
               same code — `live_match` says whether it reproduces the
-              ledger's exit, a free audit of the replay.
+              ledger's exit, a free audit of the replay, and
+              `phantom_stop` names a ledger stop whose exit-day OFFICIAL
+              close held at/above the stop (2026-09-10: the loop's eod
+              branch fired on the 15:30–15:45 bar — six of 28).
   readout     n=33 resolved: no both-halves bar exists at this n. The
               read is descriptive, n beside every number, per class
               small-n. NO rule changes — the per-class ~30 gates decide;
@@ -97,15 +105,16 @@ def atr14(daily, fill_date, n=ATR_N):
     return sum(trs) / n
 
 
-def excursion(bars, entry, stop, risk):
+def excursion(bars, entry, stop, risk, daily_closes=()):
     """Pure. bars = post-fill 15m RTH bars [(ts_et, o, h, l, c)] through
-    the exit bar. Returns the excursion dict (R on the given risk)."""
+    the exit bar; daily_closes = the official closes of the held days.
+    Returns the excursion dict (R on the given risk)."""
     if not bars or risk <= 0:
         return None
     mae = 0.0
     mae_i = 0
     mae_close = 0.0
-    mae_daily = 0.0
+    mae_daily = min([0.0] + [(c - entry) / risk for c in daily_closes])
     mfe = 0.0
     mfe_pre = 0.0
     touched = None
@@ -114,8 +123,6 @@ def excursion(bars, entry, stop, risk):
         if adv < mae:
             mae, mae_i = adv, i
         mae_close = min(mae_close, (c - entry) / risk)
-        if ts.time() >= FINAL_BAR_START:
-            mae_daily = min(mae_daily, (c - entry) / risk)
         fav = (h - entry) / risk
         mfe = max(mfe, fav)
         if touched is None and l <= stop:
@@ -242,18 +249,40 @@ def grade_trade(row, spec_bars, daily, today):
     post_fill = [b for b in spec_bars
                  if fill_date <= b[0].date() <= end_date
                  and b[0] + dt.timedelta(minutes=15) > entered_at.astimezone(ET)]
-    exc = excursion(post_fill, entry, stop, risk)
+    daily_by_date = {d[0]: d for d in daily}
+    held = [d for d in daily if fill_date <= d[0] <= end_date]
+    exc = excursion(post_fill, entry, stop, risk, [d[4] for d in held])
     atr = atr14(daily, fill_date)
     held_days = [d for d in daily if fill_date < d[0] <= end_date]
     post = None
     if exit_reason == "stop":
         post = post_path([d for d in daily if d[0] > exit_date][:POST_DAYS], entry, target, risk)
     v = verdict(exit_reason, exc, post)
-    # counterfactual sequence: the recorded 15m tape for the live hold,
-    # then daily bars after the live exit (open trades: tape only).
-    seq = [(b[0].date(), b[2], b[3], b[4], b[0].time() >= FINAL_BAR_START) for b in post_fill]
-    if exit_date is not None:
-        seq += [(d[0], d[2], d[3], d[4], True) for d in daily if d[0] > exit_date]
+    exit_day_close_r = None
+    phantom = None
+    if exit_date is not None and exit_date in daily_by_date:
+        exit_day_close_r = round((daily_by_date[exit_date][4] - entry) / risk, 3)
+        if exit_reason == "stop":
+            phantom = daily_by_date[exit_date][4] >= stop
+    # counterfactual sequence: per held day the recorded 15m bars (no
+    # close-bar flag — the loop never holds the true final bar) then one
+    # close bar carrying the OFFICIAL daily close; the fill day's close
+    # bar takes its high/low from the post-fill 15m bars (the daily high
+    # would be lookahead); after the live exit, daily bars only.
+    seq = []
+    held_dates = sorted({b[0].date() for b in post_fill} | {d[0] for d in held})
+    for d in held_dates:                      # a day the tape missed still closes
+        day_bars = [b for b in post_fill if b[0].date() == d]
+        seq += [(d, b[2], b[3], b[4], False) for b in day_bars]
+        if d in daily_by_date:
+            dd = daily_by_date[d]
+            if d == fill_date:
+                if not day_bars:
+                    continue                  # no post-fill tape: the fill day cannot decide
+                seq.append((d, max(b[2] for b in day_bars), min(b[3] for b in day_bars), dd[4], True))
+            else:
+                seq.append((d, dd[2], dd[3], dd[4], True))
+    seq += [(d[0], d[2], d[3], d[4], True) for d in daily if d[0] > end_date]
     cf = {}
     stops = cf_stops(entry, stop, atr)
     for name in CF_VARIANTS:
@@ -288,6 +317,7 @@ def grade_trade(row, spec_bars, daily, today):
            if post else {"post_days": None, "post_max_r": None, "post_min_r": None,
                          "reclaim_day": None, "target_touched": None}),
         "verdict": v, "live_match": live_match, "cf": cf,
+        "exit_day_close_r": exit_day_close_r, "phantom_stop": phantom,
     }
 
 
@@ -318,7 +348,8 @@ def run() -> bool:
                      entry_px, stop_px, target_px, stop_pct, atr14, stop_atr, n_bars,
                      mae_touch_r, mae_close_r, mae_daily_r, mfe_r, mfe_pre_mae_r, t_mae_days,
                      t_exit_days, touched_stop_first, post_days, post_max_r, post_min_r,
-                     reclaim_day, target_touched, verdict, live_match, cf, graded_at)
+                     reclaim_day, target_touched, verdict, live_match, cf,
+                     exit_day_close_r, phantom_stop, graded_at)
                     VALUES (%(trade_id)s, %(spec_id)s, %(ticker)s, %(setup)s, %(entered_at)s,
                             %(exited_at)s, %(exit_reason)s, %(live_r)s, %(entry_px)s, %(stop_px)s,
                             %(target_px)s, %(stop_pct)s, %(atr14)s, %(stop_atr)s, %(n_bars)s,
@@ -326,7 +357,7 @@ def run() -> bool:
                             %(mfe_pre_mae_r)s, %(t_mae_days)s, %(t_exit_days)s,
                             %(touched_stop_first)s, %(post_days)s, %(post_max_r)s, %(post_min_r)s,
                             %(reclaim_day)s, %(target_touched)s, %(verdict)s, %(live_match)s,
-                            %(cf)s, now())
+                            %(cf)s, %(exit_day_close_r)s, %(phantom_stop)s, now())
                     ON CONFLICT (trade_id) DO UPDATE SET
                         exited_at = EXCLUDED.exited_at, exit_reason = EXCLUDED.exit_reason,
                         live_r = EXCLUDED.live_r, n_bars = EXCLUDED.n_bars,
@@ -338,7 +369,9 @@ def run() -> bool:
                         post_days = EXCLUDED.post_days, post_max_r = EXCLUDED.post_max_r,
                         post_min_r = EXCLUDED.post_min_r, reclaim_day = EXCLUDED.reclaim_day,
                         target_touched = EXCLUDED.target_touched, verdict = EXCLUDED.verdict,
-                        live_match = EXCLUDED.live_match, cf = EXCLUDED.cf, graded_at = now()""",
+                        live_match = EXCLUDED.live_match, cf = EXCLUDED.cf,
+                        exit_day_close_r = EXCLUDED.exit_day_close_r,
+                        phantom_stop = EXCLUDED.phantom_stop, graded_at = now()""",
                           {**g, "cf": json.dumps(g["cf"])})
             conn.commit()
             n += 1
