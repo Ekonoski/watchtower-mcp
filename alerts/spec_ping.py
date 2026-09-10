@@ -93,7 +93,7 @@ def run_spec_ping() -> dict:
                          ORDER BY ticker""", (today,))
             gamma_rows = c.fetchall()
             c.execute("""SELECT count(*) FROM paper_specs
-                         WHERE trade_date=%s AND book='swing'
+                         WHERE trade_date=%s AND book IN ('swing', 'swing_v2')
                            AND status='armed'""", (today,))
             swing_n = c.fetchone()[0]
             c.execute("""SELECT DISTINCT ticker, setup, status FROM paper_specs

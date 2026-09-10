@@ -23,7 +23,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analysis.paper_trader import (  # noqa: E402
-    NECKLINE_CLASSES, SWING_CLASSES, _qlvl, swing_class_ok, swing_geometry_ok)
+    NECKLINE_CLASSES, RETIRED_CLASSES, SWING_CLASSES, _qlvl, swing_class_ok,
+    swing_geometry_ok)
 
 # Each pattern's native target geometry as its detector emits it, expressed
 # as (target-trigger)/(trigger-invalid). Verified against live scan rows
@@ -55,6 +56,14 @@ def main():
             f"{pattern}/{timeframe} CANNOT ARM at its own native geometry "
             f"(R:R {NATIVE_RR[pattern]:.2f}) — an allowlisted class that "
             f"can never fire is the bug this test exists to catch")
+
+    # Retired classes (swing v2, 2026-09-10) are refused BY NAME with a
+    # stated reason, and cannot also sit on the allowlist.
+    assert RETIRED_CLASSES, "v2 retired the two daily neckline experiments"
+    for (pattern, timeframe), reason in RETIRED_CLASSES.items():
+        assert not swing_class_ok(pattern, timeframe), (pattern, timeframe)
+        assert (pattern, timeframe) not in SWING_CLASSES
+        assert "prior" in reason and "live" in reason, reason
 
     # The gate still gates: junk geometry is refused everywhere.
     assert not swing_geometry_ok("higher_low", 100.0, 112.0, 90.0)   # 1.2 < 1.5
