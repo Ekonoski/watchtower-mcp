@@ -34,7 +34,7 @@ def test_excursion_reads_lows_closes_and_the_touch():
             _b(1, 15, 45, 100.5, 102, 96, 97),      # low 96 = -0.8R touch-MAE; 15:45 close 97 = -0.6R daily
             _b(2, 9, 30, 97, 103, 94.9, 98),        # low 94.9 touches the stop; high 103 = +0.6R
             _b(2, 15, 45, 98, 99, 97, 98.5)]
-    e = sm.excursion(bars, entry, stop, entry - stop)
+    e = sm.excursion(bars, entry, stop, entry - stop, daily_closes=[97.0, 98.5])
     assert e["mae_touch_r"] == -1.02 and e["mae_daily_r"] == -0.6
     assert e["mfe_r"] == 0.6 and e["mfe_pre_mae_r"] == 0.4      # 102 printed before the MAE bar
     assert e["touched_stop_first"] is True and e["t_mae_days"] == 1
@@ -83,6 +83,34 @@ def test_replay_wick_rule_target_touch_and_hole():
     assert r2["outcome"] == "target" and r2["exit_px"] == 110.0 and r2["days"] == 2
     # stop precedence when both print on one close bar
     assert sm.replay([(d1, 111, 90, 92, True)], entry, stop, target)["outcome"] == "stop"
+
+
+def test_grade_trade_flags_a_phantom_stop_and_replays_official_closes():
+    # HBB, 2026-08-21: the ledger stopped at 32.74 (the 15:30 bar's
+    # close) while the official close printed 32.90, above the 32.75 stop.
+    entered = dt.datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    exited = dt.datetime(2026, 8, 21, 15, 55, tzinfo=ET)
+    row = (37, 1, "HBB", "retest_bull_flag_daily", entered, 33.9, 32.75, 45.98,
+           exited, 32.74, "stop", -1.01)
+    def _a(day, hh, mm, o, h, l, c):                  # August bars
+        return (dt.datetime(2026, 8, day, hh, mm, tzinfo=ET), o, h, l, c)
+    bars = [_a(18, 9, 45, 33.9, 34.0, 33.8, 33.9), _a(18, 15, 30, 33.9, 34.1, 33.7, 33.8),
+            _a(21, 9, 30, 33.0, 33.65, 32.5, 33.0), _a(21, 15, 30, 32.9, 32.95, 32.26, 32.74)]
+    daily = [(dt.date(2026, 7, 1) + dt.timedelta(days=i), 33, 34, 32, 33) for i in range(40)]
+    daily = [d for d in daily if d[0] < dt.date(2026, 8, 18)]
+    daily += [(dt.date(2026, 8, 18), 33.9, 34.1, 33.7, 33.8),
+              (dt.date(2026, 8, 19), 33.8, 34.0, 33.5, 33.6),
+              (dt.date(2026, 8, 20), 33.6, 33.9, 33.2, 33.4),
+              (dt.date(2026, 8, 21), 33.0, 33.65, 32.26, 32.90),   # official close HELD
+              (dt.date(2026, 8, 24), 32.9, 33.2, 32.0, 32.10)]     # then it broke
+    g = sm.grade_trade(row, bars, daily, dt.date(2026, 9, 10))
+    assert g["phantom_stop"] is True and abs(g["exit_day_close_r"] - (32.90 - 33.9) / 1.15) < 1e-3
+    assert g["live_match"] is False
+    # the replay with the live stop rides the official closes: stopped on 8/24
+    assert g["cf"]["x1_0"]["outcome"] == "stop" and abs(g["cf"]["x1_0"]["r"] - (32.10 - 33.9) / 1.15) < 1e-3
+    # daily MAE reads the held days' official closes: the worst is the exit day's 32.90
+    assert abs(g["mae_daily_r"] - (32.90 - 33.9) / 1.15) < 1e-3 and g["n_bars"] == 4
+    assert g["touched_stop_first"] is True and g["cf"]["x1_0"]["days"] == 4
 
 
 def test_writes_own_table_only():

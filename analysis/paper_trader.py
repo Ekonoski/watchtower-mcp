@@ -1053,6 +1053,30 @@ def persist_closing_bars():
 SETTLE_FINAL_BAR_START = dt.time(15, 45)
 
 
+def swing_loop_decision(direction: str, stop: float, target: float, bar_ts,
+                        close: float, hi: float, lo: float, eod: bool,
+                        post_entry: bool):
+    """Pure. The intraday loop's swing exit: TARGET on a touch; STOP only
+    on the TRUE final RTH bar (start ≥ 15:45). The loop ends at 15:58 and
+    never holds that bar completed, so every swing stop belongs to the
+    16:20 settle (swing_settle_decision) by construction.
+
+    2026-09-10, the MAE read's free audit (`live_match`): the loop's eod
+    flag (now ≥ 15:55) fired stops on the 15:30–15:45 bar's close — the
+    same bar the AGMB fix named as NOT the daily close — and six of the
+    book's 28 stops (UNTY, HBB, RHP, NEXN, UI, DRVN) printed on it while
+    the official close HELD above the stop. The AGMB fix added the settle
+    but left this branch armed; one rule for winners and losers alike."""
+    if not post_entry:
+        return None, None
+    sign = 1 if direction == "long" else -1
+    if eod and bar_ts.time() >= SETTLE_FINAL_BAR_START and sign * (close - stop) < 0:
+        return close, "stop"
+    if (direction == "long" and hi >= target) or (direction == "short" and lo <= target):
+        return target, "target"
+    return None, None
+
+
 def swing_settle_decision(direction: str, stop: float, target: float, final_bar):
     """Pure. Exit decision for a swing position on the TRUE daily close —
     the completed 15:45–16:00 bar. Same rules and precedence as the live
@@ -1297,14 +1321,8 @@ def run_trigger_loop():
                 post_entry = entered_at is None or ts + dt.timedelta(minutes=15) > entered_at
                 exit_px, reason = None, None
                 if book == "swing":
-                    # Multi-day hold: no force-flat, and per the wick rule a
-                    # daily-pattern stop accepts on the DAILY close (approx.
-                    # the final 15m bar), never an intraday poke.
-                    if eod and post_entry and sign * (close - stop) < 0:
-                        exit_px, reason = close, "stop"
-                    elif post_entry and ((direction == "long" and hi >= tgt)
-                                         or (direction == "short" and lo <= tgt)):
-                        exit_px, reason = tgt, "target"
+                    exit_px, reason = swing_loop_decision(
+                        direction, stop, tgt, ts, close, hi, lo, eod, post_entry)
                 elif post_entry and sign * (close - stop) < 0:  # 15m close beyond stop
                     exit_px, reason = close, "stop"
                 elif post_entry and ((direction == "long" and hi >= tgt)

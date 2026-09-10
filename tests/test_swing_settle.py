@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from analysis.paper_trader import swing_settle_decision  # noqa: E402
+from analysis.paper_trader import swing_loop_decision, swing_settle_decision  # noqa: E402
 
 UTC = dt.timezone.utc
 
@@ -58,6 +58,30 @@ def main():
     # Pure by signature: no connection — the settle can only read tape
     # someone already recorded.
     assert "conn" not in inspect.signature(swing_settle_decision).parameters
+
+    # 2026-09-10: the LOOP's swing branch. At 15:55 its eod flag is set
+    # and its newest completed bar is the 15:30–15:45 one — HBB closed
+    # that bar at 32.74, a cent under its 32.75 stop, and the official
+    # close printed 32.90. That bar is not the daily close; no stop.
+    t1530 = dt.datetime(2026, 8, 21, 19, 30, tzinfo=UTC).astimezone(
+        __import__("zoneinfo").ZoneInfo("America/New_York"))
+    px, why = swing_loop_decision("long", 32.75, 45.98, t1530, 32.74, 32.80, 32.70,
+                                  eod=True, post_entry=True)
+    assert (px, why) == (None, None), (px, why)
+    # The same close on the TRUE final bar would stop (the loop never
+    # holds it completed; the settle owns it — but the rule is one rule).
+    t1545 = t1530 + dt.timedelta(minutes=15)
+    px, why = swing_loop_decision("long", 32.75, 45.98, t1545, 32.74, 32.80, 32.70,
+                                  eod=True, post_entry=True)
+    assert (px, why) == (32.74, "stop"), (px, why)
+    # Targets still fill on a touch intraday, and pre-entry bars decide nothing.
+    px, why = swing_loop_decision("long", 32.75, 45.98, t1530, 40.0, 46.0, 39.0,
+                                  eod=False, post_entry=True)
+    assert (px, why) == (45.98, "target"), (px, why)
+    px, why = swing_loop_decision("long", 32.75, 45.98, t1530, 40.0, 46.0, 39.0,
+                                  eod=False, post_entry=False)
+    assert (px, why) == (None, None), (px, why)
+    assert "conn" not in inspect.signature(swing_loop_decision).parameters
 
     print("ok — the 15:45 bar that fooled the old convention stays a "
           "non-exit, the true close books AGMB's -1.07R, wicks never "
