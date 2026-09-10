@@ -8,7 +8,9 @@ where the normal shakeout prints.
 
 SPEC (frozen before any number):
   population  every swing-book fill (paper_trades × paper_specs,
-              book='swing'), resolved AND open. Verdicts come from
+              book in swing / swing_v2 — the v2 book grades here too,
+              its `setup` and book name keeping the cohorts apart),
+              resolved AND open. Verdicts come from
               RESOLVED trades only; open trades carry a running
               excursion, reported apart and never in the verdict.
   tape        paper_spec_bars — the trade's OWN recorded 15m bars, RTH
@@ -209,7 +211,7 @@ def _load(conn):
                             s.stop, s.target, t.exited_at, t.exit_px, t.exit_reason,
                             t.r_multiple
                      FROM paper_trades t JOIN paper_specs s ON s.id = t.spec_id
-                     WHERE s.book = 'swing' AND s.direction = 'long'
+                     WHERE s.book IN ('swing', 'swing_v2') AND s.direction = 'long'
                      ORDER BY t.id""")
         return c.fetchall()
 

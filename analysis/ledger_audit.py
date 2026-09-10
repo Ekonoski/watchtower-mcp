@@ -29,6 +29,7 @@ LEGAL_EXITS = {
     "gamma_iday": {"target", "stop", "eod_flat", "clock_1430",
                    "binary_gate", "manual"},
     "swing": {"target", "stop", "eod_flat", "manual"},
+    "swing_v2": {"target", "stop", "eod_flat", "manual"},
     "day_bias": {"stop", "eod_flat", "manual"},
     "rs_leader": {"trail", "disaster", "stop", "eod_flat", "manual"},
 }

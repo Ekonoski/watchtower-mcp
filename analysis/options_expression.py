@@ -85,7 +85,7 @@ def run_options_expression() -> dict:
                 SELECT t.id, s.ticker, s.setup, t.entry_px,
                        (t.entered_at AT TIME ZONE 'America/New_York')::date
                 FROM paper_trades t JOIN paper_specs s ON s.id = t.spec_id
-                WHERE s.book = 'swing'
+                WHERE s.book IN ('swing', 'swing_v2')
                   AND NOT EXISTS (SELECT 1 FROM options_expression o
                                   WHERE o.trade_id = t.id)
                 ORDER BY t.id""")

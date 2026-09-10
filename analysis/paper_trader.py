@@ -86,9 +86,37 @@ BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
 # daily_prices, so all bullish priors read optimistic. spy_above regime
 # tags cover only ~⅓ of v6 episodes (nulls elsewhere) — regime splits are
 # directional until that backfills.
+# SWING V2 (2026-09-10, Eric: "at some point we need to make decisions
+# on where to go or we just paper trade taking trades indefinitely").
+# The book-level gate set 2026-08-10 — profit at ~30 resolved / ~2
+# months — was reached and FAILED: 33 resolved, 5-28, -24.5R. The MAE
+# read the same night cleared the stops (no wider stop rescued a trade;
+# a tighter one lost less) and every cut on record points at the ENTRY
+# (confirmed touches lose less than blind ones in this book, in the
+# defense retro, and in Eric's journal). So v1 stops arming — its open
+# positions ride to resolution under their own rules, labeled 'swing' —
+# and v2 arms as 'swing_v2' with ONE change: the retest side fills on
+# PROOF (a touch, then the first completed 15m bar CLOSING back through
+# the trigger, at that close — the confirmation shadow's own definition,
+# now the entry), plus the two negative-prior daily neckline experiments
+# retired (below). Verdict date: 2026-11-13 or 30 resolved v2 trades,
+# whichever first — positive earns the options expression, negative
+# retires the swing book for good. Per-class gates are no longer the
+# decision rule (15 classes x 30 = a year of paper); the book decides at
+# the book level with the class mix stated.
+SWING_BOOK = "swing_v2"                 # the book the writer arms
+SWING_BOOKS = ("swing", SWING_BOOK)     # every book the loop/settle manage
+RETIRED_CLASSES = {
+    # Declared experiments with NEGATIVE v6 priors, ridden on the promise
+    # of retiring if still negative at ~30 resolved. At the book-level
+    # failure they were 1-7 and 2-5 live: prior negative, live negative,
+    # book failed — three strikes, retired with v1 (2026-09-10).
+    ("higher_low", "daily"): "v6 prior -0.06R; live 1-7 (-6.2R) at the v1 gate",
+    ("double_bottom", "daily"): "v6 prior -0.19R; live 2-5 (-3.4R) at the v1 gate",
+}
 SWING_CLASSES = (
-    ("higher_low", "weekly"), ("higher_low", "daily"),
-    ("double_bottom", "weekly"), ("double_bottom", "daily"),
+    ("higher_low", "weekly"),
+    ("double_bottom", "weekly"),
     ("inverse_hs", "weekly"), ("inverse_hs", "daily"),
     ("asc_triangle", "weekly"), ("asc_triangle", "daily"),
     ("bull_flag", "weekly"), ("bull_flag", "daily"),
@@ -295,7 +323,10 @@ def swing_class_ok(pattern: str, timeframe: str) -> bool:
     pattern AND timeframe independently; this is the joint filter that
     keeps a pattern's excluded timeframe (ema_bounce daily) out of the
     book even though both its pattern and its timeframe are individually
-    tradable."""
+    tradable. A RETIRED class is refused by name (RETIRED_CLASSES carries
+    the reason) — retirement is a decision, not a missing line."""
+    if (pattern, timeframe) in RETIRED_CLASSES:
+        return False
     return (pattern, timeframe) in SWING_CLASSES
 
 
@@ -538,7 +569,8 @@ def write_morning_specs():
             # been an undecided doubling).
             c.execute("""SELECT DISTINCT s.ticker FROM paper_specs s
                          JOIN paper_trades t ON t.spec_id = s.id
-                         WHERE s.book='swing' AND t.exited_at IS NULL""")
+                         WHERE s.book = ANY(%s) AND t.exited_at IS NULL""",
+                      (list(SWING_BOOKS),))
             open_tks = {r[0] for r in c.fetchall()}
             candidates = [(tk, tf, pat, d, float(trig), float(tgt), float(inv), score)
                           for tk, tf, pat, d, trig, tgt, inv, score in rows
@@ -644,7 +676,7 @@ def write_morning_specs():
                 except Exception as e:
                     ftag = {"reason": f"tag_error: {str(e)[:300]}"}
                     fund_mix[tk] = "unavailable"
-                specs.append((today, "swing", tk, "long", f"retest_{pat}_{tf}",
+                specs.append((today, SWING_BOOK, tk, "long", f"retest_{pat}_{tf}",
                               trig, inv, tgt, "armed", rationale,
                               json.dumps(tag), json.dumps(stag),
                               json.dumps(ftag)))
@@ -787,8 +819,17 @@ def _rth(bars: list) -> list:
             if dt.time(9, 30) <= b[0].time() <= dt.time(15, 45)]
 
 
-def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
+def _swing_fill(direction: str, trig: float, stop: float, live_bars: list,
+                confirm: bool = False):
     """Resting-limit fill for the swing book, honestly priced.
+
+    confirm=True is SWING V2 (2026-09-10): the retest side no longer fills
+    on the touch. A touch arms the spec, and the first completed 15m bar
+    CLOSING back through the trigger fills, at that bar's close — the
+    touch bar itself counts if its own close is back through (exactly
+    _confirm_shadow's definition, promoted from shadow to entry). Kind
+    'confirm'. The lost-level branch (DOA / reclaim) is unchanged: it was
+    already a close-confirmed entry.
 
     2026-08-08 shadow audit: fills booked blindly at the trigger created
     phantoms on BOTH sides — ARW "filled" at 220.87 on a day whose high was
@@ -816,13 +857,20 @@ def _swing_fill(direction: str, trig: float, stop: float, live_bars: list):
     """
     sign = 1 if direction == "long" else -1
     lost = False
+    seen_touch = False
     for _, bop, bc2, bhi, blo, *_xv in live_bars:
         opened_beyond = (bop < trig) if direction == "long" else (bop > trig)
         if not lost and not opened_beyond:
             # Price is on the retest side: a limit at trig fills on a touch.
             touched = (blo <= trig) if direction == "long" else (bhi >= trig)
-            if touched:
-                return ("fill", trig, "touch")
+            if not confirm:
+                if touched:
+                    return ("fill", trig, "touch")
+                continue
+            # v2: the touch arms; a completed close back through fills.
+            seen_touch = seen_touch or touched
+            if seen_touch and sign * (bc2 - trig) >= 0:
+                return ("fill", bc2, "confirm")
             continue
         if not lost:
             # The level was opened through — lost. If the open is already
@@ -1115,7 +1163,8 @@ def run_swing_close_settle():
             c.execute("""SELECT s.ticker, s.direction, s.stop, s.target,
                                 t.id, t.entry_px, t.entered_at
                          FROM paper_specs s JOIN paper_trades t ON t.spec_id=s.id
-                         WHERE s.book='swing' AND t.exited_at IS NULL""")
+                         WHERE s.book = ANY(%s) AND t.exited_at IS NULL""",
+                      (list(SWING_BOOKS),))
             rows = c.fetchall()
         for tk, direction, stop, tgt, tid, entry_px, entered_at in rows:
             stop, tgt, entry_px = float(stop), float(tgt), float(entry_px)
@@ -1224,7 +1273,7 @@ def run_trigger_loop():
             if tid is None:                          # not entered yet
                 # 14:30 no-new is a day-trade clock; a swing resting limit
                 # stays workable until the close (its spec cancels at eod).
-                if book in halted or (eod if book == "swing" else no_new):
+                if book in halted or (eod if book in SWING_BOOKS else no_new):
                     if eod:
                         _cancel(conn, sid, "day over")
                     continue
@@ -1233,8 +1282,9 @@ def run_trigger_loop():
                 live_bars = [b for b in bars
                              if b[0] + dt.timedelta(minutes=15) > created_at]
                 entry_fill, kind = None, None
-                if book == "swing":
-                    verdict, px, kind = _swing_fill(direction, trig, stop, live_bars)
+                if book in SWING_BOOKS:
+                    verdict, px, kind = _swing_fill(direction, trig, stop, live_bars,
+                                                    confirm=(book == SWING_BOOK))
                     if verdict == "doa":
                         _cancel(conn, sid, "gapped past stop — dead on arrival, no fill")
                         continue
@@ -1246,7 +1296,7 @@ def run_trigger_loop():
                         log.info("[paper] REFUSE %s %s %s — %s", book, tk, setup, why)
                         continue
                     entered, entry_fill = (verdict == "fill"), px
-                if entered and kind == "reclaim":
+                if entered and kind in ("reclaim", "confirm"):
                     # The reclaim premium repriced the trade — the geometry
                     # the spec QUALIFIED on must survive the actual entry:
                     # the class's native ratio, not a flat 1.5 (ATRC,
@@ -1256,7 +1306,7 @@ def run_trigger_loop():
                                                    stop, tgt, req)
                     if not ok:
                         _cancel(conn, sid,
-                                f"reclaim_geometry — {ratio:.2f}:1 at entry "
+                                f"{kind}_geometry — {ratio:.2f}:1 at entry "
                                 f"{entry_fill:g} (target {tgt:g}, stop {stop:g}); "
                                 f"spec demanded {req:g}:1")
                         log.info("[paper] REFUSE %s %s reclaim @ %.2f — "
@@ -1320,7 +1370,7 @@ def run_trigger_loop():
                 # be lookahead. Stop/target only count on bars ending after entry.
                 post_entry = entered_at is None or ts + dt.timedelta(minutes=15) > entered_at
                 exit_px, reason = None, None
-                if book == "swing":
+                if book in SWING_BOOKS:
                     exit_px, reason = swing_loop_decision(
                         direction, stop, tgt, ts, close, hi, lo, eod, post_entry)
                 elif post_entry and sign * (close - stop) < 0:  # 15m close beyond stop

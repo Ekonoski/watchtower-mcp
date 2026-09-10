@@ -2279,6 +2279,41 @@ Rendering doctrine, same spirit as the rest of this file:
   precedent) is Eric's ruling. Stated: official closes as the replay's
   daily close, ±10R cap, no costs.
 
+- **Swing v1 failed its gate; swing v2 arms on proof** (2026-09-10,
+  late — Eric, twice: "at some point we need to make decisions on where
+  to go or we just paper trade taking trades indefinitely"). He was
+  right, and the decision was already in the record uncalled: the
+  book-level gate set 2026-08-10 (profit at ~30 resolved / ~2 months)
+  was reached and FAILED — 33 resolved, 5-28, −24.5R at five weeks. So:
+  (1) swing v1 stops arming; its 95 open positions ride to resolution
+  under their own rules, labeled `swing`, the record whole. (2) `swing_v2`
+  arms from the next writer run with ONE change — the retest side fills
+  on PROOF: a touch arms, the first completed 15m bar CLOSING back
+  through the trigger fills at that close (`_swing_fill(confirm=True)`,
+  kind `confirm`; the confirmation shadow's definition promoted to the
+  entry; geometry re-checked at the confirm premium like a reclaim) —
+  plus the two negative-prior daily neckline experiments retired
+  (`RETIRED_CLASSES`, refused by name with the reason: prior negative,
+  live 1-7 and 2-5, book failed). Everything else is v1: same classes
+  otherwise, same floor/open curation, same stops (the MAE read cleared
+  them), same settle. (3) Verdict date 2026-11-13 or 30 resolved v2
+  trades, whichever first: positive earns the options expression Eric
+  asked for on 8/27; negative retires the swing book for good and the
+  desk's swing exposure becomes what already cleared the bar (the 16D
+  deep-dot ladder, the weekly cipher band). (4) Per-class ~30 gates are
+  NO LONGER the decision rule — fifteen classes × 30 is a year of
+  paper; the book decides at the book level with the class mix stated
+  every morning. Book birth touched every place at once (the 9/1
+  lesson): migration 069 (book + fill_kind allowlists), `SWING_BOOK` /
+  `SWING_BOOKS` in the writer, loop (fill / halt / exit) and settle,
+  the audit's exit vocabulary, spec_ping, options_expression, and the
+  MAE study; `tests/test_swing_v2.py` pins the fill semantics, that no
+  decision path compares against a bare 'swing' literal, and the
+  allowlist text; `tests/test_class_admission.py` pins the retirements.
+  Eric's 8/23 harness doctrine still holds: this is a full-shadow-class
+  change (a different trade), which is exactly why it gets a new book
+  name and its own n instead of a tag.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
