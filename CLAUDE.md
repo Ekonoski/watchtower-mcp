@@ -2314,6 +2314,29 @@ Rendering doctrine, same spirit as the rest of this file:
   change (a different trade), which is exactly why it gets a new book
   name and its own n instead of a tag.
 
+- **The overnight read: the indexes now move overnight, and a slippery
+  close does not say which way** (2026-09-12, off Eric's QQQ 1DTE put —
+  bought 9/9 at 13:29 with time on purpose, sold on 9/10's first print
+  for +$780 / +3.12R: "during trading hours the names have been
+  chopping sideways, most of the move has been happening overnight").
+  Checked on daily_prices (|close→open| vs |open→close|, last 20
+  sessions vs the prior 100): QQQ overnight share 60% vs 49%, session
+  range 0.35% vs 0.79%; SPY 57% vs 48%, 0.24% vs 0.51% — on the
+  INDEXES the session has halved and the overnight is the majority of
+  the move; single names are unchanged (TSLA 36%/36%, NVDA 44%/39%,
+  AAPL 24%/36%). Then the direction question he asked for — "slippery
+  board at the close → next-day gap direction", gex_levels close
+  boards since 7/14 (42 per index, 25–27 slippery): slippery closes
+  gap DOWN 48% on both indexes (avg gap +0.03/+0.04%, next-day
+  −0.16/0.00%) vs pinning closes 27–35% (avg +0.12/+0.16%); after a
+  DOWN day on a slippery board the gap averages 0.00/+0.01%, 8 of 16
+  down. What slippery DOES change is size: |gap| 0.81% vs 0.53% on
+  QQQ, 0.43% vs 0.26% on SPY. Read: the regime tells you the
+  overnight will be bigger, not which way; the direction on 9/9→9/10
+  was the coin landing right. Small n (42 days), exploratory, no
+  rule; an `overnight_hold` journal leg is a candidate for the flat
+  review.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
