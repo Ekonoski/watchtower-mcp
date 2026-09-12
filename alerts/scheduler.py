@@ -2876,6 +2876,7 @@ def start_scheduler():
                             ("failtest", "analysis.failtest_study"),
                             ("swing_mae", "analysis.swing_mae_study"),
                             ("twotest", "analysis.twotest_study"),
+                            ("twotest_select", "analysis.twotest_select"),
                             ("riskmgmt", "analysis.riskmgmt_study"),
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
