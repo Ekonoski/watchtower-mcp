@@ -2390,6 +2390,35 @@ Rendering doctrine, same spirit as the rest of this file:
   name failed silently three times; the second pass died on a NULL
   daily high: two boot cycles lost to errors a fake-connection smoke
   run now catches before shipping).
+  THE SELECTION CUT (same afternoon — Eric: "are you doing that, or
+  are you just grabbing names and testing?" Grabbing names, with one
+  leader cut; `analysis/twotest_select.py`, table twotest_select,
+  migration 071, marker twotest_select_v1, stamps every triggered
+  event with his three legs at the trigger, no lookahead: the Scanner
+  trend gate on 1m/5m/15m/60m — continuous series, last COMPLETED
+  block, NULL in warmup — the sector's breadth-RS state at the prior
+  close (inflow/neutral/outflow by rank, turning = rs_1w > 0; the index
+  ETFs are a hole, not "Financial Services" as the tickers table says),
+  and the 9:45 leader flag). READOUT, longs, struct_5c bps h1/h2:
+  (1) FOUR-TIMEFRAME ALIGNMENT DOES NOT SURVIVE — all four aligned
+  +6.2 / +0.7 (n=103/81, 1% disaster −5.5 in h2) vs 3-of-4 +15.6 /
+  +5.3 (339/348) vs ≤2 +7.9 / +6.0 (1,258/1,331); by the time every
+  timeframe agrees the move is extended (the MACD-extension read at
+  the 1m/5m/15m scale) — no leg, no gate. (2) SECTOR has no gradient:
+  neutral-not-turning +21.6 / +11.5 (272/340) and inflow-turning +9.6
+  / +9.6 (288/191) are the both-halves-positive cells; "turning up"
+  by itself does not sort (neutral-turning −4.9 / +8.5, outflow-
+  turning +2.1 / +15.0) — the sector study's verdict again, at the
+  intraday scale. (3) THE LEADER CARRIES: leader & not aligned +13.0 /
+  +17.0 (139/146); non-leader & aligned +3.5 / +3.9 (96/71) —
+  alignment adds nothing without leadership; leader & aligned is
+  n=7/10 (unreadable). The best small cell is leader × inflow-turning
+  +25.6 / +34.4 (n=30/22) — a candidate at small n, never a rule.
+  Verdict: of the three selection legs Eric named, the record supports
+  ONE — the relative-strength leader — which the desk already trades;
+  the timeframe stack is a lateness filter, and the sector read is
+  measured and flat. The X post's own selection claim is still
+  unfetched (egress) and grades when pasted.
 
 ## Numbers on one line must reconcile with each other
 
