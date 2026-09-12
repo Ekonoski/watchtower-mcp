@@ -267,8 +267,11 @@ def run_append() -> int:
     needs an owning job). Re-runs the SAME _process_ticker over the
     whole record: ON CONFLICT DO NOTHING keeps every labeled day, so
     only days that gained their bars since the last pass are added.
-    16:32 ET after the 16:20 index-bars append, plus a boot catch-up.
-    Returns rows written (0 on a current table is data, not a fault)."""
+    16:45 ET — after the 16:20 index-bars append AND the 16:35 close sync
+    that writes the day's daily_prices row (the label needs both; at
+    16:32 it ran before the daily bar existed and wrote nothing, 9/11
+    the day it was caught) — plus a boot catch-up. Returns rows written
+    (0 on a current table is data, not a fault)."""
     from zoneinfo import ZoneInfo
     from screen.reversal_screen import _conn
     et = ZoneInfo("America/New_York")
