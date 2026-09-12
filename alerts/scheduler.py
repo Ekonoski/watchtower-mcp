@@ -2877,6 +2877,7 @@ def start_scheduler():
                             ("swing_mae", "analysis.swing_mae_study"),
                             ("twotest", "analysis.twotest_study"),
                             ("twotest_select", "analysis.twotest_select"),
+                            ("sector_leader", "analysis.sector_leader_study"),
                             ("riskmgmt", "analysis.riskmgmt_study"),
                             ("premarket", "analysis.premarket_backfill"),
                             ("exit_shape", "analysis.exit_shape_study"),
