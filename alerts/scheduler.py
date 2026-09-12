@@ -1951,8 +1951,13 @@ def start_scheduler():
 
     # daytype_days owner (2026-09-09: the table froze at 9/4 — the seeder
     # was marker-retired and nothing appended). Labels today's SPY/QQQ
-    # day once the 16:20 pass has landed its bars; boot catch-up rides
-    # _seed_all right after the index-bars catch-up.
+    # day once the 16:20 pass has landed its 15m bars AND the 16:35
+    # close sync has landed the daily bar the label reads (2026-09-12:
+    # at 16:32 the day's daily_prices row did not exist yet, so the pass
+    # logged "+0 day(s)" every evening and 9/11 went unlabeled — 9/10
+    # was labeled only because that evening's deploys re-ran the boot
+    # catch-up after the close sync). Boot catch-up rides _seed_all
+    # right after the index-bars catch-up.
     def _daytype_append():
         try:
             from analysis.daytype_study import run_append
@@ -1962,7 +1967,7 @@ def start_scheduler():
 
     scheduler.add_job(
         _daytype_append,
-        CronTrigger(day_of_week="mon-fri", hour="16", minute="32", timezone=et),
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="45", timezone=et),
         id="daytype_append", replace_existing=True,
     )
 

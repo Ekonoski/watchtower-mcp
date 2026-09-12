@@ -85,3 +85,10 @@ def test_table_has_an_owner_after_the_seed():
                               "alerts", "scheduler.py")).read()
     assert 'id="daytype_append"' in sched
     assert sched.count("from analysis.daytype_study import run_append") == 2   # cron + boot catch-up
+    # 2026-09-12: the label reads the day's daily_prices row, which the
+    # 16:35 close sync writes — the owner must run AFTER it (at 16:32 it
+    # wrote "+0 day(s)" every evening and 9/11 went unlabeled).
+    import re
+    m = re.search(r'_daytype_append,\s*CronTrigger\(day_of_week="mon-fri", hour="16", minute="(\d+)"', sched)
+    cs = re.search(r'run_close_sync_and_restamp,\s*CronTrigger\(day_of_week="mon-fri", hour="16", minute="(\d+)"', sched)
+    assert m and cs and int(m.group(1)) > int(cs.group(1)), (m and m.group(1), cs and cs.group(1))
