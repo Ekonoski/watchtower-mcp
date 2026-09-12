@@ -2419,6 +2419,66 @@ Rendering doctrine, same spirit as the rest of this file:
   the timeframe stack is a lateness filter, and the sector read is
   measured and flat. The X post's own selection claim is still
   unfetched (egress) and grades when pasted.
+  THE POST, GRADED (same afternoon, pasted by Eric: "Find the sector.
+  Find the leader. Wait for the break and retest." — ~26 theme ETFs
+  scanned for what outperforms SPY/QQQ, holds the 8/21, breaks out of
+  a base, expands volume, is green while the market is red, makes new
+  highs; then the leaders inside the strongest sector).
+  `analysis/sector_leader_study.py` (table sector_leader_events,
+  migration 072, markers sector_leader_v1 / sector_leader_xs_v1) stamps
+  all 166,555 daily bullish episodes (2005→) at the PRIOR close with
+  the post's legs: the sector's SPDR ETF (GICS sector → XLK/XLV/…;
+  the tickers table files every ETF under Financial Services / Asset
+  Management, so 39,902 episodes the scanner patterns on FUNDS are
+  holes here — and the 8/22 sector study's "Financial Services" cell
+  was carrying them), ETF 21/63-bar RS vs SPY and its rank among the
+  SPDRs with data, ETF above 8/21, ETF within 3% of its 252-bar high,
+  ETF beating QQQ; the stock's 21/63-bar return PERCENTILE among every
+  non-fund ticker of its sector that day (one SQL cross-section per
+  sector, ~9s on Utilities), RS vs its ETF and SPY, above 8/21, near
+  high, 20/60 volume expansion, green-while-SPY-red bars in the last
+  10, a series-defect flag (769 rows). Graded n=114,478 (72,540
+  post-2016 / 41,938 pre), realized R capped ±10, NULL-guarded,
+  breakout-close entries, survivors-plus-delisted universe, no costs.
+  READOUT — THE PROCESS IS REFUSED, AND THREE OF ITS LEGS ARE INVERTED
+  ON THE RECORD. Pool +0.026R / 60.5% post-2016, +0.011R / 59.7% pre.
+  The post's stacked rule (ETF top-3 by RS AND ETF above 8/21 AND
+  stock top-quintile in its sector AND stock above 8/21): +0.001R /
+  58.0% (n=3,567) and +0.059R / 58.9% (n=2,345) — below the pool
+  post-2016, below it on win rate in both eras. Leader-in-strongest-
+  sector alone: −0.009 / −0.024R, 58%, both eras below pool. Sector
+  rank has NO gradient (top-3 +0.027/+0.018, mid +0.035/+0.017,
+  bottom-3 +0.004/−0.058). The stock's sector percentile runs the
+  WRONG way in both eras: laggard quintile +0.100 / +0.065R at 63%
+  (n=4,961/2,986) vs leader quintile +0.027 / −0.043R at 58–60%
+  (n=22,622/13,505); on the 63-bar window the same (laggard
+  +0.063/+0.059 vs leader −0.012/−0.087); bottom-3 sector × laggard
+  is the best cell on the board, +0.118 / +0.147R, 63%, both eras —
+  the washout-turn read the sector study found, now at the stock
+  level: a name that lagged its sector for a month and then breaks
+  out of a base out-grades the name that already led. "New highs" is
+  inverted (stock within 3% of its high −0.029/−0.044 vs +0.035/
+  +0.002 off it; sector at highs −0.048/−0.025 vs +0.075/+0.021) and
+  "green while the market is red" is inverted (≥4 such bars −0.008/
+  −0.040 vs 0–1 bars +0.035/+0.044). Two legs survive in DIRECTION,
+  both small: the stock holding its 8/21 (+0.053/+0.053 vs −0.027/
+  −0.067 below — the one leg with the same gap in both eras) and
+  volume expanding (20/60 ≥ 1.5: +0.086/+0.038 vs < 1: +0.009/+0.009,
+  monotone). ETF above 8/21 and ETF-beats-QQQ each pay in one era and
+  nothing in the other. Reading: at the daily break-and-retest scale
+  the post's process is momentum stacking, and the record — like the
+  Darvas and single-name-momentum grades before it — says the
+  breakout worth buying is the one out of a WASHED-OUT base, not the
+  one on a leader at highs; the intraday leader (9:45 RS, hours old)
+  is a different animal from the monthly leader (weeks old), and only
+  the first grades. The one aside worth its line: episodes that ever
+  OFFERED a retest grade −0.18R / 53% in both eras against the
+  +0.02R / 60% pool — the runners never came back (the ASTE lesson
+  at n=97k); a retest-buying desk is selecting out of that cohort by
+  construction, stated, not acted on. `tests/test_sector_leader_study.py`
+  pins the fund mapping, the strictly-before prior index, every leg's
+  holes, the rank with a missing SPDR, one-definition, write scope,
+  and a fake-connection stage-1 smoke run.
 
 ## Numbers on one line must reconcile with each other
 
