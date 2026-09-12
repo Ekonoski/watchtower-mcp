@@ -122,6 +122,13 @@ def test_obstacle_and_targets():
     assert tt.sim_targets(bars, 1, 100.6, "long", 100.25, None)["tp1"] is None
 
 
+def test_orb_clock_is_a_valid_time():
+    # 2026-09-12 first pass: dt.time(9, 30 + 30) raised "minute must be in 0..59"
+    # and every name failed silently three times. The range ends at 10:00.
+    assert tt.ORB_END == dt.time(10, 0) and tt.ORB_LAST_5M == dt.time(9, 59)
+    assert "dt.time(9, 30 + ORB_MIN" not in inspect.getsource(tt)
+
+
 def test_one_definition_and_writes_own_tables():
     src = inspect.getsource(tt)
     assert "from analysis.tapeentry_study import" in src
