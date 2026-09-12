@@ -39,16 +39,17 @@ def test_pivots_are_confirmed_fractals():
 
 
 def test_two_test_structure_and_trigger():
-    level = 100.0
-    # confirm 5m bar = bars 0-4 (closes 100.5); then 1m: L1 at bar 6 (100.1),
-    # H at bar 8 (100.6), a LOWER low at bar 10 (100.05 — not L2), L2 at bar 12
-    # (100.3), confirmed by bar 13, cross of H at bar 14.
-    seq = [(99.8, 100.2, 99.7, 100.1), (100.1, 100.4, 100.0, 100.3), (100.3, 100.6, 100.2, 100.5),
+    level = 100.2
+    # confirm 5m bar = bars 0-4 (closes 100.5 over 100.2); then 1m: L1 at bar 6
+    # (100.1), H at bar 8 (100.6), a pivot low at bar 10 (100.15 — above L1 but
+    # BELOW the level, so not L2), L2 at bar 12 (100.3), confirmed by bar 13,
+    # cross of H at bar 14.
+    seq = [(99.8, 100.3, 99.7, 100.25), (100.25, 100.4, 100.2, 100.3), (100.3, 100.6, 100.25, 100.5),
            (100.5, 100.7, 100.4, 100.6), (100.6, 100.7, 100.3, 100.5),
            (100.5, 100.55, 100.2, 100.3), (100.3, 100.35, 100.1, 100.2),   # bar 6: L1 low 100.1
            (100.2, 100.45, 100.15, 100.4), (100.4, 100.6, 100.3, 100.5),    # bar 8: H high 100.6
-           (100.5, 100.55, 100.2, 100.3), (100.3, 100.35, 100.05, 100.2),  # bar 10: low 100.05 < L1 → not L2
-           (100.2, 100.5, 100.15, 100.45), (100.45, 100.5, 100.3, 100.4),  # bar 12: L2 low 100.3
+           (100.5, 100.55, 100.2, 100.3), (100.3, 100.35, 100.15, 100.25), # bar 10: pivot 100.15 < level → not L2
+           (100.25, 100.5, 100.35, 100.45), (100.45, 100.5, 100.3, 100.4), # bar 12: L2 low 100.3
            (100.4, 100.55, 100.35, 100.5),                                   # bar 13 confirms L2
            (100.5, 100.7, 100.45, 100.65),                                   # bar 14: crosses 100.6
            (100.65, 100.9, 100.6, 100.8)]
@@ -63,7 +64,8 @@ def test_two_test_structure_and_trigger():
     seq2[13] = (100.4, 100.7, 100.35, 100.5)
     seq2[14] = (100.5, 100.55, 100.45, 100.5)
     r2 = tt.two_test(_mk(seq2), level, "long", 5, len(seq2) - 1, *tt.resample5(_mk(seq2)), 0)
-    assert r2["status"] == "no_trigger" and r2["l2"] == (12, 100.3)
+    # bar 13's cross is ignored; the next real cross (bar 15, high 100.9) is the trigger
+    assert r2["status"] == "triggered" and r2["l2"] == (12, 100.3) and r2["i_trig"] == 15, r2
 
 
 def test_kills_and_no_trigger():
