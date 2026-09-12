@@ -2337,6 +2337,60 @@ Rendering doctrine, same spirit as the rest of this file:
   rule; an `overnight_hold` journal leg is a candidate for the flat
   review.
 
+- **The two-test entry engine: it clears the bar with the wick-rule
+  stop, and it is an execution rule, not an edge** (2026-09-12, Eric's
+  "Intraday Level Trading" study workbook — completed 5m close through
+  a major level → on the 1m a first retest low L1, bounce high H, a
+  higher low L2 at/above the level → enter on the wick cross of H;
+  "if we can find the edge in the stock selection and then focus on
+  the stock selection with the edge, this might actually help us read
+  our charts autonomously"; the X post he attached with the selection
+  claim could not be fetched — x.com and its mirrors are egress-
+  blocked here — so that half waits on the pasted text).
+  `analysis/twotest_study.py` (tables twotest_events / twotest_days,
+  migration 070, marker twotest_v1; level_machine / resample5 /
+  sim_stops IMPORTED from tapeentry_study — one definition): 15 names
+  with a 2-year 1m record, levels PDH/PDL, PMH/PML, 30-min ORB; every
+  (day, level) recorded — no_level 4,024, no_confirm 23,916,
+  structure_failed 10,642 (level lost on a 5m close 8,932 / L1 lost
+  1,710), no_trigger 22, triggered 6,624 — so 38–41% of confirmed
+  breaks ever reach the trigger: the engine's fakeout filter is the
+  ~60% of confirmed breaks it refuses. READOUT (bps to the close,
+  wick-cross fills, no costs, split 2025-09-01): LONGS eod +5.0 /
+  +6.0 (52% positive both halves); the workbook's TOUCH stop under L2
+  (struct risk ≈ 22 bps, stopped 79–83%) +7.8 / +6.3; the same level
+  on a 5m CLOSE (struct_5c, stopped 72–73%) +8.8 / +5.6; 1% disaster
+  +3.3 / +3.1; first-obstacle exit +3.9 / +2.9 (70–72% hit); 2R
+  bracket +2.7 / +4.3 (36–39% hit). SHORTS eod +1.1 / +11.6, struct_5c
+  +8.6 / +10.6 — recorded, small, the standing short verdicts stand.
+  Per name (longs, struct_5c) positive in BOTH halves in 10 of 15
+  (AAPL AMD IWM META MSFT MU NFLX NVDA SPY TSLA; AMZN AVGO GOOGL PLTR
+  QQQ flip) — so under the frozen bar the engine PASSES on the
+  5m-close stop and FAILS on hold-to-close (per-name both-halves only
+  NVDA). R on the struct unit is inflated (22-bp stops → +4.7R
+  averages) — the R-unit lesson again; read the bps. The workbook's
+  ~2R first-obstacle PASS filter: h1 longs +18.5 (room ≥ 2) vs −3.8,
+  h2 +0.7 vs +5.5 — sign-flips, NOT adopted. THE SELECTION CUT is
+  the finding: on rs_leader days the PDH two-test pays +33.6 / +21.4
+  bps (n=39/45) and the PMH +12.8 / +17.5 (n=51/59) under the
+  5m-close stop, vs +12.9 / +0.9 and +5.8 / +9.4 off leader days;
+  the ORB family is flat on leader days (+0.2 / +5.3). Roughly twice
+  the GO's +13 bps/day on the same selection, n≈200, small-n stated.
+  Verdict: the engine beats the plain 1m-gated retest it descends
+  from (a coin flip, +0.5 bps) by ~5–8 bps unconditioned, replicates
+  with the wick-rule stop, and becomes a real trade only where the
+  desk already knew the edge lives — the leader. No book yet; the
+  candidate is a leader-day two-test at PDH/PMH as a SECOND graded
+  entry beside the GO, to be pre-registered on its own; Eric's manual
+  rule Monday is the workbook with the 5m-close stop.
+  `tests/test_twotest_study.py` pins the pivot walk, the higher-low
+  and holds-the-level legs, the confirming-bar exclusion, the three
+  kills, the short mirror, targets, one-definition, writes-own-tables
+  — and the ORB clock (the first pass wrote dt.time(9, 60) and every
+  name failed silently three times; the second pass died on a NULL
+  daily high: two boot cycles lost to errors a fake-connection smoke
+  run now catches before shipping).
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
