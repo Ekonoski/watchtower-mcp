@@ -96,6 +96,8 @@ LIQUID = ("SPY", "QQQ", "IWM", "AMD", "AVGO", "MU", "NFLX", "PLTR")
 TICKERS = MAG7 + LIQUID
 STOP_BUFF = 0.0005
 ORB_MIN = 30
+ORB_END = dt.time(10, 0)           # the 30-minute opening range: 1m bars starting before 10:00
+ORB_LAST_5M = dt.time(9, 59)       # the 5m bar whose last 1m starts 9:59 is the range's final bar
 MIN_BARS = 300
 CONFIRM_START = dt.time(9, 34)     # 5m bar whose last 1m starts 9:34 completes 9:35
 CONFIRM_END = dt.time(14, 29)      # completes by 14:30
@@ -287,7 +289,7 @@ def _grade_ticker(conn, ticker, done_days, deadline, et):
         atr5 = [atr_all[k] for k in k5]
         pdh, pdl = prev[d]
         pmh, pml = pm.get(d, (None, None))
-        orb = [b for b in bars if b[0].time() < dt.time(9, 30 + ORB_MIN)]
+        orb = [b for b in bars if b[0].time() < ORB_END]
         orbh = max(b[2] for b in orb) if orb else None
         orbl = min(b[3] for b in orb) if orb else None
         levels = {"pdh": pdh, "pdl": pdl, "pmh": pmh, "pml": pml, "orbh": orbh, "orbl": orbl}
@@ -303,7 +305,7 @@ def _grade_ticker(conn, ticker, done_days, deadline, et):
                 rows.append((fam, direction, None, "no_level", None, None))
                 continue
             start_inside = fam.startswith("orb")
-            i5_from = max(i5_start, next((k for k, b in enumerate(bars5) if b[0].time() >= dt.time(9, 30 + ORB_MIN - 1)), len(bars5))) if start_inside else i5_start
+            i5_from = max(i5_start, next((k for k, b in enumerate(bars5) if b[0].time() >= ORB_LAST_5M), len(bars5))) if start_inside else i5_start
             brk, _ = level_machine(bars5, level, direction, i5_from, i5_end, start_inside=start_inside)
             if brk is None:
                 rows.append((fam, direction, level, "no_confirm", None, None))
