@@ -237,11 +237,15 @@ def sim_targets(bars1, i_after, entry, direction, stop_px, obstacle):
 def _grade_ticker(conn, ticker, done_days, deadline, et):
     table = _bars_table(ticker)
     with conn.cursor() as c:
-        c.execute(f"SELECT ts, open, high, low, close FROM {table} WHERE ticker=%s ORDER BY ts",
-                  (ticker,))
+        c.execute(f"SELECT ts, open, high, low, close FROM {table} WHERE ticker=%s "
+                  f"AND open IS NOT NULL AND high IS NOT NULL AND low IS NOT NULL AND close IS NOT NULL "
+                  f"ORDER BY ts", (ticker,))
         raw = c.fetchall()
-        c.execute("SELECT trade_date, high, low FROM daily_prices WHERE ticker=%s ORDER BY trade_date",
-                  (ticker,))
+        # NVDA's daily row with a NULL high/low took the whole name down on
+        # the first graded pass (float(None)); a level that does not exist
+        # is a hole for that day, not a crash for the ticker.
+        c.execute("SELECT trade_date, high, low FROM daily_prices WHERE ticker=%s "
+                  "AND high IS NOT NULL AND low IS NOT NULL ORDER BY trade_date", (ticker,))
         daily = c.fetchall()
         c.execute("SELECT trade_date, pm_high, pm_low FROM premarket_range WHERE ticker=%s", (ticker,))
         pm = {d: (float(h) if h is not None else None, float(l) if l is not None else None)
