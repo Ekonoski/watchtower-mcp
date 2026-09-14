@@ -83,6 +83,24 @@ def main():
     assert (px, why) == (None, None), (px, why)
     assert "conn" not in inspect.signature(swing_loop_decision).parameters
 
+    # 2026-09-11, ACVA: entry 7.86, target 9.93, the 9:30 bar OPENED 10.455
+    # on a +45% gap. The exit booked 9.93 — a price the tape never printed
+    # (day low 10.30). A bar that opens beyond the target fills at its OPEN,
+    # in the loop and in the settle alike; a touch still fills at the target.
+    t0930 = dt.datetime(2026, 9, 11, 13, 30, tzinfo=UTC).astimezone(
+        __import__("zoneinfo").ZoneInfo("America/New_York"))
+    px, why = swing_loop_decision("long", 6.615, 9.93, t0930, 10.41, 10.46, 10.30,
+                                  eod=False, post_entry=True, op=10.455)
+    assert (px, why) == (10.455, "target"), (px, why)
+    px, why = swing_loop_decision("long", 6.615, 9.93, t0930, 9.95, 10.10, 9.80,
+                                  eod=False, post_entry=True, op=9.80)
+    assert (px, why) == (9.93, "target"), (px, why)               # touched from below: the target
+    px, why = swing_loop_decision("short", 12.0, 9.93, t0930, 9.50, 9.60, 9.40,
+                                  eod=False, post_entry=True, op=9.55)
+    assert (px, why) == (9.55, "target"), (px, why)               # the short mirror
+    px, why = swing_settle_decision("long", 6.615, 9.93, _bar("1945", 10.455, 10.41, 10.46, 10.30))
+    assert (px, why) == (10.455, "target"), (px, why)
+
     print("ok — the 15:45 bar that fooled the old convention stays a "
           "non-exit, the true close books AGMB's -1.07R, wicks never "
           "decide, target touch matches the loop, and the decision is "

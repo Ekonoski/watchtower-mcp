@@ -1101,9 +1101,25 @@ def persist_closing_bars():
 SETTLE_FINAL_BAR_START = dt.time(15, 45)
 
 
+def _target_fill(direction: str, target: float, hi: float, lo: float, op):
+    """Pure. The target exit's price: the target on a touch, but a bar that
+    OPENS beyond the target fills at its OPEN — the first price that
+    printed. 2026-09-11, ACVA: a +45% gap (7.22 → 10.455) over a 9.93
+    target booked the exit at 9.93, a price the tape never printed that
+    day (low 10.30); the audit flagged it. Every fill price is a price
+    that printed — winners and losers alike. None when not hit."""
+    if direction == "long":
+        if op is not None and op >= target:
+            return op
+        return target if hi >= target else None
+    if op is not None and op <= target:
+        return op
+    return target if lo <= target else None
+
+
 def swing_loop_decision(direction: str, stop: float, target: float, bar_ts,
                         close: float, hi: float, lo: float, eod: bool,
-                        post_entry: bool):
+                        post_entry: bool, op=None):
     """Pure. The intraday loop's swing exit: TARGET on a touch; STOP only
     on the TRUE final RTH bar (start ≥ 15:45). The loop ends at 15:58 and
     never holds that bar completed, so every swing stop belongs to the
@@ -1120,8 +1136,9 @@ def swing_loop_decision(direction: str, stop: float, target: float, bar_ts,
     sign = 1 if direction == "long" else -1
     if eod and bar_ts.time() >= SETTLE_FINAL_BAR_START and sign * (close - stop) < 0:
         return close, "stop"
-    if (direction == "long" and hi >= target) or (direction == "short" and lo <= target):
-        return target, "target"
+    px = _target_fill(direction, target, hi, lo, op)
+    if px is not None:
+        return px, "target"
     return None, None
 
 
@@ -1142,9 +1159,9 @@ def swing_settle_decision(direction: str, stop: float, target: float, final_bar)
     sign = 1 if direction == "long" else -1
     if sign * (close - stop) < 0:
         return close, "stop"
-    if (direction == "long" and hi >= target) or \
-            (direction == "short" and lo <= target):
-        return target, "target"
+    px = _target_fill(direction, target, hi, lo, op_)
+    if px is not None:
+        return px, "target"
     return None, None
 
 
@@ -1372,7 +1389,7 @@ def run_trigger_loop():
                 exit_px, reason = None, None
                 if book in SWING_BOOKS:
                     exit_px, reason = swing_loop_decision(
-                        direction, stop, tgt, ts, close, hi, lo, eod, post_entry)
+                        direction, stop, tgt, ts, close, hi, lo, eod, post_entry, op=op_)
                 elif post_entry and sign * (close - stop) < 0:  # 15m close beyond stop
                     exit_px, reason = close, "stop"
                 elif post_entry and ((direction == "long" and hi >= tgt)

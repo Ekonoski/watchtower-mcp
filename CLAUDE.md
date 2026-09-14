@@ -2480,6 +2480,39 @@ Rendering doctrine, same spirit as the rest of this file:
   holes, the rank with a missing SPDR, one-definition, write scope,
   and a fake-connection stage-1 smoke run.
 
+- **Monday-morning census, 2026-09-14** (Eric: "weekend is over check
+  to make sure our system is up and running"). Feeds, sweeps, pings,
+  specs all on time; three defects under the green: (1) **the 1h
+  staleness rule could not tell a holiday from a clipped fetch** —
+  SPY's and IREN's 1h series came back ending Thursday 11:00 ET and
+  the "one weekday of grace" (built for Friday-on-Tuesday-after-a-
+  holiday) passed them on Monday, re-stamping Thursday readings as
+  Monday's. `_is_stale` now reads the SESSION CALENDAR (SPY's stored
+  daily bars, `_sessions()`, cached 30 min): the last bar must sit on
+  the last COMPLETED session at 15:00 ET or later; a calendar lookup
+  failure falls back to the weekday rule, never to "current". The
+  boot sweep then refreshed 70 rows and named 17 unresolved (dead
+  tickers — BBBY, WBS, EA, CRNX… — whose vendor series simply end).
+  (2) **A target exit booked a price that never printed**: ACVA
+  (swing v1, entry 7.86, target 9.93) gapped +45% on 9/11 (7.22 →
+  open 10.455, day low 10.30) and the loop's touch rule wrote
+  exit_px 9.93, +1.66R — the ledger audit flagged it that night, as
+  designed. `_target_fill` (one function, loop and settle): a bar
+  that OPENS beyond the target fills at its OPEN; a touch still fills
+  at the target; tests pin ACVA's bar and the short mirror. The row
+  is NOT edited (the true exit 10.455 is +2.08R — Eric's ruling, the
+  AGMB/META precedent, with the six phantom stops). (3) **The hourly
+  news scan's error line was empty** — `str(TimeoutError())` is "";
+  it now logs the repr, which is how the :25 runs turned out to be
+  600-second timeouts (xAI at ~5s per article), not failures.
+  Also seen, stated, not acted on: the nightly fundamentals backfill
+  spends ~1,100 FMP calls on Asset-Management ETFs that can never
+  return fundamentals ("more errors than usual" = funds, not a feed
+  break — park them by industry); the 8:30 pattern scan skipped once
+  because the 8:15 run overran (APScheduler max_instances=1, benign
+  on a Monday catalog); the momentum scan's FMP float 403 was one
+  warrant symbol with a Polygon fallback.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
