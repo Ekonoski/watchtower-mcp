@@ -258,7 +258,10 @@ def run_scheduled_scan(force: bool = False):
             news_alerts = news_future.result(timeout=600)
             log.info(f"[scheduler] News scan: {len(news_alerts)} catalysts found.")
         except Exception as e:
-            log.warning(f"[scheduler] News scan error (non-fatal): {e}")
+            # {e!r}: a concurrent.futures TimeoutError prints as an EMPTY
+            # string, and "News scan error (non-fatal):" explained nothing
+            # every hour at :25 on 2026-09-14 — the type is the message.
+            log.warning(f"[scheduler] News scan error (non-fatal): {e!r}")
         finally:
             executor.shutdown(wait=False)
 

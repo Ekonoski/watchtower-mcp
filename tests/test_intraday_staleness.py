@@ -43,9 +43,40 @@ def test_1h_one_weekday_grace_only():
     assert osc._is_stale(_series("2026-09-01 09:00").iloc[0:0], "1h", fri) is True
 
 
+def test_1h_session_calendar_rule():
+    """2026-09-14: SPY's 1h came back ending Thursday 11:00 ET and the weekday
+    rule passed it on Monday (Friday = the one weekday of grace) — a
+    Thursday reading stamped as Monday's. With the session calendar the
+    rule is exact: last bar on the last COMPLETED session, at 15:00 ET or
+    later."""
+    import datetime as dt
+    D = dt.date
+    sessions = [D(2026, 9, 8), D(2026, 9, 9), D(2026, 9, 10), D(2026, 9, 11)]   # 9/7 holiday
+    mon = pd.Timestamp("2026-09-14 10:49", tz="UTC")                            # Monday 06:49 ET
+    # the SPY case: last bar Thursday 15:00 UTC (11:00 ET) read on Monday: STALE
+    assert osc._is_stale(_series("2026-09-10 15:00"), "1h", mon, sessions) is True
+    # Friday's 15:00 ET bar read on Monday: current
+    assert osc._is_stale(_series("2026-09-11 19:00"), "1h", mon, sessions) is False
+    # Friday's series clipped at 11:00 ET: stale (mid-session truncation)
+    assert osc._is_stale(_series("2026-09-11 15:00"), "1h", mon, sessions) is True
+    # Friday's bars read on Tuesday after a Monday holiday (calendar lacks 9/7): current
+    tue = pd.Timestamp("2026-09-08 11:00", tz="UTC")
+    early = [D(2026, 9, 1), D(2026, 9, 2), D(2026, 9, 3), D(2026, 9, 4)]
+    assert osc._is_stale(_series("2026-09-04 19:00"), "1h", tue, early) is False
+    # a bar on TODAY (premarket 05:00 ET) is current whatever the calendar says
+    assert osc._is_stale(_series("2026-09-14 09:00"), "1h", mon, sessions) is False
+    # no calendar → the weekday rule (the Thursday bar passes; the reason the calendar exists)
+    assert osc._is_stale(_series("2026-09-10 15:00"), "1h", mon, None) is False
+    # the 4h keeps its calendar-day bar regardless of sessions
+    assert osc._is_stale(_series("2026-09-11 20:00"), "4h", mon, sessions) is False
+
+
 def test_fetch_uses_tf_rule_and_warns():
     src = inspect.getsource(osc.fetch_intraday_fresh)
-    assert "_is_stale(df, tf)" in src
+    assert "_is_stale(df, tf, sessions=sessions)" in src
+    assert "_sessions() if tf == \"1h\"" in src
+    assert "sessions=sessions" in inspect.getsource(osc.stale_intraday_rows)
+    assert "return None" in inspect.getsource(osc._sessions)      # a lookup failure is never "current"
     assert "log.warning" in src and "NOT re-stamped" in src
     assert "STALE_RETRY_DAYS.get(tf" in src
     sweep = inspect.getsource(osc.refresh_stale_intraday)

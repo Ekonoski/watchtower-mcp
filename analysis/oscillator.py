@@ -397,7 +397,48 @@ def _weekdays_between(a, b) -> int:
     return n
 
 
-def _is_stale(df: pd.DataFrame, tf: str = "4h", now=None) -> bool:
+# 2026-09-14: the weekday rule cannot tell a holiday from a truncated
+# fetch — SPY's 1h came back ending Thursday 11:00 ET and passed on Monday
+# (Friday = the one weekday of grace) and was stamped as Monday's reading
+# again. With the SESSION CALENDAR (SPY's own stored daily bars) the rule
+# is exact: the last bar must sit on the last COMPLETED session, and it
+# must be that session's 15:00 ET bar or later (a series that ends mid-day
+# is a clipped response, never a quiet market). The weekday rule stays as
+# the offline fallback when no calendar is supplied.
+STALE_LAST_BAR_HOUR_ET = 15
+_SESSIONS_CACHE = {"at": None, "dates": None}
+
+
+def _sessions(conn=None, max_age_s: int = 1800):
+    """Trading dates from SPY's stored daily bars (last 60 rows), cached.
+    None when the calendar cannot be read — callers fall back to the
+    weekday rule rather than treating a lookup failure as 'current'."""
+    now = pd.Timestamp.now(tz="UTC")
+    if _SESSIONS_CACHE["dates"] is not None and (now - _SESSIONS_CACHE["at"]).total_seconds() < max_age_s:
+        return _SESSIONS_CACHE["dates"]
+    own = conn is None
+    try:
+        if own:
+            from screen.reversal_screen import _conn
+            conn = _conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT trade_date FROM daily_prices WHERE ticker='SPY' "
+                        "ORDER BY trade_date DESC LIMIT 60")
+            dates = sorted(r[0] for r in cur.fetchall())
+    except Exception as e:
+        log.warning(f"[oscillator] session calendar unavailable ({e!r}); weekday rule in use")
+        return None
+    finally:
+        if own and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    _SESSIONS_CACHE.update(at=now, dates=dates)
+    return dates
+
+
+def _is_stale(df: pd.DataFrame, tf: str = "4h", now=None, sessions=None) -> bool:
     if not len(df):
         return True
     from datetime import timezone
@@ -405,7 +446,18 @@ def _is_stale(df: pd.DataFrame, tf: str = "4h", now=None) -> bool:
     last = df.index[-1]
     if tf == "1h":
         et = "America/New_York"
-        return _weekdays_between(last.tz_convert(et).normalize().tz_localize(None),
+        last_et = last.tz_convert(et)
+        today = now.tz_convert(et).date()
+        if sessions:
+            done = [d for d in sessions if d < today]
+            if done:
+                last_session = max(done)
+                if last_et.date() < last_session:
+                    return True                     # a whole completed session is missing
+                if last_et.date() == last_session and last_et.hour < STALE_LAST_BAR_HOUR_ET:
+                    return True                     # clipped mid-session
+                return False
+        return _weekdays_between(last_et.normalize().tz_localize(None),
                                  now.tz_convert(et).normalize().tz_localize(None)) \
             > STALE_MAX_WEEKDAYS_1H
     return (now - last) > pd.Timedelta(days=STALE_MAX_DAYS)
@@ -416,10 +468,11 @@ def fetch_intraday_fresh(ticker: str, tf: str) -> pd.DataFrame:
     ONE retry with a shorter window (fewer aggregates — dodges whatever cap
     clipped the long request); still-stale series come back empty so callers
     skip the ticker instead of storing weeks-old readings as current."""
+    sessions = _sessions() if tf == "1h" else None
     df = fetch_intraday_confirmed(ticker, tf)
-    if _is_stale(df, tf):
+    if _is_stale(df, tf, sessions=sessions):
         df = fetch_intraday_confirmed(ticker, tf, days=STALE_RETRY_DAYS.get(tf, 45))
-        if _is_stale(df, tf):
+        if _is_stale(df, tf, sessions=sessions):
             log.warning(f"[oscillator] {tf} {ticker}: series stale after retry "
                         f"(last bar {df.index[-1] if len(df) else 'none'}) — "
                         f"skipped, stored row NOT re-stamped (hole)")
@@ -437,12 +490,13 @@ def stale_intraday_rows(conn) -> list:
                     "WHERE timeframe IN ('4h','1h')")
         rows = cur.fetchall()
     now = pd.Timestamp.now(tz=timezone.utc)
+    sessions = _sessions(conn)
     out = []
     for t, tf, bts in rows:
         ts = pd.Timestamp(bts)
         ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
         probe = pd.DataFrame({"close": [0.0]}, index=[ts])
-        if _is_stale(probe, tf, now):
+        if _is_stale(probe, tf, now, sessions=sessions):
             out.append((t, tf, bts))
     return out
 
