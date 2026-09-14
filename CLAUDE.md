@@ -2516,8 +2516,12 @@ Rendering doctrine, same spirit as the rest of this file:
   / 12.15 — a cent and a half above the line on Friday); both ride
   under the 16:20 settle on recorded bars from today. Net effect on
   the swing v1 record: the four cost −0.47R more than booked, and two
-  −1R losses became open positions. The phantom_stop flags stay on
-  the MAE rows as the audit trail; the 16:49 pass re-grades the six.
+  −1R losses became open positions. The 16:49 pass re-graded all six
+  the same evening (`live_match` true on the four, UI/DRVN open) — and
+  RECOMPUTED `phantom_stop` to false on them, because the flag is
+  derived from the trade's exit each pass and the exit now sits at the
+  official close. The audit trail is each trade row's `notes`, not the
+  flag; the sentence that said the flags would stay was wrong.
   THE FOURTH SKIP, same day: Eric declined the META 🎯 (GO 661.535 at
   9:47; the desk hit its 1% disaster at 10:19, −1.70R): "META was
   running right into resistance at the point when you took the trade
