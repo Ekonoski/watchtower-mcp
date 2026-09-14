@@ -2502,8 +2502,23 @@ Rendering doctrine, same spirit as the rest of this file:
   at the target; tests pin ACVA's bar and the short mirror. Eric ruled
   the row corrected the same morning ("Correct the ACVA exit to 10.455
   like we did AGMB"): exit_px 10.455, +2.08R on the 1.245 unit, the
-  reason in the row's notes, decided on the recorded 9/11 bars; the
-  six phantom stops still await his ruling. (3) **The hourly
+  reason in the row's notes, decided on the recorded 9/11 bars. THE SIX
+  PHANTOM STOPS, same ruling an hour later ("Correct the six phantom
+  stops the same way"): replayed under the settle rule on OFFICIAL
+  daily closes (daily_prices — the only record for the sessions after
+  a phantom exit, since the bar watcher had unsubscribed; stated in
+  every row's notes). Four re-stopped later and are re-stated to that
+  session's close: UNTY 8/25 58.62 (−1.02 → −1.23R), HBB 8/25 32.61
+  (−1.01 → −1.12R), RHP 9/2 122.64 (−1.10 → −1.04R), NEXN 9/8 9.39
+  (−1.01 → −1.22R). Two never closed through their stops and are
+  REOPENED (exit fields cleared, the META precedent): UI (stop 515,
+  closes 520.58 / 536.84 / 564.15) and DRVN (stop 12.135, closes 12.30
+  / 12.15 — a cent and a half above the line on Friday); both ride
+  under the 16:20 settle on recorded bars from today. Net effect on
+  the swing v1 record: the four cost −0.47R more than booked, and two
+  −1R losses became open positions. The phantom_stop flags stay on
+  the MAE rows as the audit trail; the 16:49 pass re-grades the six.
+  (3) **The hourly
   news scan's error line was empty** — `str(TimeoutError())` is "";
   it now logs the repr, which is how the :25 runs turned out to be
   600-second timeouts (xAI at ~5s per article), not failures.
