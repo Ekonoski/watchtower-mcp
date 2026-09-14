@@ -2518,6 +2518,28 @@ Rendering doctrine, same spirit as the rest of this file:
   the swing v1 record: the four cost −0.47R more than booked, and two
   −1R losses became open positions. The phantom_stop flags stay on
   the MAE rows as the audit trail; the 16:49 pass re-grades the six.
+  THE FOURTH SKIP, same day: Eric declined the META 🎯 (GO 661.535 at
+  9:47; the desk hit its 1% disaster at 10:19, −1.70R): "META was
+  running right into resistance at the point when you took the trade
+  and was rejected." The record agrees — the 9:42 session high 663.70,
+  Friday's PDH 664.24 and the premarket high 665.71 sat 0.3–0.6%
+  overhead, the post-GO push stalled at 663.90 and rolled over — and
+  the leg is `into_highs` in the vocabulary, record-checkable, so it
+  was graded the same afternoon on the 446 stored GOs (headroom = GO
+  close to the nearest of PDH / PMH / pre-GO session high; r_close,
+  ±10R cap, halves at 2025-09-01): < 0.25% +0.10 / +0.30R, 54–55%
+  (n=78/89); 0.25–0.5% +0.38 / −0.23R (n=77/69, sign-flips; today's
+  META was 0.33%); 0.5–1% +0.88 / +2.04R (n=47/51, the best cell,
+  both halves); ≥ 1% and above-all-levels n < 15. Tight headroom
+  underperforms the pool (+0.38/+0.52R) in both halves and stays
+  positive — a headwind, not a knife; no veto, candidate leg, journal
+  row #27. Skip scoreboard: 4 GO skips, 4 desk losses avoided, −5.30R,
+  n=4 — the eye is 4-for-4 and three of its four named reasons have
+  now graded as "directionally real, too small to gate" (MACD
+  extension, headroom) or as the day-type read (chop). The day's own
+  trades (rows #25/#26): SPY 762C −$264 sold a point past the 5m-close
+  rule again; SPY 761C +$655 — the bank-half rule executed, runner off
+  26 cents from the push's top; +$391 / +1.56R.
   (3) **The hourly
   news scan's error line was empty** — `str(TimeoutError())` is "";
   it now logs the repr, which is how the :25 runs turned out to be
