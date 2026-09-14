@@ -2539,7 +2539,20 @@ Rendering doctrine, same spirit as the rest of this file:
   extension, headroom) or as the day-type read (chop). The day's own
   trades (rows #25/#26): SPY 762C −$264 sold a point past the 5m-close
   rule again; SPY 761C +$655 — the bank-half rule executed, runner off
-  26 cents from the push's top; +$391 / +1.56R.
+  26 cents from the push's top; +$391 / +1.56R. Row #28, the end-of-day
+  1DTE 758P (+$12): the two-test short mirror executed as written
+  (5m close through support, 1m lower high, entry on the break of the
+  low at 761.70), sold nineteen minutes later at 761.25 because "the
+  option barely moved" — SPY had moved 0.06% and a 0.49%-OTM 1DTE
+  carries ~0.3 delta; the break (760.81) printed one minute after the
+  exit. The lesson written on the row for the last hour: dollars per
+  contract follow DELTA, percent follows premium — a 0DTE only
+  out-earns a 1DTE at or in the money (762P 0DTE $27 vs $23 on a
+  45-cent move, $148 vs $111 on two points; the OTM 758P 0DTE is a
+  2-cent option that earns $2), and the leverage is on capital, not
+  on movement, with decay as its price. Sized at $160 of premium,
+  stated as a higher-risk trade — the first journal option row with
+  risk_dollars. Day: +$403 / +1.61R, three trades, one loser.
   (3) **The hourly
   news scan's error line was empty** — `str(TimeoutError())` is "";
   it now logs the repr, which is how the :25 runs turned out to be
