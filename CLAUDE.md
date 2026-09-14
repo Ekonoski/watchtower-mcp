@@ -2499,9 +2499,11 @@ Rendering doctrine, same spirit as the rest of this file:
   exit_px 9.93, +1.66R — the ledger audit flagged it that night, as
   designed. `_target_fill` (one function, loop and settle): a bar
   that OPENS beyond the target fills at its OPEN; a touch still fills
-  at the target; tests pin ACVA's bar and the short mirror. The row
-  is NOT edited (the true exit 10.455 is +2.08R — Eric's ruling, the
-  AGMB/META precedent, with the six phantom stops). (3) **The hourly
+  at the target; tests pin ACVA's bar and the short mirror. Eric ruled
+  the row corrected the same morning ("Correct the ACVA exit to 10.455
+  like we did AGMB"): exit_px 10.455, +2.08R on the 1.245 unit, the
+  reason in the row's notes, decided on the recorded 9/11 bars; the
+  six phantom stops still await his ruling. (3) **The hourly
   news scan's error line was empty** — `str(TimeoutError())` is "";
   it now logs the repr, which is how the :25 runs turned out to be
   600-second timeouts (xAI at ~5s per article), not failures.
