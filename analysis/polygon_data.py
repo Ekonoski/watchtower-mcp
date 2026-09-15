@@ -14,6 +14,16 @@ Usage:
 Requires POLYGON_API_KEY in .env (keys from polygon.io continue to work).
 
 Free tier works for light testing. Starter or Developer recommended for daily + options.
+
+THE BASE-AGGREGATE LIMIT (2026-09-15): Polygon's `limit` counts the BASE bars
+it aggregates from — the `timespan` unit, not the bars you receive. A
+30-minute request is `timespan="minute"`, so 130 days of it on a liquid name
+is ~100k one-minute base bars against a 50,000 cap, and the response stops
+silently ~55-65 sessions in (MSFT's 4h feed ended 07-28, AAPL's 08-03, META's
+08-07 — the most-traded names clipped first; thin names came back whole).
+`get_aggs` returns that first page and nothing else. `list_aggs` follows
+`next_url`, so every multi-day fetch here goes through it; the freshness
+gates downstream stay, because a clipped feed must still be refused loudly.
 """
 
 import os
@@ -44,7 +54,7 @@ def fetch_recent_bars(ticker: str, days: int = 300, multiplier: int = 1, timespa
     try:
         end = date.today()
         start = end - timedelta(days=days + 30)  # buffer
-        aggs = list(client.get_aggs(
+        aggs = list(client.list_aggs(          # paginated: see the module docstring
             ticker,
             multiplier=multiplier,
             timespan=timespan,
@@ -84,6 +94,11 @@ def fetch_session_4h_bars(ticker: str, days: int = 60) -> List[Dict[str, Any]]:
     buckets that include pre/post-market trades: different candles entirely,
     which made the drawer's 4h FVG zones disagree with any chart the user
     actually looks at. Built from 30-minute bars so the 9:30 anchor is exact.
+
+    Paginated (2026-09-15): 30-minute bars are minute-based, so the window
+    is counted in one-minute base bars and a single page clips the liquid
+    names weeks short — the 4h pattern board had carried no mag-7 rows
+    because every one of them failed the freshness gate as "stale feed".
     """
     client = get_client()
     if not client:
@@ -94,7 +109,7 @@ def fetch_session_4h_bars(ticker: str, days: int = 60) -> List[Dict[str, Any]]:
         et = ZoneInfo("America/New_York")
         end = date.today()
         start = end - timedelta(days=days + 10)
-        aggs = list(client.get_aggs(
+        aggs = list(client.list_aggs(
             ticker, multiplier=30, timespan="minute",
             from_=start.isoformat(), to=end.isoformat(), limit=50000,
         ))

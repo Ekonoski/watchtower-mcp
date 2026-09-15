@@ -38,6 +38,31 @@ def test_rth_rows_filters_the_session():
     assert len(ib.rth_rows(aggs, "SPY", et, dt.time(15, 45))) == 1
 
 
+def test_append_window_never_claims_a_forming_day():
+    """2026-09-15: the 11:07 boot catch-up on 9/14 fetched the session so far
+    (15m bars to 11:00, 1m to 11:08) and the +1 resume rule then treated 9/14
+    as complete. Today is fetchable only after SESSION_COMPLETE_AT, and the
+    window starts AT the last recorded day so a partial day back-fills."""
+    D = dt.date
+    et = ZoneInfo("America/New_York")
+    mid = dt.datetime(2026, 9, 14, 11, 7, tzinfo=et)
+    after = dt.datetime(2026, 9, 14, 16, 20, tzinfo=et)
+    # mid-session boot with Friday recorded: fetch Friday again (through the
+    # weekend, which has no bars), never Monday
+    assert ib.append_window(D(2026, 9, 11), mid) == (D(2026, 9, 11), D(2026, 9, 13))
+    # the same boot with Monday already (partially) recorded: nothing to fetch yet
+    assert ib.append_window(D(2026, 9, 14), mid) is None
+    # the 16:20 pass: re-fetch the recorded day (idempotent) through today
+    assert ib.append_window(D(2026, 9, 11), after) == (D(2026, 9, 11), D(2026, 9, 14))
+    assert ib.append_window(D(2026, 9, 14), after) == (D(2026, 9, 14), D(2026, 9, 14))
+    # a wide gap keeps the 40-day cap
+    start, to = ib.append_window(D(2026, 6, 1), after)
+    assert to == D(2026, 9, 14) and (to - start).days == ib.MAX_CATCHUP_DAYS
+    assert ib.SESSION_COMPLETE_AT == dt.time(16, 5)
+    src = inspect.getsource(ib._append_table)
+    assert "append_window(" in src and "timedelta(days=1)" not in src
+
+
 def test_scope():
     src = inspect.getsource(ib)
     assert "list_aggs" in src and "ON CONFLICT (ticker, ts) DO NOTHING" in src

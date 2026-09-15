@@ -326,8 +326,8 @@ def fetch_daily_long(ticker: str, days: int = 2600) -> pd.DataFrame:
     try:
         end = date.today()
         start = end - timedelta(days=days)
-        aggs = list(client.get_aggs(ticker, 1, "day",
-                                    start.isoformat(), end.isoformat(), limit=50000))
+        aggs = list(client.list_aggs(ticker, 1, "day",
+                                     start.isoformat(), end.isoformat(), limit=50000))
     except Exception as e:
         log.debug(f"[oscillator] long daily fetch {ticker} failed: {e}")
         return empty
@@ -355,8 +355,12 @@ def fetch_intraday_confirmed(ticker: str, tf: str = "4h",
     try:
         end = date.today()
         start = end - timedelta(days=(days or default_days) + 10)
-        aggs = list(client.get_aggs(ticker, mult, span,
-                                    start.isoformat(), end.isoformat(), limit=50000))
+        # list_aggs follows next_url past Polygon's base-aggregate limit
+        # (analysis/polygon_data.py docstring, 2026-09-15); the 5m spec is
+        # minute-based and the hour specs are one page today, but the
+        # window is a date range and grows on no one's watch.
+        aggs = list(client.list_aggs(ticker, mult, span,
+                                     start.isoformat(), end.isoformat(), limit=50000))
     except Exception as e:
         log.debug(f"[oscillator] {tf} fetch {ticker} failed: {e}")
         return empty
