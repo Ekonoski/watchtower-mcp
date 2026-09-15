@@ -95,6 +95,26 @@ def early_state(bar_930, pdh):
     return None, res
 
 
+def pick_930(aggs, et) -> tuple | None:
+    """Pure. The completed 9:30 ET 1m bar from a day's aggs, or None.
+
+    2026-09-15 (Eric: "why is my daily bias not coming out on discord at
+    9:31am like it is supposed to?"): it never had — every verdict since
+    the early read shipped on 9/4 went out at the 9:51 fallback. The fetch
+    asked Polygon for the day from midnight with `limit=120`, and SPY
+    prints a 1m bar every minute from 4:00 ET, so the 120 bars it got
+    back ended near 6:00 AM and the 9:30 bar was never in the response.
+    The function returned "9:30 bar not yet available" in a tenth of a
+    second, twice a day, and nothing logged it. The whole session is
+    fetched now (a few hundred bars, paginated) and this picks the bar."""
+    for a in aggs:
+        t = dt.datetime.fromtimestamp(a.timestamp / 1000, dt.timezone.utc).astimezone(et)
+        if t.time() == dt.time(9, 30):
+            return (t, float(a.open), float(a.close), float(a.high), float(a.low),
+                    float(a.volume) if a.volume is not None else None)
+    return None
+
+
 def run_daybias_early_verdict() -> dict:
     """9:31 ET (2026-09-04, Eric: "why does it take until 9:51?"): the
     verdict needs only the 9:30 OPEN, so it goes out the minute that
@@ -129,21 +149,19 @@ def run_daybias_early_verdict() -> dict:
         if pdh is None:
             return {"skip": "no PDH"}
         try:
-            aggs = list(client.get_aggs("SPY", multiplier=1, timespan="minute",
-                                        from_=today.isoformat(), to=today.isoformat(),
-                                        limit=120))
+            # The whole session so far, paginated — never a row cap that
+            # ends in the premarket (see pick_930).
+            aggs = list(client.list_aggs("SPY", multiplier=1, timespan="minute",
+                                         from_=today.isoformat(), to=today.isoformat(),
+                                         limit=50000))
         except Exception as e:
-            log.warning(f"[day-bias-ping] 1m fetch failed: {e}")
+            log.warning(f"[day-bias-ping] 1m fetch failed: {e!r}")
             return {"skip": "fetch failed"}
-        bar = None
-        for a in aggs:
-            t = dt.datetime.fromtimestamp(a.timestamp / 1000, dt.timezone.utc).astimezone(ET)
-            if t.time() == dt.time(9, 30):
-                bar = (t, float(a.open), float(a.close), float(a.high), float(a.low),
-                       float(a.volume) if a.volume is not None else None)
-                break
+        bar = pick_930(aggs, ET)
         if bar is None:
-            return {"skip": "9:30 bar not yet available"}
+            log.warning(f"[day-bias-ping] early verdict: 9:30 bar not in the "
+                        f"{len(aggs)}-bar response — no post; 9:51 is the fallback")
+            return {"skip": "9:30 bar not yet available", "n_bars": len(aggs)}
         status, res = early_state(bar, pdh)
         if status is None:
             return {"skip": f"undecided: {res}"}

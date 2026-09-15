@@ -89,6 +89,27 @@ def test_one_definition_and_read_only_by_signature():
     assert p.HUG_PCT == 0.3 and p.SMALL_N == 40
 
 
+def test_session_bars_are_fetched_whole_and_paginated():
+    """2026-09-15: `limit=200` on a 15-minute request is 200 one-minute
+    BASE bars from 4:00 AM — the response ended near 7:20 and every post
+    rendered *unavailable*. The fetch is paginated and uncapped, and the
+    filter still keeps only completed RTH bars by the checkpoint."""
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+    src = inspect.getsource(p._rth_bars)
+    assert "list_aggs(" in src and "get_aggs(" not in src and "limit=200" not in src
+    et = ZoneInfo("America/New_York")
+    start = dt.datetime(2026, 9, 15, 4, 0, tzinfo=et)
+
+    class _C:
+        def list_aggs(self, *a, **k):
+            for i in range(0, 6 * 60, 15):                  # 4:00 .. 9:45 start times, 15m apart
+                t = start + dt.timedelta(minutes=i)
+                yield SimpleNamespace(timestamp=int(t.timestamp() * 1000), open=1, high=2, low=0.5, close=1.5)
+    bars = p._rth_bars(_C(), "SPY", dt.date(2026, 9, 15), dt.time(9, 45), et)
+    assert [b[0].time() for b in bars] == [dt.time(9, 30)]          # 22 premarket bars skipped, 9:45 forming bar excluded
+
+
 def test_daily_facts_hold_no_lookahead():
     # atr[d] and prevd[d] must not change when d's own bar changes
     base = [(dt.date(2026, 1, 1) + dt.timedelta(days=i), 100 + i, 101 + i, 99 + i, 100.5 + i) for i in range(25)]
