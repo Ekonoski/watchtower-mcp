@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analysis.paper_trader import (  # noqa: E402
-    SWING_CLASSES, SWING_PATTERNS, swing_class_ok)
+    RETIRED_CLASSES, SWING_CLASSES, SWING_PATTERNS, swing_class_ok)
 
 
 def main():
@@ -32,12 +32,16 @@ def main():
     assert swing_class_ok("asc_triangle", "daily")     # +0.08R, n=6,631
     assert swing_class_ok("bull_flag", "daily")        # +0.09R, n=11,496
 
-    # The original neckline families stay, dailies included (the
-    # entry-location experiment — retest-limit entries vs the
-    # breakout-close entries their priors were graded on).
+    # The original neckline families stay on the weekly. The two DAILY
+    # neckline experiments (retest-limit entries vs the breakout-close
+    # entries their priors were graded on) were RETIRED with swing v2 on
+    # 2026-09-10 — negative prior, live 1-7 and 2-5, book failed — and a
+    # retired class is refused by name, not by a missing line.
     assert swing_class_ok("higher_low", "weekly")
-    assert swing_class_ok("higher_low", "daily")
-    assert swing_class_ok("double_bottom", "daily")
+    assert not swing_class_ok("higher_low", "daily")
+    assert not swing_class_ok("double_bottom", "daily")
+    assert ("higher_low", "daily") in RETIRED_CLASSES
+    assert ("double_bottom", "daily") in RETIRED_CLASSES
     assert swing_class_ok("inverse_hs", "weekly")
 
     # The 2026-08-10 weekly-only additions (each positive at scale in v6;

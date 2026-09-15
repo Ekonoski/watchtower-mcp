@@ -2516,8 +2516,12 @@ Rendering doctrine, same spirit as the rest of this file:
   / 12.15 — a cent and a half above the line on Friday); both ride
   under the 16:20 settle on recorded bars from today. Net effect on
   the swing v1 record: the four cost −0.47R more than booked, and two
-  −1R losses became open positions. The phantom_stop flags stay on
-  the MAE rows as the audit trail; the 16:49 pass re-grades the six.
+  −1R losses became open positions. The 16:49 pass re-graded all six
+  the same evening (`live_match` true on the four, UI/DRVN open) — and
+  RECOMPUTED `phantom_stop` to false on them, because the flag is
+  derived from the trade's exit each pass and the exit now sits at the
+  official close. The audit trail is each trade row's `notes`, not the
+  flag; the sentence that said the flags would stay was wrong.
   THE FOURTH SKIP, same day: Eric declined the META 🎯 (GO 661.535 at
   9:47; the desk hit its 1% disaster at 10:19, −1.70R): "META was
   running right into resistance at the point when you took the trade
@@ -2564,6 +2568,45 @@ Rendering doctrine, same spirit as the rest of this file:
   because the 8:15 run overran (APScheduler max_instances=1, benign
   on a Monday catalog); the momentum scan's FMP float 403 was one
   warrant symbol with a Polygon fallback.
+
+- **Polygon's `limit` counts BASE bars, and the 4h board had no mag-7**
+  (2026-09-15 census, Eric: "let's make sure our system is running
+  properly"). The 6:46 4h pattern scan logged "stale feed — skipped" for
+  AAPL, AMZN, META, MSFT, AVGO, AMD, MU, NOW, ADBE, GLD… with last bars
+  weeks old (MSFT 07-28, AAPL 08-03, META 08-07) while thin names came
+  back through 9/14, and `pattern_scan` held ZERO 4h rows for any of the
+  fourteen names Eric trades. The mechanism: Polygon's `limit` limits
+  the number of BASE aggregates — the `timespan` unit — not the bars
+  returned, so `fetch_session_4h_bars` (30-minute = minute-based, 130
+  days) asked for ~100k one-minute base bars on a liquid name against a
+  50,000 cap and `get_aggs` returned the first page, silently; the
+  most-traded names clipped first, which is why it read as a per-ticker
+  vendor hole. It had been true since the 4h scan moved to
+  session-anchored bars (#154, 2026-08-08); the freshness gate (added
+  for BKNG/MSFT fiction prints — THIS disease, treated as a symptom)
+  correctly refused the clipped feeds and the board simply lost the
+  mag-7 for five weeks. Hour-timespan fetches (the 1h/4h oscillator)
+  were never exposed — their base is the hour bar — so Monday's SPY 1h
+  clip was a different, transient vendor short-read and the session-
+  calendar guard stays. Fix: every multi-day fetch in
+  `analysis/polygon_data.py` and the oscillator goes through
+  `list_aggs`, which follows `next_url` (the client's pagination was
+  read from source: `_paginate_iter` loops on `next_url`); the freshness
+  gates stay, because a clipped feed must still be refused loudly.
+  `tests/test_polygon_pagination.py` pins a two-page fake client through
+  the 4h builder and `fetch_recent_bars`, plus by source that no
+  multi-day helper calls `get_aggs`. Still single-page by design (one
+  day, under the cap): the 🎯/📐 pings, bars_tool, index_1m_live.
+  SAME CENSUS, the appender: `index_intraday_bars` held 7 bars for 9/14
+  (9:30–11:00) and `mag7_1m_bars` 99 (to 11:08) — the 11:07 deploy's
+  boot catch-up fetched the session SO FAR, wrote it, and the
+  resume-from-max(trade_date)+1 rule then treated 9/14 as complete, so
+  the 16:20 pass had nothing to append. `append_window` (pure, pinned):
+  today is fetchable only after 16:05 ET, and the window starts AT the
+  last recorded day — the insert is idempotent on (ticker, ts), so
+  re-fetching one day back-fills any partial write for free. The 9/14
+  rows heal on the next pass with no data edit. The 4h board regains
+  the mag-7 at the next 4h scan after deploy.
 
 ## Numbers on one line must reconcile with each other
 

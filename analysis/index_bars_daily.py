@@ -26,6 +26,7 @@ log = logging.getLogger("watchtower.index_bars")
 
 ET = "America/New_York"
 MAX_CATCHUP_DAYS = 40
+SESSION_COMPLETE_AT = dt.time(16, 5)   # a day is fetchable only after this ET
 MAG7 = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA")
 LIQUID = ("AMD", "IWM", "QQQ", "SPY", "AVGO", "PLTR", "MU", "NFLX")   # v2 names: the leader-board seat test (2026-09-08)
 # (table, tickers, bar minutes, last RTH bar start)
@@ -49,7 +50,31 @@ def rth_rows(aggs, tk, et, last_start):
     return rows
 
 
-def _append_table(conn, client, table, tickers, minutes, last_start, et, today):
+def append_window(last_recorded: dt.date, now_et: dt.datetime):
+    """Pure. The (start, to) dates one append pass may fetch, or None.
+
+    2026-09-15: the 11:07 boot catch-up on 9/14 ran mid-session, fetched the
+    day so far (15m bars to 11:00, 1m bars to 11:08), wrote them, and — because
+    the next pass resumes from max(trade_date)+1 — the partial day was CLAIMED
+    complete; the 16:20 pass then had nothing to append. Two rules fix both
+    halves: (1) TODAY is fetchable only once the session is complete
+    (SESSION_COMPLETE_AT ET); before that the window ends yesterday, so a boot
+    at any hour can never write a forming day; (2) the window starts AT the
+    last recorded day, not after it — the insert is idempotent on (ticker,
+    ts), so re-fetching one day costs nothing and back-fills any bars a
+    partial write left out. The 40-day catch-up cap is unchanged; a wider gap
+    stays a recorded hole."""
+    today = now_et.date()
+    to = today if now_et.time() >= SESSION_COMPLETE_AT else today - dt.timedelta(days=1)
+    start = last_recorded
+    if start > to:
+        return None
+    if (to - start).days > MAX_CATCHUP_DAYS:
+        start = to - dt.timedelta(days=MAX_CATCHUP_DAYS)
+    return start, to
+
+
+def _append_table(conn, client, table, tickers, minutes, last_start, et, now_et):
     total = 0
     for tk in tickers:
         with conn.cursor() as c:
@@ -59,18 +84,18 @@ def _append_table(conn, client, table, tickers, minutes, last_start, et, today):
             log.warning(f"[index-bars] {table}/{tk}: empty table — this is the "
                         f"appender, not the backfill; skipping.")
             continue
-        start = r[0] + dt.timedelta(days=1)
-        if start > today:
+        window = append_window(r[0], now_et)
+        if window is None:
             continue
-        if (today - start).days > MAX_CATCHUP_DAYS:
-            start = today - dt.timedelta(days=MAX_CATCHUP_DAYS)
+        start, to = window
+        if (to - r[0]).days > MAX_CATCHUP_DAYS:
             log.warning(f"[index-bars] {table}/{tk}: gap exceeds {MAX_CATCHUP_DAYS}d — "
                         f"appending the recent window only; older gap stays a recorded hole.")
         try:
-            # list_aggs paginates past Polygon's ~5k-row response cap (the
+            # list_aggs paginates past Polygon's base-aggregate limit (the
             # 2026-08-23 lesson); 40 days of 1m bars is ~15.6k rows.
             aggs = list(client.list_aggs(tk, multiplier=minutes, timespan="minute",
-                                         from_=start.isoformat(), to=today.isoformat(),
+                                         from_=start.isoformat(), to=to.isoformat(),
                                          limit=50000))
         except Exception as e:
             log.warning(f"[index-bars] {table}/{tk} fetch failed: {e}")
@@ -87,7 +112,7 @@ def _append_table(conn, client, table, tickers, minutes, last_start, et, today):
             total += len(rows)
             log.info(f"[index-bars] {table}/{tk}: +{len(rows)} bars through {rows[-1][2]}.")
         else:
-            log.info(f"[index-bars] {table}/{tk}: nothing to append ({start}..{today}).")
+            log.info(f"[index-bars] {table}/{tk}: nothing to append ({start}..{to}).")
     return total
 
 
@@ -103,12 +128,12 @@ def run() -> int:
         log.warning("[index-bars] no Polygon client — skipped.")
         return 0
     et = ZoneInfo(ET)
-    today = dt.datetime.now(et).date()
+    now_et = dt.datetime.now(et)
     conn = _conn()
     total = 0
     try:
         for table, tickers, minutes, last_start in TARGETS:
-            total += _append_table(conn, client, table, tickers, minutes, last_start, et, today)
+            total += _append_table(conn, client, table, tickers, minutes, last_start, et, now_et)
         return total
     finally:
         conn.close()
