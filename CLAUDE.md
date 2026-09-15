@@ -2622,6 +2622,27 @@ Rendering doctrine, same spirit as the rest of this file:
   miss logs at WARNING, and the wrapper logs every early-verdict result.
   The 9:51 fallback had covered it every day, which is exactly why a
   silent skip lived eleven sessions.
+  THE THIRD PLACE, 9:52 (Eric, off the 9:46 post: "why is the daily
+  bias not available like it's saying here on the day type? and why is
+  it 9:45?"): the 📐 DAY TYPE line had rendered `*unavailable* — no
+  first bar` on every post since it shipped on 9/8, for the same
+  reason — its 15-minute fetch carried `limit=200`, which is 200
+  one-minute base bars from 4:00 AM, so the response ended near 7:20
+  and `features()` never saw the 9:30 bar. It rendered the hole
+  honestly (the doctrine held), and nobody read the honest hole for a
+  week. The 9:45 in the head is the study's checkpoint, not a delay:
+  the day-type grid was graded on what is readable when the first 15m
+  bar completes (9:45), then refined at 10:00 and 10:30, and the post
+  goes out the minute after each. Fixed the same way (whole session,
+  paginated; `tests/test_daytype_ping.py` pins a premarket-heavy fake
+  client through `_rth_bars`). Rule, from three hits in one morning:
+  a `limit` on a from-midnight intraday request is a cap on the
+  PREMARKET, and every one-day fetch is either uncapped or paginated
+  (the 1m fetches at 1200 were safe only because a session has fewer
+  than 1200 minutes). Research callers with the same shape are noted,
+  not yet re-graded: `defense_study._fetch_15m` (limit=200) — the
+  historical defense grades may have read premarket-only days as
+  holes; re-check before the next defense readout.
 
 ## Numbers on one line must reconcile with each other
 

@@ -135,9 +135,17 @@ def format_post(cp_key, tcut, lines):
 def _rth_bars(client, ticker, today, tcut, et):
     """Completed RTH 15m bars by tcut, as (ts, o, h, l, c) — a bar counts
     only once its END time is at/before the checkpoint (a forming bar is
-    never read as a completed one)."""
-    aggs = list(client.get_aggs(ticker, multiplier=15, timespan="minute",
-                                from_=today.isoformat(), to=today.isoformat(), limit=200))
+    never read as a completed one).
+
+    2026-09-15 (Eric: "why is the daily bias not available like it's
+    saying here on the day type?"): every post since the line shipped on
+    9/8 had rendered *unavailable*. Polygon's `limit` counts BASE bars —
+    one-minute bars for a 15-minute request — so a 200-bar cap from
+    midnight returned the premarket through ~7:20 AM and never the 9:30 bar;
+    `features()` got an empty list and rendered the hole honestly. The
+    whole session so far is fetched now, paginated."""
+    aggs = list(client.list_aggs(ticker, multiplier=15, timespan="minute",
+                                 from_=today.isoformat(), to=today.isoformat(), limit=50000))
     out = []
     for a in aggs:
         t = dt.datetime.fromtimestamp(a.timestamp / 1000, dt.timezone.utc).astimezone(et)
