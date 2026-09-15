@@ -2644,6 +2644,78 @@ Rendering doctrine, same spirit as the rest of this file:
   historical defense grades may have read premarket-only days as
   holes; re-check before the next defense readout.
 
+- **rs_leader v2: the trail is retired, Eric's exit arms tomorrow**
+  (2026-09-15, 10:09 — the desk's META GO at 671.90 ran to 678.87 at
+  10:03, +3.0R, the 21-EMA trail armed, and the 10:05–10:09 block
+  closed 667.28 under the line: −2.01R. Eric: "you went from a
+  profitable trade to a negative two R trade... a plus three R to
+  negative two should be considered unacceptable, that's poor trade
+  management" → "build that"). He is right on the record, not just
+  the day: the exit-shape study (2026-09-04, 446 GOs, 0.70Δ option
+  frame) had already graded half-at-the-first-level + level exits as
+  the ONLY exit family positive in both year-halves in option dollars
+  (half+breakeven-touch +7.7/+6.2 bps, 61% win, +$24/+$34 per
+  contract; half+5m-low ratchet +6.9/+6.8, 60%; half+TP2 +8.2/+15.6,
+  66%) while the live trail graded +3.7/+2.0 bps, 35% win — the book
+  shipped the trail on 8/31 and the study that refused it read out on
+  9/4; nobody called the decision. So, per the 8/23 harness doctrine
+  (a different trade is a new book with its own n): `rs_leader` v1
+  stops arming (10 specs, 4-6, +4.79R — carried by day one's +16.38R
+  META; −11.59R on the other nine) and **`rs_leader_v2`** arms from
+  tomorrow's 9:45 with the SAME GO entry and HIS exit, executed by the
+  desk and pinged verbatim: struct stop on a completed 5m CLOSE and the
+  −1% disaster on touch UNTIL THE FIRST PARTIAL; TP1 = the nearest
+  level ≥ 40 bps above entry among PDH / premarket high / 30-minute
+  ORB high / pre-GO session high (`select_levels` — the graded
+  `naive_levels` / `pick_targets` imported; levels within 0.1% merge,
+  because the ORB high and the session high are usually one print and
+  two of the same price made TP2 == TP1 in the graded set; PDH/PMH
+  holes named; the strike-grid line is the declared LAST RESORT only
+  when nothing structural is in reach, tagged on the ping with its own
+  grade, −$6 / 44% hit); HALF off on the touch; the runner's stop to
+  ENTRY on touch, then ratcheted to each completed 5m block's low
+  (touch-honoured — a resting stop order is what he places); TP2 =
+  the next level, rest off on the touch; no TP2 → the runner rides to
+  the bell. Stated honestly: breakeven-on-touch WITH the ratchet sits
+  between two graded cells and grades on this book's own n; the
+  strike is dropped from the primary set on the study's own level-kind
+  cut (PDH/PMH/ORB pay, a strike is not resistance). META today under
+  v2, replayed from the RECORDED rsl_book_bars (the fixture in
+  tests/test_rsl_v2.py): TP1 675.50 (ORB high = session high) touched
+  at 10:00, half off; the 10:00–10:04 block's low 672.12 became the
+  runner's stop; touched at 10:06 → +0.83R, reason `tp1_ratchet`,
+  against v1's −2.01R on the same tape. Book birth touched every
+  place at once (the 9/1 lesson): migration 073 (book, the four
+  runner reasons `tp1_be` / `tp1_ratchet` / `tp1_tp2` / `tp1_eod` —
+  what took the RUNNER out — `paper_trades.legs` with every partial's
+  price/minute/reason so the weighted exit_px is auditable from the
+  row, `paper_specs.levels` frozen at the GO so the target the book
+  traded is the target the row shows, and **`skipped_rank`**, which v1
+  had written on stand-aside days since 9/1 and the status allowlist
+  had NEVER admitted — ten sessions without a stand-aside is the only
+  reason the refusal never fired); the poller exclusion; the audit's
+  exit vocabulary (a bare `trail` is illegal in v2 by design) and its
+  ping reconciliation on the LIVE book name; the 🎯 (levels with their
+  R and kind, the lifecycle verbatim, the graded prior), 💰 TP1, 🔒
+  per-ratchet (at-most-once per stop level), 🚪 with the whole-trade R
+  and both legs, 🔔 for eod; PLTR added to the premarket writer so the
+  seat's PMH is not a hole. `tests/test_rsl_v2.py` pins the level
+  selection, the lifecycle (wick rule pre-TP1, the runner's stop
+  before the disaster, be/ratchet/TP2/bell), EQUALITY with the graded
+  `sim_exit` on tapes where the struct stop is silent (one definition,
+  proven), the META replay, the schema/audit/poller birth, and the
+  tick end-to-end on a fake connection (GO fill with frozen levels,
+  the partial on the record, the exit). Gate: the same ~30 resolved.
+  The 📒 scoreboard prints v1 and v2 as separate rows from tomorrow.
+  Also stated for the record today: **day_bias has never filled** —
+  16 sessions since 8/24, 12 stand-asides (open ≤ PDH) and 4 armed
+  days all cancelled by a pre-10:30 touch. That is the graded
+  definition behaving as graded (open > PDH ~25% of days, then the
+  early-touch cancel), not a defect — but a book with zero fills in
+  three and a half weeks is a book whose n will not arrive this
+  quarter, and it is named here so nobody reads its silence as a
+  clean record.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a

@@ -65,17 +65,27 @@ def test_trade_watch_lifecycle_definitions():
     from alerts import rsleader_ping as rp
     src = inspect.getsource(rp.run_trade_watch)
     # ONE DEFINITION (2026-09-02, the 11:09 phantom exit ping): the
-    # watcher imports the BOOK's lifecycle_state — no local copy of the
-    # trail frame, so the ping can never diverge from the ledger again.
-    assert "from analysis.rs_leader_book import lifecycle_state" in src
-    assert "lifecycle_state(bars, i_go, entry, stop)" in src
+    # watcher imports the BOOK's lifecycle — no local copy of the exit
+    # frame, so the ping can never diverge from the ledger again. v2
+    # (2026-09-15): lifecycle_state_v2, and the levels come from the
+    # book's frozen row or the book's own select_levels.
+    assert "from analysis.rs_leader_book import lifecycle_state_v2" in src
+    assert "lifecycle_state_v2(bars, i_go, entry, stop, tp1, tp2" in src
+    assert "select_levels(bars, i_go, entry, pdh, pmh)" in src
     assert "res5" not in src and "e21_by_min" not in src
-    # the three state pings exist with distinct claim kinds
-    assert rp.KIND_ARM == "rsl_arm" and rp.KIND_EXIT == "rsl_exit"
-    assert rp.KIND_BELL == "rsl_bell"
-    for needle in ("disaster cap touched", "21-EMA trail",
-                   "closed through the stop", "AT THE CLOSE"):
+    assert "def lifecycle" not in inspect.getsource(rp)
+    # the state pings exist with distinct claim kinds; the v1 +1R trail
+    # switch is gone with the trail
+    assert rp.KIND_TP1 == "rsl_tp1" and rp.KIND_RATCHET == "rsl_ratchet"
+    assert rp.KIND_EXIT == "rsl_exit" and rp.KIND_BELL == "rsl_bell"
+    assert not hasattr(rp, "KIND_ARM")
+    for needle in ("HALF OFF", "runner stop up to", "AT THE CLOSE",
+                   "Whole trade"):
         assert needle in src
+    for code in ("disaster", "stop", "tp1_be", "tp1_ratchet", "tp1_tp2"):
+        assert code in rp.EXIT_TEXT
+    # eod exits carry the bell, never a door
+    assert '("eod_flat", "tp1_eod")' in src
 
 
 def test_go_message_precomputes_the_numbers():
@@ -83,9 +93,17 @@ def test_go_message_precomputes_the_numbers():
 
     from alerts import rsleader_ping as rp
     src = inspect.getsource(rp.run_go_watch)
-    assert "arm = entry + risk" in src            # the +1R switch price
     assert "0.70 * risk * 100" in src             # per-contract dollars
     assert "size_line" in src                     # sizing done FOR Eric
+    # v2: TP1/TP2 with their R and their KIND, the lifecycle verbatim,
+    # the graded prior, the strike last-resort named when it is one
+    for needle in ("TP1 {tp1:.2f}", "HALF off", "entry {entry:.2f}",
+                   "ratcheted under each completed", "describe_levels(lv)",
+                   "BOTH year-halves", "35% win", "select_levels(bars, i, entry, pdh, pmh)",
+                   "book=%s"):
+        assert needle in src
+    assert "Trail switch" not in src and "21 EMA" not in src
+    assert "book='rs_leader'" not in inspect.getsource(rp)
 
 
 if __name__ == "__main__":
