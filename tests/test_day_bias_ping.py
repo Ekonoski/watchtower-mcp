@@ -105,6 +105,31 @@ def test_early_verdict_uses_the_books_decide_and_maps_states():
     assert p.EARLY_TICK == dt.time(9, 31)
 
 
+def test_930_bar_is_found_behind_a_full_premarket():
+    """2026-09-15: the early verdict never posted — the fetch capped the
+    day at 120 one-minute bars from midnight, SPY prints one every minute
+    from 4:00 ET, so the response ended near 6 AM and the 9:30 bar was
+    never in it. Pinned: a session with 330 premarket bars ahead of the
+    open still yields the 9:30 bar; the fetch is paginated and uncapped;
+    a miss is logged, never silent."""
+    import datetime as dt
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+    from alerts import day_bias_ping as p
+    et = ZoneInfo("America/New_York")
+    start = dt.datetime(2026, 9, 15, 4, 0, tzinfo=et)
+    aggs = [SimpleNamespace(timestamp=int((start + dt.timedelta(minutes=i)).timestamp() * 1000),
+                            open=760 + i * 0.001, close=760.5, high=761, low=759.5, volume=100)
+            for i in range(335)]                       # 4:00 .. 9:34 — bar 330 is 9:30
+    bar = p.pick_930(aggs, et)
+    assert bar is not None and bar[0].time() == dt.time(9, 30)
+    assert bar[1] == 760 + 330 * 0.001
+    assert p.pick_930(aggs[:120], et) is None          # the old cap: premarket only
+    src = inspect.getsource(p.run_daybias_early_verdict)
+    assert "list_aggs(" in src and "limit=120" not in src and "pick_930(" in src
+    assert "log.warning" in src and "9:51 is the fallback" in src
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

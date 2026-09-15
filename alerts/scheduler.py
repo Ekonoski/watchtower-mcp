@@ -2181,7 +2181,10 @@ def start_scheduler():
     def _daybias_early():
         try:
             from alerts.day_bias_ping import run_daybias_early_verdict
-            run_daybias_early_verdict()
+            res = run_daybias_early_verdict()
+            # 2026-09-15: the early read had silently skipped every day
+            # since it shipped; a skip is logged with its reason.
+            log.info(f"[day-bias-ping] early verdict: {res}")
         except Exception:
             log.exception("[day-bias-ping] early verdict failed")
 

@@ -2607,6 +2607,21 @@ Rendering doctrine, same spirit as the rest of this file:
   re-fetching one day back-fills any partial write for free. The 9/14
   rows heal on the next pass with no data edit. The 4h board regains
   the mag-7 at the next 4h scan after deploy.
+  SAME MORNING, 9:36 (Eric: "why is my daily bias not coming out on
+  discord at 9:31am like it is supposed to?"): it never had. Every
+  verdict since the early read shipped on 9/4 went out at the 9:51
+  fallback — the 9:31 fetch asked Polygon for SPY's day from midnight
+  with `limit=120`, SPY prints a 1m bar every minute from 4:00 ET, so
+  the response ended near 6 AM, the 9:30 bar was never in it, and the
+  function returned "9:30 bar not yet available" in a tenth of a second
+  twice a day with nothing logged (the job wrapper discarded the return
+  value). The same limit family as the 4h board, in the other
+  direction: a cap on a from-midnight window is a cap on the PREMARKET.
+  Now the whole session so far is fetched (paginated), `pick_930` (pure,
+  pinned with 330 premarket bars ahead of the open) selects the bar, a
+  miss logs at WARNING, and the wrapper logs every early-verdict result.
+  The 9:51 fallback had covered it every day, which is exactly why a
+  silent skip lived eleven sessions.
 
 ## Numbers on one line must reconcile with each other
 
