@@ -19,7 +19,8 @@ import time
 log = logging.getLogger("watchtower.premarket")
 
 COMPLETE_MARKER = "premarket_backfill_v1"
-TICKERS = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "IWM", "QQQ", "SPY")
+TICKERS = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "IWM", "QQQ", "SPY",
+           "PLTR")   # 2026-09-15: the experimental seat needs its premarket high for the v2 TP1
 START = dt.date(2024, 8, 20)
 WINDOW_DAYS = 10
 BUDGET_S = 12 * 60

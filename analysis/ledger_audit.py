@@ -32,8 +32,14 @@ LEGAL_EXITS = {
     "swing_v2": {"target", "stop", "eod_flat", "manual"},
     "day_bias": {"stop", "eod_flat", "manual"},
     "rs_leader": {"trail", "disaster", "stop", "eod_flat", "manual"},
+    # v2 (2026-09-15): once half is banked the whole-trade reason names
+    # what took the RUNNER out; a bare 'trail' is illegal here by design
+    "rs_leader_v2": {"disaster", "stop", "eod_flat", "manual",
+                     "tp1_be", "tp1_ratchet", "tp1_tp2", "tp1_eod"},
 }
 TOL = 0.001
+# exits that carry a 🚪 ping (eod exits carry the 🔔 bell instead)
+PINGED_EXITS = {"trail", "stop", "disaster", "tp1_be", "tp1_ratchet", "tp1_tp2"}
 
 
 def audit(rows, bar_ranges):
@@ -89,7 +95,7 @@ def reconcile_pings(trades, pings):
     eod_flat exits carry the 🔔 bell, not a 🚪 — excluded here."""
     out = []
     exits = [(tk, ts) for tk, ts, reason in trades
-             if ts is not None and reason in ("trail", "stop", "disaster")]
+             if ts is not None and reason in PINGED_EXITS]
     if pings and not exits:
         out.append(f"rs_leader: {len(pings)} exit ping(s) with NO exited "
                    f"trade — phantom ping")
@@ -137,11 +143,14 @@ def run() -> str:
                 else:
                     ranges[(tk, d)] = (float(lo), float(hi))
         anomalies, holes, n = audit(rows, ranges)
-        # ping-vs-record reconciliation for today's rs_leader trade(s)
+        # ping-vs-record reconciliation for today's rs_leader trade(s) —
+        # the LIVE book (v2 from 2026-09-15; v1's rows keep their name)
+        from analysis.rs_leader_book import BOOK as RSL_BOOK
         with conn.cursor() as c:
             c.execute("""SELECT s.ticker, t.exited_at, t.exit_reason
                          FROM paper_trades t JOIN paper_specs s ON s.id=t.spec_id
-                         WHERE s.book='rs_leader' AND s.trade_date=CURRENT_DATE""")
+                         WHERE s.book=%s AND s.trade_date=CURRENT_DATE""",
+                      (RSL_BOOK,))
             trades = c.fetchall()
             c.execute("""SELECT created_at FROM discord_notify_log
                          WHERE kind='rsl_exit' AND ref=CURRENT_DATE::text""")

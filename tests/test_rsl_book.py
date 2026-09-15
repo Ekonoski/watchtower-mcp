@@ -59,9 +59,11 @@ def test_lifecycle_wick_arm_trail_disaster():
 
 def test_book_isolation_by_signature():
     src = inspect.getsource(rb)
-    assert 'BOOK = "rs_leader"' in src
+    assert 'BOOK = "rs_leader_v2"' in src            # v2 from 2026-09-15
+    assert 'V1_BOOK = "rs_leader"' in src            # the retired name, stated
     assert "INSERT INTO rsl_book_bars" in src
-    for other in ("'day_bias'", "'swing'", "'gamma_iday'", "'gamma'"):
+    for other in ("'day_bias'", "'swing'", "'gamma_iday'", "'gamma'",
+                  "'rs_leader'"):
         assert other not in src
     # spec/trade writes go through the BOOK constant, never a literal
     assert "book=%s" in src or "(trade_date, book" in src

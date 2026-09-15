@@ -39,8 +39,9 @@ from alerts.discord_notify import claim_and_send
 # The live universe and its rank come from the BOOK (LIVE_TICKERS =
 # the graded TICKERS + the EXPERIMENTAL seat; rank_live wraps the
 # study's rs_rank), so the 🏁 and the ledger name the same leader.
-from analysis.rs_leader_book import (EXPERIMENTAL, EXPERIMENTAL_PRIOR,
-                                     LIVE_TICKERS, label, rank_live)
+from analysis.rs_leader_book import (BOOK, EXPERIMENTAL, EXPERIMENTAL_PRIOR,
+                                     LIVE_TICKERS, describe_levels, label,
+                                     level_inputs, rank_live, select_levels)
 from analysis.rsleader_study import (ENTRY_CUTOFF, MEASURE, RS_MIN, ema,
                                      find_go_entry)
 
@@ -50,7 +51,8 @@ CHANNEL = "desk"
 KIND_FLIP = "flipprox_open"
 KIND_RANK = "rsl_rank"
 KIND_GO = "rsl_go"
-KIND_ARM = "rsl_arm"
+KIND_TP1 = "rsl_tp1"          # v2 (2026-09-15): half banked, stop to entry
+KIND_RATCHET = "rsl_ratchet"  # v2: the runner's stop moved up (ref = date:px)
 KIND_EXIT = "rsl_exit"
 KIND_BELL = "rsl_bell"
 # Eric's manual R (set 2026-09-01, in CLAUDE.md doctrine): changes only
@@ -280,7 +282,6 @@ def run_go_watch() -> str:
             late = " *(late alert — bar printed earlier; entry is that "\
                    "bar's close)*" if age > 2.5 else ""
             risk = entry - stop
-            arm = entry + risk
             disaster = entry * (1 - 0.01)
             per_ct = 0.70 * risk * 100
             per_ct_atm = 0.55 * risk * 100
@@ -300,37 +301,67 @@ def run_go_watch() -> str:
             # data; spec_id is the link). Absent = the book has not written
             # it yet this minute — say so, never guess an id.
             with conn.cursor() as c:
-                c.execute("SELECT id FROM paper_specs WHERE book='rs_leader' "
+                c.execute("SELECT id, levels FROM paper_specs WHERE book=%s "
                           "AND trade_date=%s AND ticker=%s ORDER BY id DESC "
-                          "LIMIT 1", (today, leader))
+                          "LIMIT 1", (BOOK, today, leader))
                 row = c.fetchone()
             journal_line = (f"_Desk spec #{row[0]} — took it: journal_log; "
                             f"passed: journal_skip with your reason "
                             f"(spec_id={row[0]})._" if row else
                             "_Desk spec not written yet — journal by "
                             "ticker/date; the id links when it exists._")
+            # the levels: the desk's FROZEN copy when the book has already
+            # written the GO, else the same function on the same inputs
+            # (the ledger's copy is the authoritative one either way)
+            lv = row[1] if row and row[1] else None
+            if lv is None:
+                pdh, pmh = level_inputs(conn, leader, today)
+                lv = select_levels(bars, i, entry, pdh, pmh)
+            tp1 = lv["tp1"]["px"] if lv.get("tp1") else None
+            tp2 = lv["tp2"]["px"] if lv.get("tp2") else None
+            tp1_r = f" (+{(tp1 - entry) / risk:.2f}R)" if tp1 and risk > 0 else ""
+            tp2_r = f" (+{(tp2 - entry) / risk:.2f}R)" if tp2 and risk > 0 else ""
             if leader in EXPERIMENTAL:
                 graded = (f"_EXPERIMENTAL SEAT: {leader}'s own prior "
                           f"{EXPERIMENTAL_PRIOR[leader]}. The exit lifecycle "
-                          f"below is the mag-7-graded trail-after-1R; this "
-                          f"name's live record is the grade._")
+                          f"below is the same v2 level exit as the seven; "
+                          f"this name's live record is the grade._")
             else:
-                graded = (f"_Graded: trail-after-1R, the only exit positive "
-                          f"in both year-halves (+0.40/+0.27 avg R, ~40% "
-                          f"win, n=377). No profit target._")
+                graded = (f"_Graded (exit-shape study, 446 GOs): half at the "
+                          f"first level + level exits were the only exit "
+                          f"family positive in BOTH year-halves in option "
+                          f"dollars (half+breakeven +7.7/+6.2 bps, 61% win, "
+                          f"+$24/+$34 per 0.70Δ contract); the old trail was "
+                          f"+3.7/+2.0 bps, 35% win. Breakeven-on-touch WITH "
+                          f"the ratchet sits between two graded cells and "
+                          f"grades on the book's own n._")
+            runner = (f"**TP2 {tp2:.2f}**{tp2_r} ({lv['tp2']['kind']}): rest off "
+                      f"on the touch." if tp2 else
+                      "**No second level** — the runner rides the ratchet to "
+                      "the bell.")
             msg = (f"🎯 **GO — {label(leader)}** 1m {bar_ts:%H:%M} candle "
                    f"closed holding the 1m 8/21.{late}\n"
                    f"**Entry {entry:.2f}** · stop level **{stop:.2f}** "
                    f"(5m CLOSE through = out; a touch is not a stop) · "
-                   f"disaster **{disaster:.2f}** (touch = out, no waiting)\n"
-                   f"**Trail switch at {arm:.2f}** (+1R): from there, out "
-                   f"on a 5m CLOSE below the 5m 21 EMA — I'll ping the "
-                   f"switch and the exit; you act, don't compute.\n"
-                   f"{size_line}\n"
-                   f"_(One 0.70Δ contract ≈ ±${per_ct:.0f} at stop/switch — "
-                   f"the fallback division if you buy another strike.)_\n"
-                   f"{graded}\n"
-                   f"{journal_line}")
+                   f"disaster **{disaster:.2f}** (touch = out, no waiting) "
+                   f"— both until the first partial.\n"
+                   f"**TP1 {tp1:.2f}**{tp1_r} ({lv['tp1']['kind']}): HALF off on "
+                   f"the touch, then the runner's stop to **entry {entry:.2f}** "
+                   f"on touch (free trade), ratcheted under each completed "
+                   f"5m low — I'll ping every move. {runner}\n"
+                   f"_Levels: {describe_levels(lv)}._\n"
+                   if tp1 else
+                   f"🎯 **GO — {label(leader)}** 1m {bar_ts:%H:%M} candle "
+                   f"closed holding the 1m 8/21.{late}\n"
+                   f"**Entry {entry:.2f}** · stop level **{stop:.2f}** "
+                   f"(5m CLOSE through = out) · disaster **{disaster:.2f}** "
+                   f"(touch = out)\n"
+                   f"_Levels: {describe_levels(lv)}._\n")
+            msg += (f"{size_line}\n"
+                    f"_(One 0.70Δ contract ≈ ±${per_ct:.0f} at the stop; "
+                    f"the fallback division if you buy another strike.)_\n"
+                    f"{graded}\n"
+                    f"{journal_line}")
             return claim_and_send(KIND_GO, today.isoformat(), CHANNEL, msg,
                                   conn=conn)
         if now.time() >= ENTRY_CUTOFF:
@@ -344,20 +375,28 @@ def run_go_watch() -> str:
         conn.close()
 
 
+EXIT_TEXT = {"disaster": "disaster cap touched",
+             "stop": "5m closed through the stop",
+             "tp1_be": "runner stopped at breakeven (entry touched)",
+             "tp1_ratchet": "runner stopped at the ratcheted 5m low",
+             "tp1_tp2": "runner off at TP2"}
+
+
 def run_trade_watch() -> str:
     """Every minute after a GO until the close: rebuild the trade's
     state from the bars (deterministic — restarts change nothing) and
-    ping only on STATE CHANGES: 📈 the +1R trail switch, 🚪 the exit
-    with its reason, 🔔 the 3:55 still-in bell reminder. The graded
+    ping only on STATE CHANGES: 💰 TP1 hit (half banked, stop to entry),
+    🔒 each ratchet of the runner's stop, 🚪 the exit with its reason and
+    the whole-trade R, 🔔 the 3:55 still-in bell reminder. The v2
     lifecycle, executed by the desk; Eric's job is to act on pings."""
     # ONE DEFINITION (2026-09-02, the 11:09 phantom exit ping): the
     # ping used to carry its own copy of the lifecycle and that copy
     # kept the partial-5m-block bug the book was cured of the day
     # before — it fired "EXIT" 30 minutes before the book's rule-
-    # correct 11:39 exit. The watcher now IMPORTS the book's own
-    # lifecycle_state; the ping and the ledger cannot disagree again.
+    # correct 11:39 exit. The watcher IMPORTS the book's own
+    # lifecycle_state_v2; the ping and the ledger cannot disagree.
     from analysis.polygon_data import get_client
-    from analysis.rs_leader_book import lifecycle_state
+    from analysis.rs_leader_book import lifecycle_state_v2
     from screen.reversal_screen import _conn
     from zoneinfo import ZoneInfo
     et = ZoneInfo(ET)
@@ -368,7 +407,7 @@ def run_trade_watch() -> str:
         with conn.cursor() as c:
             c.execute("SELECT kind FROM discord_notify_log WHERE ref=%s AND "
                       "kind IN (%s,%s,%s,%s)",
-                      (today.isoformat(), KIND_GO, KIND_ARM, KIND_EXIT,
+                      (today.isoformat(), KIND_GO, KIND_TP1, KIND_EXIT,
                        KIND_BELL))
             kinds = {r[0] for r in c.fetchall()}
         if KIND_GO not in kinds or KIND_EXIT in kinds:
@@ -383,32 +422,54 @@ def run_trade_watch() -> str:
         risk = entry - stop
         if risk <= 0:
             return "hole"
-        arm_px = entry + risk
-        disaster = entry * (1 - 0.01)
-        state = lifecycle_state(bars, i_go, entry, stop)
-        armed = state["armed"]
-        exit_hit = None                # (reason, px)
+        # the levels the BOOK froze at the GO; the same function on the
+        # same inputs when the row is not there yet
+        with conn.cursor() as c:
+            c.execute("SELECT levels FROM paper_specs WHERE book=%s AND "
+                      "trade_date=%s AND ticker=%s ORDER BY id DESC LIMIT 1",
+                      (BOOK, today, leader))
+            row = c.fetchone()
+        lv = row[0] if row and row[0] else None
+        if lv is None:
+            pdh, pmh = level_inputs(conn, leader, today)
+            lv = select_levels(bars, i_go, entry, pdh, pmh)
+        tp1 = lv["tp1"]["px"] if lv.get("tp1") else None
+        tp2 = lv["tp2"]["px"] if lv.get("tp2") else None
+        state = lifecycle_state_v2(bars, i_go, entry, stop, tp1, tp2,
+                                   final=now.time() >= dt.time(16, 0))
         if state["exit"] is not None:
             code, _ts, px = state["exit"]
-            reason = {"disaster": "disaster cap touched",
-                      "trail": "5m closed below the 21-EMA trail",
-                      "stop": "5m closed through the stop"}.get(code, code)
-            exit_hit = (reason, px)
-        if exit_hit is not None:
-            reason, px = exit_hit
+            if code in ("eod_flat", "tp1_eod"):
+                return "bell"          # the 🔔 carries the close, not a door
+            reason = EXIT_TEXT.get(code, code)
             r = (px - entry) / risk
-            msg = (f"🚪 **EXIT — {label(leader)}**: {reason} at {px:.2f} "
-                   f"({r:+.2f}R from entry {entry:.2f}). Close the "
-                   f"position now. Log it: `watchtower_journal_log`.")
+            legs = " + ".join(f"{f * 100:.0f}% at {p:.2f} ({w})"
+                              for f, p, _t, w in state["legs"])
+            msg = (f"🚪 **EXIT — {label(leader)}**: {reason}. Whole trade "
+                   f"{r:+.2f}R from entry {entry:.2f} ({legs}). Close what "
+                   f"is left now. Log it: `watchtower_journal_log`.")
             return claim_and_send(KIND_EXIT, today.isoformat(), CHANNEL,
                                   msg, conn=conn)
-        if armed and KIND_ARM not in kinds:
-            msg = (f"📈 **{label(leader)} touched +1R ({arm_px:.2f}) — TRAIL "
-                   f"LIVE.** From here: out on a 5m CLOSE below the 5m "
-                   f"21 EMA (I'll ping it). The fixed stop no longer "
-                   f"applies; the disaster cap {disaster:.2f} still does.")
-            return claim_and_send(KIND_ARM, today.isoformat(), CHANNEL,
+        if state["tp1_hit"] and KIND_TP1 not in kinds:
+            r1 = (tp1 - entry) / risk
+            nxt = (f"TP2 **{tp2:.2f}** ({lv['tp2']['kind']}): rest off on the "
+                   f"touch." if tp2 else
+                   "No second level — the runner rides to the bell.")
+            msg = (f"💰 **{label(leader)} hit TP1 {tp1:.2f} ({r1:+.2f}R) — "
+                   f"HALF OFF.** Runner's stop to **entry {entry:.2f}** on touch "
+                   f"(free trade); I'll ping each ratchet under a completed "
+                   f"5m low. {nxt}")
+            return claim_and_send(KIND_TP1, today.isoformat(), CHANNEL,
                                   msg, conn=conn)
+        if state["tp1_hit"] and state["stop"] is not None and state["stop"] > entry:
+            # at-most-once per stop LEVEL: the claim ref carries the price
+            ref = f"{today.isoformat()}:{state['stop']:.2f}"
+            msg = (f"🔒 **{label(leader)} runner stop up to {state['stop']:.2f}** "
+                   f"(completed 5m low; touch = out, "
+                   f"{(state['stop'] - entry) / risk:+.2f}R locked on the half).")
+            out = claim_and_send(KIND_RATCHET, ref, CHANNEL, msg, conn=conn)
+            if out != "duplicate":
+                return out
         if now.time() >= dt.time(15, 55) and KIND_BELL not in kinds:
             msg = (f"🔔 **{label(leader)} still in at 3:55** — exit AT THE CLOSE. "
                    f"The graded exit is the closing print; don't hold "

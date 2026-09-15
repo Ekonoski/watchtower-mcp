@@ -24,14 +24,42 @@ definitions IMPORTED, never reimplemented):
   Prior beside every spec: +0.40/+0.27 avg R by year-half, ~40% win,
   n=377 leader days; caveats — closes as fills, no costs.
 
+  That was v1 (book V1_BOOK, 2026-09-01 → 2026-09-15, 10 specs).
+  V2 (2026-09-15, Eric, after the desk's META trade printed +3.0R at
+  its high and the trail took it out −2.01R: "you went from a
+  profitable trade to a negative two R trade... poor trade management"
+  → "build that"): the SAME GO entry, HIS exit — the day trader's
+  frame the exit-shape study graded on 2026-09-04 (half at the first
+  level + level exits were the only family positive in both year-halves
+  in option dollars; the trail was +3.7/+2.0 bps, 35% win):
+  - Before the first partial: struct stop on a completed 5m CLOSE and
+    the -1% disaster on touch, exactly as v1.
+  - TP1 = the nearest level above entry (>= 40 bps away) among PDH,
+    premarket high, the 30-minute opening-range high and the pre-GO
+    session high — levels within 0.1% of each other merge; a strike-
+    grid line is the declared LAST RESORT when no structural level is
+    in reach (the graded set's own fallback, graded -$6 / 44% hit as a
+    TP1 — stated on the ping). Half off on the TOUCH.
+  - The runner: stop to ENTRY on touch (the free trade), then ratcheted
+    to each completed 5m block's low (touch-honoured — a resting stop
+    order is what he places). TP2 = the next level, rest off on the
+    touch; no second level → the runner rides to the bell.
+  Stated honestly: the graded cells were half+breakeven-on-touch
+  (+7.7/+6.2 bps, 61%, +$24/+$34 per 0.70Δ contract) and half+ratchet
+  with breakeven on a 5m CLOSE (+6.9/+6.8, 60%, +$33/+$44); Eric's
+  execution — breakeven on touch AND the ratchet — sits between them
+  and grades on this book's own n. v1 stops arming; its record stands
+  under its own name.
+
 Fill honesty: every decision reads bars PERSISTED to rsl_book_bars
 (1m, written as first seen, never revised — reconstruction is not
 tape); the tick loop is idempotent and re-derives all state from the
 record, so restarts change nothing. Writes ONLY rsl_book_bars and
-book='rs_leader' rows in paper_specs/paper_trades. Promotion gate:
+book=BOOK rows in paper_specs/paper_trades. Promotion gate:
 ~30 resolved trades, small-n rule beside every number until then.
 """
 import datetime as dt
+import json
 import logging
 
 from analysis.hybrid_exit_study import _ema as ema5
@@ -41,10 +69,24 @@ from analysis.rsleader_study import (ENTRY_CUTOFF, MEASURE, RS_MIN, TICKERS,
 
 log = logging.getLogger("watchtower.rsl_book")
 
-BOOK = "rs_leader"
-SETUP = "rsl_go_trail"
+BOOK = "rs_leader_v2"
+SETUP = "rsl_go_levels"
+V1_BOOK = "rs_leader"          # retired 2026-09-15; the record stands
 DISASTER_PCT = 0.01
 EOD = dt.time(15, 59)
+TP1_FRAC = 0.5
+LEVEL_MERGE_PCT = 0.001        # levels within 0.1% of each other are one level
+PRIMARY_KINDS = ("pdh", "pmh", "orh", "hod")
+# the whole-trade exit reasons once half is banked: what took the RUNNER out
+POST_TP1_REASONS = {"tp1_be", "tp1_ratchet", "tp1_tp2", "tp1_eod"}
+PRIOR_TXT = ("Prior (exit-shape study, 446 GOs, 2026-09-04): half at the "
+             "first naive level + level exits were the only exit family "
+             "positive in BOTH year-halves in 0.70Δ option dollars — "
+             "half+breakeven-touch +7.7/+6.2 bps, 61% win, +$24/+$34 per "
+             "contract; half+5m-low ratchet +6.9/+6.8 bps, 60%; the v1 "
+             "trail +3.7/+2.0 bps, 35% win. Closes as fills, no costs; "
+             "breakeven-on-touch WITH the ratchet is between two graded "
+             "cells and grades on this book's own n.")
 
 # THE LIVE UNIVERSE (2026-09-09, the leader-board seat test — Eric:
 # "add PLTR as the 8th name experimental"). rsleader_study.TICKERS is the
@@ -135,6 +177,173 @@ def lifecycle_state(bars, i_go, entry, stop, *, arm_px=None, trail=True,
     return {"armed": armed, "exit": None}
 
 
+def select_levels(bars, i_go, entry, pdh, pmh):
+    """Pure (v2). The take-profit levels frozen at the GO, from the SAME
+    level math the exit-shape study graded (naive_levels / pick_targets
+    imported): TP1 = the nearest level >= entry * (1 + 40 bps) among PDH,
+    premarket high, the 30-minute ORB high and the pre-GO session high;
+    TP2 = the next. Levels within LEVEL_MERGE_PCT of each other are ONE
+    level (the ORB high and the session high are usually the same print
+    — two of the same price would have made TP2 == TP1, an all-off
+    wearing a runner's name). A missing PDH / PMH is a named hole. When
+    no structural level is in reach the strike-grid line is the declared
+    last resort (kind 'strike'), with no TP2. Returns {'tp1': {'px',
+    'kind'} | None, 'tp2': ..., 'levels': {kind: px|None}, 'holes': [..],
+    'fallback': bool}."""
+    # imported here, not at the top: exit_shape_study -> riskmgmt_study
+    # -> rs_leader_book.lifecycle_state is an import cycle at module load
+    from analysis.exit_shape_study import naive_levels, pick_targets
+    lv = naive_levels(bars, i_go, entry, pdh, pmh)
+    holes = [k for k in ("pdh", "pmh") if lv.get(k) is None]
+    ups = []
+    for k in PRIMARY_KINDS:
+        px = lv.get(k)
+        if px is None:
+            continue
+        for u in ups:
+            if abs(u["price"] - px) <= LEVEL_MERGE_PCT * max(u["price"], px):
+                u["kind"] += f"/{k}"
+                u["price"] = min(u["price"], px)   # the first print reached
+                break
+        else:
+            ups.append({"price": float(px), "kind": k})
+    tp1, tp2 = pick_targets(ups, entry)
+    fallback = False
+    if tp1 is None:
+        t1, _ = pick_targets([{"price": float(lv["strike"]), "kind": "strike"}], entry)
+        tp1, tp2, fallback = t1, None, t1 is not None
+    out = {"tp1": ({"px": round(tp1["price"], 4), "kind": tp1["kind"]} if tp1 else None),
+           "tp2": ({"px": round(tp2["price"], 4), "kind": tp2["kind"]} if tp2 else None),
+           "levels": {k: (round(float(v), 4) if v is not None else None) for k, v in lv.items()},
+           "holes": holes, "fallback": fallback}
+    return out
+
+
+def describe_levels(lv) -> str:
+    """Pure: one line for the rationale, the ping and the log — TP1 with
+    its kind (the strike-grid last resort named as such), TP2 or 'no
+    TP2', holes named. One sentence in every place the levels render."""
+    if not lv or not lv.get("tp1"):
+        return ("NO TP1 (no level, no strike — a hole; struct stop / "
+                "disaster / bell only)")
+    t1 = lv["tp1"]
+    s = f"TP1 {t1['px']:.2f} ({t1['kind']}"
+    if lv.get("fallback"):
+        s += (", strike-grid LAST RESORT — no structural level within reach; "
+              "strike TP1s graded −$6 / 44% hit")
+    s += ")"
+    if lv.get("tp2"):
+        s += f", TP2 {lv['tp2']['px']:.2f} ({lv['tp2']['kind']})"
+    else:
+        s += ", no TP2 — the runner rides to the bell"
+    if lv.get("holes"):
+        s += f"; level holes: {', '.join(lv['holes'])}"
+    return s
+
+
+def level_inputs(conn, ticker, today):
+    """READ ONLY: the prior session's high (daily_prices, the last row
+    before today) and today's premarket high (premarket_range — a hole
+    when the 9:31/9:41 writer has no row for the name)."""
+    with conn.cursor() as c:
+        c.execute("""SELECT high FROM daily_prices WHERE ticker=%s AND trade_date<%s
+                     AND high IS NOT NULL ORDER BY trade_date DESC LIMIT 1""",
+                  (ticker, today))
+        r = c.fetchone()
+        pdh = float(r[0]) if r and r[0] is not None else None
+        c.execute("SELECT pm_high FROM premarket_range WHERE ticker=%s AND trade_date=%s",
+                  (ticker, today))
+        r = c.fetchone()
+        pmh = float(r[0]) if r and r[0] is not None else None
+    return pdh, pmh
+
+
+def _done_block_lows(bars):
+    """{index of a completed 5m block's last minute: that block's low}
+    — the same completed-block rule as lifecycle_state (a later block
+    proves completion; the trailing block needs its final minute)."""
+    bars5, last5 = res5(bars)
+    out = {}
+    for j in range(len(bars5)):
+        ts_j = bars[last5[j]][0]
+        done = (j < len(bars5) - 1
+                or ((ts_j.hour - 9) * 60 + ts_j.minute - 30) % 5 == 4)
+        if done:
+            out[last5[j]] = bars5[j][3]
+    return out
+
+
+def lifecycle_state_v2(bars, i_go, entry, stop, tp1, tp2=None, *, final=False):
+    """Pure (v2, Eric's exit). State of the trade from persisted 1m bars
+    after the GO bar. Returns {'legs': [(frac, px, ts, why)], 'tp1_hit',
+    'stop': the live stop level, 'stop_mode': 'close' | 'touch',
+    'exit': (reason, ts, weighted_px) | None}.
+
+    Order inside a bar: the runner's resting stop (touch) once it exists,
+    the disaster touch, TP1 touch (half off, stop -> entry), TP2 touch
+    (rest off); then, at a completed 5m block's last minute, the
+    pre-TP1 struct stop on the CLOSE (wick rule) or the post-TP1 ratchet
+    of the runner's stop to the block's low. `final=True` (the bell)
+    closes whatever is left at the last bar's close. The runner's stop is
+    checked BEFORE the disaster because it always sits at/above entry,
+    above the -1% line — a bar through both was stopped at the higher
+    price first."""
+    disaster = entry * (1 - DISASTER_PCT)
+    blocks = _done_block_lows(bars)
+    legs, remaining = [], 1.0
+    tp1_hit, rstop = False, None
+    reason = None
+    for i in range(i_go + 1, len(bars)):
+        ts, o, h, l, c = bars[i]
+        if tp1_hit and rstop is not None and l <= rstop:
+            legs.append((remaining, rstop, ts, "runner_stop"))
+            reason = "tp1_be" if rstop <= entry + 1e-9 else "tp1_ratchet"
+            remaining = 0.0
+            break
+        if l <= disaster:
+            legs.append((remaining, disaster, ts, "disaster"))
+            reason = "disaster"
+            remaining = 0.0
+            break
+        if not tp1_hit and tp1 is not None and h >= tp1:
+            frac = min(TP1_FRAC, remaining)
+            legs.append((frac, tp1, ts, "tp1"))
+            remaining -= frac
+            tp1_hit, rstop = True, entry
+        if tp1_hit and tp2 is not None and remaining > 0 and h >= tp2:
+            legs.append((remaining, tp2, ts, "tp2"))
+            reason = "tp1_tp2"
+            remaining = 0.0
+            break
+        lo5 = blocks.get(i)
+        if lo5 is not None:
+            if not tp1_hit and c < stop:
+                legs.append((remaining, c, ts, "stop"))
+                reason = "stop"
+                remaining = 0.0
+                break
+            if tp1_hit:
+                rstop = max(rstop, lo5)
+    if remaining > 0 and final and len(bars) > i_go + 1:
+        ts, _o, _h, _l, c = bars[-1]
+        legs.append((remaining, c, ts, "bell"))
+        reason = "tp1_eod" if tp1_hit else "eod_flat"
+        remaining = 0.0
+    exit_ = None
+    if remaining <= 0 and legs:
+        px = sum(f * p for f, p, _t, _w in legs)
+        exit_ = (reason, legs[-1][2], round(px, 4))
+    return {"legs": legs, "tp1_hit": tp1_hit,
+            "stop": (rstop if tp1_hit else stop),
+            "stop_mode": ("touch" if tp1_hit else "close"),
+            "exit": exit_}
+
+
+def legs_json(legs):
+    return [{"frac": round(f, 4), "px": round(p, 4), "ts": t.isoformat(), "why": w}
+            for f, p, t, w in legs]
+
+
 def _persist_1m(conn, ticker, today):
     """Fetch today's 1m bars and persist NEW ones (first-seen wins);
     return the persisted series oldest-first."""
@@ -189,7 +398,7 @@ def run_rsl_tick():
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
-            c.execute("""SELECT id, ticker, status, stop FROM paper_specs
+            c.execute("""SELECT id, ticker, status, stop, levels FROM paper_specs
                          WHERE book=%s AND trade_date=%s""", (BOOK, today))
             spec = c.fetchone()
 
@@ -241,13 +450,12 @@ def run_rsl_tick():
             if leader in EXPERIMENTAL:
                 prior_txt = (f"EXPERIMENTAL SEAT: {leader}'s own prior "
                              f"{EXPERIMENTAL_PRIOR[leader]}. Exit lifecycle "
-                             f"is the mag-7-graded trail-after-1R. "
+                             f"is the same v2 level exit as the seven. "
                              + (f"Displaced mag-7 leader {displaced}."
                                 if displaced else
                                 "The mag-7 alone would have stood aside."))
             else:
-                prior_txt = ("Prior +0.40/+0.27R by half, ~40% win, n=377 "
-                             "(closes as fills, no costs).")
+                prior_txt = PRIOR_TXT
             with conn.cursor() as c:
                 c.execute("""INSERT INTO paper_specs
                     (trade_date, book, ticker, direction, setup,
@@ -260,22 +468,29 @@ def run_rsl_tick():
                      f"{SETUP}: leader {label(leader)} {ref:+.2f}% vs QQQ "
                      f"(bar +{RS_MIN}%). Entry = first 1m 8/21 hold "
                      f"9:45-11:00 at its close; stop under the pullback "
-                     f"bar on 5m CLOSES; -1% disaster on touch; trail "
-                     f"(5m close < 5m 21EMA) after +1R; eod for "
-                     f"survivors. {prior_txt} Board: {board}.{hole_txt} "
-                     f"entry_trigger/stop are 0 until the GO sets them."))
+                     f"bar on 5m CLOSES; -1% disaster on touch — both "
+                     f"until the first partial. TP1 = nearest level >= "
+                     f"40 bps above entry (PDH / premarket high / ORB "
+                     f"high / pre-GO session high; strike grid only as a "
+                     f"named last resort): HALF off on touch, runner's "
+                     f"stop to entry on touch, ratcheted under each "
+                     f"completed 5m low; TP2 = the next level, rest off "
+                     f"on touch; no TP2 -> the runner rides to the bell. "
+                     f"{prior_txt} Board: {board}.{hole_txt} "
+                     f"entry_trigger/stop/target are 0 until the GO sets "
+                     f"them; the levels freeze in `levels` at the GO."))
             conn.commit()
             log.info(f"[rsl-book] {today}: armed on {label(leader)}")
             return
 
-        sid, ticker, status, stop_db = spec
+        sid, ticker, status, stop_db, levels_db = spec
         if status in ("skipped_rank", "cancelled"):
             return
         bars = _persist_1m(conn, ticker, today)
         if len(bars) < 16:
             return
         with conn.cursor() as c:
-            c.execute("""SELECT id, entered_at, entry_px, exited_at
+            c.execute("""SELECT id, entered_at, entry_px, exited_at, legs
                          FROM paper_trades WHERE spec_id=%s""", (sid,))
             trade = c.fetchone()
 
@@ -291,6 +506,14 @@ def run_rsl_tick():
             got = find_go_entry(bars, e8, e21, i945, icut, "long")
             if got is not None:
                 i, entry, stop = got
+                pdh, pmh = level_inputs(conn, ticker, today)
+                lv = select_levels(bars, i, entry, pdh, pmh)
+                # TP1 is a REAL target now (the poller is excluded for
+                # this book by name); 999999 stays the sentinel only for
+                # the impossible no-level row — never a plausible price
+                # (the 2026-09-01 phantom).
+                target = lv["tp1"]["px"] if lv["tp1"] else 999999
+                tp_txt = f" | GO {bars[i][0]:%H:%M}: " + describe_levels(lv)
                 with conn.cursor() as c:
                     c.execute("""INSERT INTO paper_trades
                         (spec_id, entered_at, entry_px, fill_kind,
@@ -298,15 +521,15 @@ def run_rsl_tick():
                         VALUES (%s,%s,%s,'close','n/a')""",
                         (sid, bars[i][0], round(entry, 4)))
                     c.execute("""UPDATE paper_specs SET status='triggered',
-                                 entry_trigger=%s, stop=%s, target=%s
+                                 entry_trigger=%s, stop=%s, target=%s,
+                                 levels=%s::jsonb,
+                                 rationale = rationale || %s
                                  WHERE id=%s""",
-                              (round(entry, 4), round(stop, 4),
-                               999999, sid))  # sentinel: this book has NO target;
-                               # a plausible placeholder is a live number
-                               # to every reader (the 2026-09-01 phantom)
+                              (round(entry, 4), round(stop, 4), target,
+                               json.dumps(lv), tp_txt, sid))
                 conn.commit()
                 log.info(f"[rsl-book] ENTER {ticker} @ {entry:.4f} "
-                         f"({bars[i][0]})")
+                         f"({bars[i][0]}){tp_txt}")
                 return
             if now.time() >= ENTRY_CUTOFF:
                 with conn.cursor() as c:
@@ -319,7 +542,7 @@ def run_rsl_tick():
             return
 
         if trade is not None and trade[3] is None:
-            tid, ent_at, entry_px, _ = trade
+            tid, ent_at, entry_px, _, legs_db = trade
             entry_px = float(entry_px)
             stop_lvl = float(stop_db)
             if stop_lvl <= 0:
@@ -329,28 +552,36 @@ def run_rsl_tick():
                         None)
             if i_go is None:
                 return
-            st = lifecycle_state(bars, i_go, entry_px, stop_lvl)
+            lv = levels_db or {}
+            tp1 = lv["tp1"]["px"] if lv.get("tp1") else None
+            tp2 = lv["tp2"]["px"] if lv.get("tp2") else None
+            final = now.time() >= dt.time(16, 0)
+            st = lifecycle_state_v2(bars, i_go, entry_px, stop_lvl, tp1, tp2,
+                                    final=final)
             risk = entry_px - stop_lvl
+            legs = legs_json(st["legs"])
             if st["exit"] is not None:
                 reason, ts, px = st["exit"]
                 r = (px - entry_px) / risk if risk > 0 else None
                 with conn.cursor() as c:
                     c.execute("""UPDATE paper_trades SET exited_at=%s,
-                                 exit_px=%s, exit_reason=%s, r_multiple=%s
+                                 exit_px=%s, exit_reason=%s, r_multiple=%s,
+                                 legs=%s::jsonb
                                  WHERE id=%s AND exited_at IS NULL""",
-                              (ts, round(px, 4), reason, r, tid))
+                              (ts, round(px, 4), reason, r, json.dumps(legs),
+                               tid))
                 conn.commit()
-                log.info(f"[rsl-book] EXIT {ticker} {reason} @ {px:.4f}")
-            elif now.time() >= dt.time(16, 0) and bars:
-                px = bars[-1][4]
-                r = (px - entry_px) / risk if risk > 0 else None
+                log.info(f"[rsl-book] EXIT {ticker} {reason} @ {px:.4f} "
+                         f"legs={legs}")
+            elif legs and legs != (legs_db or []):
+                # the partial is on the record the minute it prints,
+                # before the runner resolves (a half banked is a fill)
                 with conn.cursor() as c:
-                    c.execute("""UPDATE paper_trades SET exited_at=%s,
-                                 exit_px=%s, exit_reason='eod_flat',
-                                 r_multiple=%s
+                    c.execute("""UPDATE paper_trades SET legs=%s::jsonb
                                  WHERE id=%s AND exited_at IS NULL""",
-                              (bars[-1][0], round(px, 4), r, tid))
+                              (json.dumps(legs), tid))
                 conn.commit()
-                log.info(f"[rsl-book] EOD {ticker} @ {px:.4f}")
+                log.info(f"[rsl-book] PARTIAL {ticker} legs={legs} runner "
+                         f"stop {st['stop']:.4f} ({st['stop_mode']})")
     finally:
         conn.close()
