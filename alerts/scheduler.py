@@ -1922,6 +1922,50 @@ def start_scheduler():
         id="rsl_book_settle", replace_existing=True,
     )
 
+    # The two-test book (2026-09-17, Eric: "build the two-test book"):
+    # the GO book's leader, the graded 5m-close-through-level + L1/H/L2
+    # entry, Eric's level exit, the graded hold-to-bell as a shadow. Its
+    # tick runs at :45, after the GO book's :30 tick has written the
+    # leader spec; the ping narrates the same state from live bars.
+    def _tt_book_tick():
+        from analysis.twotest_book import run_tt_tick
+        run_tt_tick()
+
+    def _tt_watch():
+        from alerts.twotest_ping import run_tt_watch
+        run_tt_watch()
+
+    scheduler.add_job(
+        _tt_book_tick,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="47-59",
+                    second="45", timezone=et),
+        id="tt_book_9", replace_existing=True,
+    )
+    scheduler.add_job(
+        _tt_book_tick,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*",
+                    second="45", timezone=et),
+        id="tt_book_day", replace_existing=True,
+    )
+    scheduler.add_job(
+        _tt_book_tick,
+        CronTrigger(day_of_week="mon-fri", hour="16", minute="0,1,2",
+                    second="45", timezone=et),
+        id="tt_book_settle", replace_existing=True,
+    )
+    scheduler.add_job(
+        _tt_watch,
+        CronTrigger(day_of_week="mon-fri", hour="9", minute="48-59",
+                    second="50", timezone=et),
+        id="tt_watch_9", replace_existing=True,
+    )
+    scheduler.add_job(
+        _tt_watch,
+        CronTrigger(day_of_week="mon-fri", hour="10-15", minute="*",
+                    second="50", timezone=et),
+        id="tt_watch_day", replace_existing=True,
+    )
+
     # Nightly ledger-integrity audit (2026-09-01, the phantom-target
     # day): exit-reason legality per book + every entry/exit price
     # verified against recorded bars. Quiet when clean; anomalies post
