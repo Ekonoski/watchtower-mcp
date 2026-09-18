@@ -267,6 +267,15 @@ def run_social_buzz_scan(tickers: Optional[List[str]] = None,
             return []
 
         grok = _get_grok()
+        if grok is None:
+            # A failed lookup is not a neutral reading: with Grok paused or
+            # unreachable the scan writes NOTHING rather than upserting
+            # 'neutral / 0.0' placeholders that the brief would render as
+            # today's sentiment (2026-09-18). Yesterday's rows stay, stamped
+            # with their own date.
+            _log.warning("[social_buzz] Grok unavailable — daily scan skipped, "
+                         "no placeholder rows written (%d tickers).", len(tickers))
+            return []
         results = []
         today = date.today()
 

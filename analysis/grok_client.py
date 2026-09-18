@@ -11,6 +11,15 @@ Usage:
     data = resp["parsed"]  # if json_mode
 
 Env:
+    GROK_ENABLED     PAUSED BY DEFAULT (2026-09-18, Eric: "stop the system
+                     temporarily that pulls from grok api... it's just
+                     wasting money"). Every construction raises until this
+                     is set to "on" in Railway; every caller (news
+                     classifier, social buzz, screen synthesis, the
+                     analyze-ticker synthesis) already treats a failed
+                     construction as *unavailable* and falls back, so the
+                     pause is one env var, no deploy, and reversible the
+                     same way.
     XAI_API_KEY      (required)
     XAI_MODEL        (optional, default "grok-3-latest")
     XAI_SEARCH_MODEL (optional, default "grok-4.3") — model used for live
@@ -42,6 +51,18 @@ def cooldown_remaining() -> float:
     return max(0.0, _COOLDOWN_UNTIL - time.time())
 
 
+PAUSE_REASON = ("Grok paused: GROK_ENABLED is not 'on' (Eric, 2026-09-18 — xAI "
+                "spend stopped while the desk isn't using it; set GROK_ENABLED=on "
+                "in Railway to resume, no deploy needed)")
+_pause_logged = False
+
+
+def grok_enabled() -> bool:
+    """The kill switch. Default OFF — an unset variable is a pause, so the
+    spend cannot resume by accident on a fresh environment."""
+    return os.environ.get("GROK_ENABLED", "off").strip().lower() in ("1", "true", "on", "yes")
+
+
 class GrokClient:
     def __init__(
         self,
@@ -50,6 +71,12 @@ class GrokClient:
         base_url: Optional[str] = None,
         timeout: float = 120.0,
     ):
+        global _pause_logged
+        if not grok_enabled():
+            if not _pause_logged:
+                log.warning("[grok] %s", PAUSE_REASON)
+                _pause_logged = True
+            raise RuntimeError(PAUSE_REASON)
         self.api_key = api_key or os.environ.get("XAI_API_KEY")
         if not self.api_key:
             raise RuntimeError(
