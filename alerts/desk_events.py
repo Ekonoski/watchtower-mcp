@@ -49,8 +49,21 @@ def format_exit(ticker, direction, setup, entry_px, exit_px, reason,
 
 KIND_BOOKS = "books_daily"
 
+# Books that no longer count as books (2026-09-18, Eric: "Do number 3"):
+# day_bias ran 19 sessions with zero fills — 12 stand-asides, every armed
+# day cancelled by a pre-10:30 touch — which is the graded definition
+# behaving as graded, and an n that will not arrive this quarter. Its
+# loop and the 📐 verdict keep running as MEASUREMENT; the scoreboard
+# prints it under its own heading, never among the books being judged.
+MEASUREMENT_BOOKS = {
+    "day_bias": "measurement only since 2026-09-18 — the 📐 verdict still "
+                "posts; the early-touch-reclaim variant grades on the "
+                "stored record (daybias_reclaim_events)",
+}
 
-def format_scoreboard(rows, disagreements, today, experimental=()) -> str:
+
+def format_scoreboard(rows, disagreements, today, experimental=(),
+                      measurement=()) -> str:
     """Pure (2026-09-02, Eric: "let's run both and see which wins"):
     per-book running record, worst total R first, plus the day's
     morning-vs-live gamma disagreements. rows = [(book, n, wins,
@@ -58,10 +71,13 @@ def format_scoreboard(rows, disagreements, today, experimental=()) -> str:
     cancelled_book)]; experimental = [(book, ticker, n, wins, losses,
     total_r)] — an experimental seat's own record, printed under its
     book every day (2026-09-09, PLTR: zero resolved is data, and a seat
-    graded only inside the book's total is a seat nobody can read).
-    Small-n stated on every line."""
+    graded only inside the book's total is a seat nobody can read);
+    measurement = [(book, sessions, fills)] — retired-from-judgment
+    books, printed as such (2026-09-18: a book with no n is not a book,
+    and a line that vanishes is a hole). Small-n stated on every line."""
     lines = [f"📒 **Books — {today:%a %b %-d}** (running record since "
              f"2026-08-07; n beside every rate — under ~30 it is anecdote)"]
+    rows = [r for r in rows if r[0] not in MEASUREMENT_BOOKS]
     for book, n, w, l, r in sorted(rows, key=lambda x: (x[4] if x[4] is not None else 0)):
         if not n:
             lines.append(f"{book}: 0 resolved")
@@ -90,6 +106,9 @@ def format_scoreboard(rows, disagreements, today, experimental=()) -> str:
                          f"{ent} entered, {canc} cancelled (board moved)")
     else:
         lines.append("  today: no morning-vs-live disagreement (zero is data)")
+    for book, sessions, fills in measurement:
+        lines.append(f"__{book}__: {sessions} sessions · {fills} fills — "
+                     f"{MEASUREMENT_BOOKS.get(book, 'measurement only')}")
     return "\n".join(lines)
 
 
@@ -143,7 +162,17 @@ def run_books_scoreboard() -> str:
                             float(r) if r is not None else 0.0))
             if not any(b == RSL_BOOK for b, *_ in rows):
                 rows.append((RSL_BOOK, 0, 0, 0, None))
-        msg = format_scoreboard(rows, dis, today, experimental=exp)
+            meas = []
+            for mb in MEASUREMENT_BOOKS:
+                c.execute("""SELECT count(DISTINCT s.trade_date),
+                                    count(t.id) FILTER (WHERE t.id IS NOT NULL)
+                             FROM paper_specs s LEFT JOIN paper_trades t
+                               ON t.spec_id = s.id
+                             WHERE s.book=%s""", (mb,))
+                ns, nf = c.fetchone()
+                meas.append((mb, int(ns), int(nf)))
+        msg = format_scoreboard(rows, dis, today, experimental=exp,
+                                measurement=meas)
         return claim_and_send(KIND_BOOKS, today.isoformat(), "desk", msg,
                               conn=conn)
     finally:

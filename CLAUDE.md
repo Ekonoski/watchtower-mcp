@@ -2769,6 +2769,88 @@ Rendering doctrine, same spirit as the rest of this file:
   GO skips, seven desk losses, −10.0R, and the entry he waited for
   instead won on both PLTR days.
 
+- **The decision night: five rulings, and the journal is the template**
+  (2026-09-18, Friday after the close — Eric, asked to rule on the
+  per-book decision analysis: "I want to flatten swing v1 / Retire wall
+  fades / Do number 3 / Do number 4 / My journal I think needs to be the
+  template at this point since nothing else we have tested or done has
+  proven to have any better results than a coin flip. I think my journal
+  over the last week specifically has been the strongest entry method
+  with potentially repeatable outcomes."). Each ruling, as built:
+  (1) **Swing v1 is flattened**, reversing the 9/10 decision to ride its
+  83 open positions to resolution: at the first 16:20 settle on/after
+  2026-09-21, every open `swing` position the final recorded bar did not
+  already decide (a stop or target on that bar still books as what it
+  is) exits at that bar's CLOSE, reason `manual`, R from the actual
+  entry, the ruling in the row's `notes` (`swing_v1_flatten_decision`,
+  pure; on/after so a hole-day name flattens the next session instead of
+  riding forever; the settle owns it, so every flatten price is a
+  recorded print). The v1 record closes at whatever that prints — stated
+  the morning after, losers first. swing_v2 is untouched and keeps its
+  2026-11-13 / 30-resolution verdict date.
+  (2) **Morning-board wall fades are retired** (0-3, −2.74R): `RETIRED_
+  GAMMA_FAMILIES` in `build_gamma_specs` refuses the family BY NAME for
+  book `gamma` from 2026-09-21 with the reason in the writer's skips —
+  DATED, so the replay harness and the binary shadow grade every earlier
+  board under the rule that was live that day (a retirement is a
+  convention change and ships with its date; the 2026-08-12 shadow
+  fixture still re-arms its wall fades). Flip-holds stay. The live-board
+  book (`gamma_iday`) keeps arming wall fades on its own n (2-2) because
+  the morning-vs-live head-to-head is its own gated question and
+  retiring one side by the other's record would settle it by fiat.
+  (3) **day_bias stops counting as a book**: 19 sessions, 0 fills — 12
+  stand-asides and every armed day cancelled by a pre-10:30 touch, the
+  graded definition behaving as graded and an n that will not arrive
+  this quarter. Its loop and the 📐 verdict keep running as MEASUREMENT;
+  `MEASUREMENT_BOOKS` in `alerts/desk_events.py` moves it to its own
+  line on the 📒 scoreboard (sessions · fills, printed every day — a line
+  that vanishes is a hole). The queued early-touch-RECLAIM variant grades
+  on the stored record instead of on the book's silence:
+  `analysis/daybias_reclaim_study.py` (table `daybias_reclaim_events`,
+  migration 075, marker `daybias_reclaim_v1`, boot-seeded) classifies
+  every SPY (2005→) / QQQ (2011→) day through the book's own `decide`
+  (imported) on `index_intraday_bars` with PDH from `daily_prices`, and
+  on cancelled_early days records the FIRST ≥10:30 15m CLOSE back above
+  PDH — entry at that close, `lost_close` marking the cohort where the
+  level was actually LOST on a close first (the true reclaim; the wick-
+  touch-held-above cohort is recorded apart, never merged), no_reclaim
+  as its own state — with eod bps to the true close (daily_prices close,
+  `close_src` stated), MFE/MAE, and the book's 0.75% close-rule stop
+  replayed. Bar, frozen before the number: the lost_close reclaim is
+  adopted as a second declared entry only if positive in BOTH eras on
+  SPY and replicating in direction on QQQ — the bar the late retest
+  cleared (69% / +27 bps, n=273); otherwise the cancel stands vindicated.
+  Closes as fills, 15m granularity, no costs. `tests/test_daybias_
+  reclaim.py` pins the event (lost-then-reclaimed, wick-held apart,
+  pre-10:30 closes refused, no_reclaim, the close-rule stop, non-
+  cancelled days → None) and one-definition / writes-own-table.
+  (4) **rs_leader_v2 is the CONTROL and two_test is the CANDIDATE for
+  three weeks** — flat review on or about 2026-10-09 (a reminder is
+  scheduled), then keep one: the same 9:45 leader, the GO entry vs the
+  level entry Eric executes by hand, both under his exit, each on its
+  own n (~15 sessions each; small-n stated at the review — the review
+  can also say "not yet"). No knob turns before the review; a hot or
+  cold week is not a reason.
+  (5) **The journal is the template.** Eric's ruling on the record of
+  seven weeks: nothing the desk has graded beats a coin flip after
+  costs except selection (the leader) and his own book — 13 closed rows,
+  the `confirmed` leg 6-0 and every loser `anticipated`, seven GO skips
+  that were seven desk losses. The machine is rebuilt around what his
+  rows do: CONFIRMED entries only (a completed close through the level,
+  then the higher low — the two-test is the first book born from it),
+  partials at the desk's levels with the runner ratcheted (v2's exit),
+  and SKIPS graded as decisions. The doctrine that follows: a new book
+  or rule change is proposed FROM a journal leg that has graded at n,
+  never from a study the journal has not touched — the studies remain
+  the check ("does the record agree with the eye?"), the eye's labeled
+  rows are the source. What that does NOT change: the wick rule, the
+  fill honesty, the small-n rule, one-definition, and the bar every
+  promotion clears — the journal earns rules the same way, at n.
+  `tests/test_desk_decisions_0918.py` pins the flatten (v1 only, on/
+  after the date, the bar decides first, `manual` legal), the dated
+  wall-fade retirement (morning refuses, live board keeps, history
+  replays under its own rule), and the scoreboard's measurement line.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
