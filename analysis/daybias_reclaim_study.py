@@ -62,6 +62,37 @@ TICKERS = ("SPY", "QQQ")
 ERA_SPLIT = dt.date(2016, 1, 1)
 BUDGET_S = 20 * 60
 
+# Migration 075, applied idempotently at run start (the same text; the
+# study cannot depend on a hand-applied DDL step — a missing table would
+# be one more silent seed skip).
+DDL = """
+CREATE TABLE IF NOT EXISTS daybias_reclaim_events (
+    id            bigserial PRIMARY KEY,
+    ticker        text NOT NULL,
+    trade_date    date NOT NULL,
+    pdh           numeric NOT NULL,
+    state         text NOT NULL,
+    touch_ts      timestamptz NOT NULL,
+    lost_close    boolean,
+    reclaim_ts    timestamptz,
+    entry_px      numeric,
+    day_close_px  numeric,
+    close_src     text,
+    eod_bps       numeric,
+    mfe_bps       numeric,
+    mae_bps       numeric,
+    stop_hit      boolean,
+    stop_exit_px  numeric,
+    stop_bps      numeric,
+    stop_r        numeric,
+    bars_after    integer,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (ticker, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_daybias_reclaim_tk_state
+    ON daybias_reclaim_events (ticker, state, lost_close);
+"""
+
 READOUT_SQL = """
 SELECT ticker,
        CASE WHEN trade_date < '2016-01-01' THEN 'pre2016' ELSE 'post2016' END AS era,
@@ -203,6 +234,8 @@ def run() -> bool:
                       (COMPLETE_MARKER,))
             if c.fetchone():
                 return True
+            c.execute(DDL)
+        conn.commit()
         for tk in TICKERS:
             if time.time() - t0 > BUDGET_S:
                 log.info("[daybias-reclaim] budget hit; resuming next boot.")
