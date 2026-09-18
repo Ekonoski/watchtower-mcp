@@ -279,7 +279,7 @@ def test_book_birth_touches_every_place():
     anomalies, _, _ = ledger_audit.audit(rows, {("META", "d"): (664.0, 679.0)})
     assert len(anomalies) == 1 and "illegal exit_reason 'trail'" in anomalies[0]
     assert "from analysis.rs_leader_book import BOOK as RSL_BOOK" in inspect.getsource(ledger_audit.run)
-    assert "NOT IN ('day_bias','rs_leader','rs_leader_v2')" in inspect.getsource(paper_trader)
+    assert "NOT IN ('day_bias','rs_leader','rs_leader_v2','two_test')" in inspect.getsource(paper_trader)
     src = inspect.getsource(rb.run_rsl_tick)
     for needle in ("levels=%s::jsonb", "legs=%s::jsonb", "lifecycle_state_v2(",
                    "level_inputs(conn, ticker, today)", "select_levels(bars, i, entry, pdh, pmh)",

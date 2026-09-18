@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def test_poller_exclusion_and_sentinel():
     from analysis import paper_trader, rs_leader_book
     src = inspect.getsource(paper_trader)
-    assert "NOT IN ('day_bias','rs_leader','rs_leader_v2')" in src
+    assert "NOT IN ('day_bias','rs_leader','rs_leader_v2','two_test')" in src
     src2 = inspect.getsource(rs_leader_book)
     assert "999999" in src2                     # sentinel, not entry*1.02
     assert "entry * 1.02" not in src2

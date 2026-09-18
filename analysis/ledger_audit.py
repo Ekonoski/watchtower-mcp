@@ -36,6 +36,9 @@ LEGAL_EXITS = {
     # what took the RUNNER out; a bare 'trail' is illegal here by design
     "rs_leader_v2": {"disaster", "stop", "eod_flat", "manual",
                      "tp1_be", "tp1_ratchet", "tp1_tp2", "tp1_eod"},
+    # the two-test book (2026-09-17) trades the same v2 exit vocabulary
+    "two_test": {"disaster", "stop", "eod_flat", "manual",
+                 "tp1_be", "tp1_ratchet", "tp1_tp2", "tp1_eod"},
 }
 TOL = 0.001
 # exits that carry a 🚪 ping (eod exits carry the 🔔 bell instead)

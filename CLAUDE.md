@@ -2716,6 +2716,59 @@ Rendering doctrine, same spirit as the rest of this file:
   quarter, and it is named here so nobody reads its silence as a
   clean record.
 
+- **The two-test book: the trade Eric executes by hand, now a book**
+  (2026-09-17, after his third straight correct PLTR skip — v2's first
+  two days were both struct stops before any partial, −1.24R and
+  −1.46R, while his preferred entry on each day, a regain-and-hold of
+  the level then 1m higher lows, replayed to a win on the same bars:
+  "build the two-test book"). `analysis/twotest_book.py`, book
+  `two_test`, setup `tt_leader_level`. ONE DEFINITION end to end: the
+  name is the GO book's 9:45 leader (read from the rs_leader_v2 spec —
+  a v2 stand-aside is a two-test stand-aside, `skipped_rank`); the
+  entry is the graded study's machine imported (`twotest_study.two_test`
+  + `tapeentry_study.level_machine` / `resample5`, the study's clocks —
+  confirmation 9:35–14:30, trigger by 15:00 — and `STOP_BUFF`): a
+  completed 5m CLOSE through PDH or the premarket high, then on the 1m
+  L1 / H / L2 (higher low at-or-above the level), fill on the cross of
+  H; longs only, PDH and PMH only (on leader days PDH +33.6/+21.4 bps,
+  PMH +12.8/+17.5 by half under the 5m-close stop; ORB flat, shorts
+  retired). The exit is Eric's 9/15 ruling via `lifecycle_state_v2` +
+  `select_levels`: struct stop = L2 − 0.05% on a completed 5m CLOSE and
+  the −1% disaster until the first partial, half at TP1, runner to
+  entry on touch, ratcheted under 5m lows, TP2 or the bell. Three
+  live-vs-study deviations, declared: (1) the study read full days so
+  every 5m bar was complete; live, `completed5` feeds the confirmation
+  and kill legs COMPLETED blocks only (the trailing partial block's
+  running close is not a close — the 2026-09-01 lesson) while the 1m
+  legs read every persisted bar; (2) a trigger bar that OPENS above H
+  fills at its open, a price that printed (the ACVA gap rule), and the
+  row says `gap_fill`; (3) the study's graded expression was hold-to-
+  bell under the 5m-close stop — it rides as a SHADOW on every trade
+  (`paper_trades.shadow.graded_eod`, computed from the same recorded
+  bars at the bell, never before), so the exit choice grades itself
+  beside the live R. One spec and at most one trade per day (the
+  earliest trigger wins, ties to PDH; the other family's verdict —
+  no_confirm / structure_failed:why / no_trigger — is recorded on the
+  cancel row, because a structure that failed is a correct pass and the
+  workbook wants it counted). Bars: the same `rsl_book_bars` the GO
+  book persists (the two-test tick persists them itself after 11:00,
+  when v2 stops). Birth, every place at once: migration 074 (book,
+  fill_kind `cross`, the `shadow` column), the poller exclusion, the
+  audit vocabulary, scheduler ticks at :45 (after v2's :30 tick has
+  written the leader) and the 🪜 ping (`alerts/twotest_ping.py`: 🧱 per
+  level on the 5m confirmation — "watch the 1m for L1/H/L2" — 🪜 GO
+  with entry, L2 stop, TP1/TP2 with R and kind, the $250 sizing, the
+  prior; 💰 / 🔒 / 🚪 / 🔔 as the GO book; ✋ the no-trigger verdict at
+  15:00; read-only, at-most-once). `tests/test_twotest_book.py` pins
+  one-definition by source, the partial-block refusal, the machine on
+  a constructed tape (confirm → forming → trigger, the gap fill, the
+  level-lost kill), the earliest-trigger rule, the shadow, the birth,
+  and the tick end to end on a fake connection. Gate: the usual ~30;
+  first day 2026-09-18 (quad witching — a normal day to the desk,
+  stated). The candidate the two-test grades against is the eye: seven
+  GO skips, seven desk losses, −10.0R, and the entry he waited for
+  instead won on both PLTR days.
+
 ## Numbers on one line must reconcile with each other
 
 The brief's price line used a vendor `todaysChangePerc` next to a price and a
