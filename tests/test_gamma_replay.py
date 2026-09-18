@@ -110,12 +110,17 @@ def test_two_stops_halt_the_book():
 
 
 def test_build_gamma_specs_shared_rules():
-    # Load-bearing pinning board below CW → wall fade; decoration board → skip.
+    # Load-bearing pinning board below CW → wall fade on the live-board
+    # book (the morning book retired the family 2026-09-18 and refuses it
+    # by name — tests/test_desk_decisions_0918.py); decoration board → skip.
     levels = [("SPY", 636.0, 640.0, 630.0, 632.0, 2.1, "pinning"),
               ("IWM", 224.0, 226.0, 220.0, 222.0, 0.3, "pinning")]
-    specs, skips = build_gamma_specs(DAY, levels, "armed")
+    specs, skips = build_gamma_specs(DAY, levels, "armed", book="gamma_iday")
     assert any(s[4] == "wall_fade_640" for s in specs)
     assert skips and skips[0][0] == "IWM" and "below load-bearing" in skips[0][1]
+    morning, mskips = build_gamma_specs(dt.date(2026, 9, 21), levels, "armed")
+    assert not any(s[4].startswith("wall_fade") for s in morning)
+    assert any("wall_fade_640 refused" in why for _tk, why in mskips)
 
 
 def test_summarize_counts_every_trade():

@@ -105,7 +105,20 @@ BINARY_EVENTS = ("Non Farm Payrolls", "CPI", "FOMC", "Interest Rate Decision",
 # decision rule (15 classes x 30 = a year of paper); the book decides at
 # the book level with the class mix stated.
 SWING_BOOK = "swing_v2"                 # the book the writer arms
-SWING_BOOKS = ("swing", SWING_BOOK)     # every book the loop/settle manage
+SWING_V1_BOOK = "swing"                 # failed its gate 2026-09-10; flattened below
+SWING_BOOKS = (SWING_V1_BOOK, SWING_BOOK)   # every book the loop/settle manage
+# Eric's ruling 2026-09-18 ("I want to flatten swing v1"), reversing the
+# 9/10 decision to let the 83 open v1 positions ride to resolution: at the
+# first settle on/after this date every open v1 position that the final
+# bar did not already decide exits at that bar's recorded CLOSE, reason
+# 'manual', R computed from the actual entry, the ruling in the row's
+# notes. On/after (not on) so a name whose final bar is a hole that day
+# flattens the next session instead of riding forever. The settle owns
+# it, so the price is one that printed and was recorded — never refetched.
+SWING_V1_FLATTEN_DATE = dt.date(2026, 9, 21)
+SWING_V1_FLATTEN_NOTE = ("flattened at the recorded final RTH bar close per Eric's "
+                         "2026-09-18 ruling (swing v1 failed its gate 5-28 -24.5R "
+                         "on 2026-09-10; open book closed rather than ridden)")
 RETIRED_CLASSES = {
     # Declared experiments with NEGATIVE v6 priors, ridden on the promise
     # of retiring if still negative at ~30 resolved. At the book-level
@@ -446,6 +459,26 @@ GAMMA_GEOMETRY = 1.5
 # that hit small targets often; the doctrine is geometry, not hit rate.
 GAMMA_ENTRY_GEOMETRY = 1.0
 
+# Retired setup families, keyed (book, family) — refused BY NAME inside
+# build_gamma_specs so every caller (morning writer, binary shadow, the
+# replay harness) sees the same refusal with the reason in its skips.
+# 2026-09-18, Eric: "Retire wall fades" — the MORNING board's wall fades
+# graded 0-3, -2.74R (the 7:30 wall is re-labeled by the open; the
+# frozen-target study read the same physics from the other side). The
+# live-board book (gamma_iday) keeps arming them — 2-2 on its own n —
+# because the morning-vs-live head-to-head is its own gated question, and
+# retiring one side of it by the other's record would settle it by fiat.
+RETIRED_GAMMA_FAMILIES = {
+    # (book, family): (effective trade_date, reason). Dated so the replay
+    # harness and the binary shadow grade history under the rule that
+    # was live on each day — a retirement is a convention change and
+    # ships with its date, never rewrites the record before it.
+    ("gamma", "wall_fade"): (dt.date(2026, 9, 21),
+                            "RETIRED 2026-09-18 (Eric): morning-board wall "
+                            "fades 0-3, -2.74R; flip-holds stay; gamma_iday "
+                            "wall fades ride on their own n"),
+}
+
 
 def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
     """Playbook rules → paper_specs rows. The single source of truth: the live
@@ -459,6 +492,16 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
     skips are (ticker, reason) so "no spec" is always explainable.
     """
     specs, skips = [], []
+
+    def _emit(family, spec):
+        """A retired (book, family) lands in skips with its reason — the
+        refusal is recorded beside the arms, never silent."""
+        since, why = RETIRED_GAMMA_FAMILIES.get((book, family), (None, None))
+        if since is not None and trade_date >= since:
+            skips.append((spec[2], f"{spec[4]} refused — {why}"))
+        else:
+            specs.append(spec)
+
     for tk, spot, cw, pw, flip, gex, regime in levels:
         spot, cw, pw = float(spot), float(cw or 0), float(pw or 0)
         flip = float(flip) if flip is not None else None
@@ -476,20 +519,22 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
             tgt = max(flip or 0, (cw + pw) / 2 if pw else 0)
             stop = round(cw * 1.0015, 2)
             if tgt and (cw - tgt) >= GAMMA_GEOMETRY * (stop - cw):
-                specs.append((trade_date, book, tk, "short", f"wall_fade_{_qlvl(cw):g}",
-                              cw, stop, round(tgt, 2), status,
-                              f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
-                              f"entry=15m close back under wall after touch; "
-                              f"stop=15m close beyond {stop}; target {tgt:g}"))
+                _emit("wall_fade",
+                      (trade_date, book, tk, "short", f"wall_fade_{_qlvl(cw):g}",
+                       cw, stop, round(tgt, 2), status,
+                       f"first-touch fade at {cw:g} CW, {gex:+.1f}bn pinning; "
+                       f"entry=15m close back under wall after touch; "
+                       f"stop=15m close beyond {stop}; target {tgt:g}"))
         # Flip-hold long (pinning, flip below spot, room to CW).
         if regime == "pinning" and flip and cw and flip < spot < cw:
             stop = round(flip * 0.9985, 2)
             if (cw - flip) >= GAMMA_GEOMETRY * (flip - stop):
-                specs.append((trade_date, book, tk, "long", f"flip_hold_{_qlvl(flip):g}",
-                              flip, stop, cw, status,
-                              f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
-                              f"entry=touch then 15m close back above flip; "
-                              f"stop=15m close under {stop}; target CW {cw:g}"))
+                _emit("flip_hold",
+                      (trade_date, book, tk, "long", f"flip_hold_{_qlvl(flip):g}",
+                       flip, stop, cw, status,
+                       f"flip-hold long at {flip:g} ({gex:+.1f}bn pinning); "
+                       f"entry=touch then 15m close back above flip; "
+                       f"stop=15m close under {stop}; target CW {cw:g}"))
         # Slippery stack fade: CW and flip within 0.5% = the stack.
         if regime == "slippery" and flip and cw and spot < min(flip, cw) \
                 and abs(cw - flip) / flip <= 0.005:
@@ -497,10 +542,11 @@ def build_gamma_specs(trade_date, levels, status="armed", book="gamma"):
             stop = round(stack * 1.0015, 2)
             tgt = round(spot - (stack - spot), 2)  # symmetric room, capped by geometry
             if (stack - tgt) >= GAMMA_GEOMETRY * (stop - stack):
-                specs.append((trade_date, book, tk, "short", f"stack_fade_{_qlvl(stack):g}",
-                              stack, stop, tgt, status,
-                              f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
-                              f"counter-trend entry, with-trend hold"))
+                _emit("stack_fade",
+                      (trade_date, book, tk, "short", f"stack_fade_{_qlvl(stack):g}",
+                       stack, stop, tgt, status,
+                       f"slippery stack fade {stack:g} (CW+flip, {gex:+.1f}bn); "
+                       f"counter-trend entry, with-trend hold"))
     return specs, skips
 
 
@@ -539,7 +585,7 @@ def write_morning_specs():
                          ORDER BY ticker, computed_at DESC""", (VENUE,))
             gamma_specs, skips = build_gamma_specs(today, c.fetchall(), status)
             for tk, why_skip in skips:
-                log.info("[paper] %s: no gamma spec — %s", tk, why_skip)
+                log.info("[paper] %s: gamma skip — %s", tk, why_skip)
             # The cipher was studied on structure breakouts, not gamma
             # mechanics — gamma specs carry no cipher or sector tag,
             # deliberately (index/mega-cap venues aren't sector trades).
@@ -1165,11 +1211,25 @@ def swing_settle_decision(direction: str, stop: float, target: float, final_bar)
     return None, None
 
 
+def swing_v1_flatten_decision(book: str, today: dt.date, final):
+    """Pure (2026-09-18 ruling). After the rule-based settle found no exit
+    on the final bar: a v1 position on/after the flatten date exits at
+    that bar's close, reason 'manual'; every other book, every earlier
+    date → (None, None). `final` = (ts, open, close, high, low) — the
+    recorded closing bar the settle already validated."""
+    if book == SWING_V1_BOOK and today >= SWING_V1_FLATTEN_DATE:
+        return float(final[2]), "manual"
+    return None, None
+
+
 def run_swing_close_settle():
     """Post-close settling pass (~16:20 ET, after the 16:07 closing-bar
     persist): decide open swing positions on the day's RECORDED final RTH
     bar. Reads paper_spec_bars only — never refetches (reconstruction is
-    not tape); a missing final bar is a logged hole, not a decision."""
+    not tape); a missing final bar is a logged hole, not a decision.
+    From 2026-09-21 the same pass FLATTENS swing v1 (Eric's 9/18 ruling)
+    at the same recorded bar — a stop or target on that bar still books
+    as what it is; only the undecided remainder is a 'manual' flatten."""
     now = dt.datetime.now(ET)
     if now.weekday() >= 5 or now.time() < dt.time(16, 10):
         return
@@ -1178,12 +1238,12 @@ def run_swing_close_settle():
     try:
         with conn.cursor() as c:
             c.execute("""SELECT s.ticker, s.direction, s.stop, s.target,
-                                t.id, t.entry_px, t.entered_at
+                                t.id, t.entry_px, t.entered_at, s.book
                          FROM paper_specs s JOIN paper_trades t ON t.spec_id=s.id
                          WHERE s.book = ANY(%s) AND t.exited_at IS NULL""",
                       (list(SWING_BOOKS),))
             rows = c.fetchall()
-        for tk, direction, stop, tgt, tid, entry_px, entered_at in rows:
+        for tk, direction, stop, tgt, tid, entry_px, entered_at, book in rows:
             stop, tgt, entry_px = float(stop), float(tgt), float(entry_px)
             with conn.cursor() as c:
                 c.execute("""SELECT ts, open, close, high, low FROM paper_spec_bars
@@ -1202,18 +1262,29 @@ def run_swing_close_settle():
                     final[0] + dt.timedelta(minutes=15) <= entered_at:
                 continue
             exit_px, reason = swing_settle_decision(direction, stop, tgt, final)
+            note = None
+            if exit_px is None:
+                exit_px, reason = swing_v1_flatten_decision(book, today, final)
+                note = SWING_V1_FLATTEN_NOTE if exit_px is not None else None
             if exit_px is None:
                 continue
             sign = 1 if direction == "long" else -1
             r_dist = abs(entry_px - stop) or 0.01
             r_mult = round(sign * (exit_px - entry_px) / r_dist, 2)
             with conn.cursor() as c:
-                c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
-                             exit_reason=%s, r_multiple=%s WHERE id=%s""",
-                          (exit_px, reason, r_mult, tid))
+                if note:
+                    c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
+                                 exit_reason=%s, r_multiple=%s,
+                                 notes = concat_ws(' | ', notes, %s) WHERE id=%s""",
+                              (exit_px, reason, r_mult, note, tid))
+                else:
+                    c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
+                                 exit_reason=%s, r_multiple=%s WHERE id=%s""",
+                              (exit_px, reason, r_mult, tid))
             conn.commit()
-            log.info("[paper] SETTLE-EXIT swing %s %s @ %.2f (%s, %+.2fR) — "
-                     "true daily close", tk, direction, exit_px, reason, r_mult)
+            log.info("[paper] SETTLE-EXIT %s %s %s @ %.2f (%s, %+.2fR) — "
+                     "%s", book, tk, direction, exit_px, reason, r_mult,
+                     "FLATTEN per 2026-09-18 ruling" if note else "true daily close")
     finally:
         conn.close()
 

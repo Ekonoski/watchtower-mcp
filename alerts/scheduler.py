@@ -2850,6 +2850,20 @@ def start_scheduler():
         except Exception as e:
             log.warning(f"[scheduler] tapebot retest seed skipped: {e}")
 
+    def _seed_daybias_reclaim():
+        """The day-bias early-touch-RECLAIM study (ordered 2026-09-18 when
+        Eric ruled day_bias stops counting as a book): the queued variant
+        graded on the stored SPY/QQQ 15m record through the book's own
+        decide(). Marker-retired one-shot; writes only
+        daybias_reclaim_events."""
+        try:
+            from analysis.daybias_reclaim_study import run
+            for _ in range(3):
+                if run():
+                    break
+        except Exception as e:
+            log.warning(f"[scheduler] daybias reclaim seed skipped: {e}")
+
     def _seed_all():
         try:
             from analysis.options_picker import entitlement_probe
@@ -2890,6 +2904,7 @@ def start_scheduler():
         _seed_reddot()
         _seed_greendot_sweep()
         _seed_tapebot_retest()
+        _seed_daybias_reclaim()
         try:
             from analysis.index_bars_daily import run as _idx_append
             _idx_append()   # refresh the index 15m record BEFORE the
