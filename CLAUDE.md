@@ -2824,6 +2824,25 @@ Rendering doctrine, same spirit as the rest of this file:
   reclaim.py` pins the event (lost-then-reclaimed, wick-held apart,
   pre-10:30 closes refused, no_reclaim, the close-rule stop, non-
   cancelled days → None) and one-definition / writes-own-table.
+  READOUT (same night, the study completed in three seconds at the
+  23:47 boot): SPY 5,462 days → 657 cancelled_early (12%), 520 of them
+  reclaimed by a ≥10:30 close, 137 never; QQQ 3,896 → 483 / 358 / 125.
+  The lost_close reclaim (level lost on a close, then regained): SPY
+  +7.4 bps / 59.1% pre-2016 (n=176) and +3.6 / 55.7% post-2016
+  (n=176), MFE +38/+35 vs MAE −41/−41; QQQ +5.7 / 49.3% (n=69, median
+  0.0) and +4.5 / 56.1% (n=173), MFE +36/+45 vs MAE −36/−51. The
+  0.75% close-rule stop fires 6–13% and changes nothing (+4.9 / +6.6
+  bps). The wick-held cohort is the same picture (SPY −5.0 / +1.0,
+  QQQ +10.1 / +8.8, n=36–98). Stated plainly: the pre-registered SIGN
+  test passes (positive averages in both eras, QQQ agrees in
+  direction), and the trade is still a coin flip — 55–59% with MAE at
+  or above MFE is the shape of the early-flush bucket the cancel
+  exists to avoid, and +3.6 bps post-2016 is a tenth of the late
+  retest's +27 / 69% / MFE~2×MAE and inside costs. Recommendation: NOT
+  adopted as a second entry; cancelled_early days stay untraded and
+  the cancel stands vindicated on substance if not on sign. Eric
+  rules; the rows stay in `daybias_reclaim_events` for any later cut
+  (time of reclaim, day type) that wants to argue with them at n.
   (4) **rs_leader_v2 is the CONTROL and two_test is the CANDIDATE for
   three weeks** — flat review on or about 2026-10-09 (a reminder is
   scheduled), then keep one: the same 9:45 leader, the GO entry vs the
