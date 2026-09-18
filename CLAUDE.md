@@ -2869,6 +2869,28 @@ Rendering doctrine, same spirit as the rest of this file:
   after the date, the bar decides first, `manual` legal), the dated
   wall-fade retirement (morning refuses, live board keeps, history
   replays under its own rule), and the scoreboard's measurement line.
+  Same night, two more things Eric said, answered plainly: (a) "I'm not
+  sure you're able to mechanically execute the trades" — correct in the
+  sense that matters: the desk executes PAPER trades mechanically from
+  recorded bars (fills, partials, stops, settles — every book), and
+  there is NO brokerage connection anywhere in this system; every real
+  trade is his hand on his broker. Autonomous live execution is a
+  separate build (broker API, order state, kill switches, the audit
+  layer pointed at real fills) that no gate has yet earned, and nothing
+  here should be read as if it existed. (b) **Grok is PAUSED**: "stop
+  the system temporarily that pulls from grok api... it's just wasting
+  money." `GROK_ENABLED` in `analysis/grok_client.py`, default OFF —
+  every construction raises with the pause reason (logged once per
+  boot); the news classifier falls back to keywords, social buzz and
+  the screen/analyze syntheses render *unavailable*, and the daily
+  social scan writes NO placeholder rows while paused (a neutral/0.0
+  upsert would render as today's sentiment — the format_buzz rule).
+  Resume = `GROK_ENABLED=on` in Railway, no deploy. Stated cost of the
+  pause: hourly news alerts lose the Grok classification and the
+  catalyst-vs-technicals synthesis; the `social_buzz` table stops
+  updating (its rows carry their own date, so staleness is visible).
+  `tests/test_grok_pause.py` pins default-off, the switch preceding the
+  key check, every caller's fallback, and the no-placeholder rule.
 
 ## Numbers on one line must reconcile with each other
 
