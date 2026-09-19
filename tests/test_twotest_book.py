@@ -181,6 +181,8 @@ class _Cur:
 
     def fetchone(self):
         s = self._last
+        if "INSERT INTO paper_trades" in s:
+            return (1,)
         if s.startswith("SELECT id, ticker, status, stop, levels FROM paper_specs"):
             return self.conn.spec
         if s.startswith("SELECT ticker, status FROM paper_specs"):

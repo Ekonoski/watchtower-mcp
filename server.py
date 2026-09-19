@@ -2828,6 +2828,16 @@ def _is_scheduler_owner() -> bool:
     except Exception:
         return True  # default to starting if lock check fails
 
+# Fail startup visibly before any scheduler can mutate a paper trade.
+# The migration is serialized/idempotent across workers and never backfills.
+from analysis.fills_audit import ensure_schema as _ensure_fills_audit_schema
+from analysis.paper_trader import get_db_connection as _paper_db_connection
+_audit_boot_conn = _paper_db_connection()
+try:
+    _ensure_fills_audit_schema(_audit_boot_conn)
+finally:
+    _audit_boot_conn.close()
+
 if _is_scheduler_owner():
     try:
         from alerts.scheduler import start_scheduler

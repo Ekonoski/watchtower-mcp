@@ -31,6 +31,8 @@ paper, underlying bps, beside the swing and gamma books.
 import datetime as dt
 import logging
 
+from analysis.fills_audit import record_entry, record_exit
+
 log = logging.getLogger("watchtower.day_bias")
 
 BOOK = "day_bias"
@@ -169,10 +171,15 @@ def run_daybias_loop():
                     c.execute("""INSERT INTO paper_trades
                         (spec_id, entered_at, entry_px, fill_kind,
                          confirm_status)
-                        VALUES (%s,%s,%s,'touch','n/a')""",
+                        VALUES (%s,%s,%s,'touch','n/a')
+                        RETURNING id""",
                         (sid, res["at"], res["entry"]))
+                    tid_new = c.fetchone()[0]
                     c.execute("UPDATE paper_specs SET status='triggered' "
                               "WHERE id=%s", (sid,))
+                    record_entry(c, tid_new, BOOK, TICKER, res["entry"],
+                                 fill_kind="touch", expected_px=trig,
+                                 evidence={"state": res["state"]})
                 conn.commit()
                 log.info(f"[day-bias] ENTER {TICKER} @ {res['entry']:g} "
                          f"({res['at']})")
@@ -183,8 +190,14 @@ def run_daybias_loop():
             with conn.cursor() as c:
                 c.execute("""UPDATE paper_trades SET exited_at=%s,
                              exit_px=%s, exit_reason='stop', r_multiple=%s
-                             WHERE spec_id=%s AND exited_at IS NULL""",
+                             WHERE spec_id=%s AND exited_at IS NULL
+                             RETURNING id""",
                           (res["stop_at"], res["stop_px"], r, sid))
+                row = c.fetchone()
+                if row:
+                    record_exit(c, row[0], BOOK, TICKER, res["stop_px"],
+                                expected_px=res["stop"],
+                                evidence={"exit_reason": "stop"})
             conn.commit()
             log.info(f"[day-bias] STOP {TICKER} @ {res['stop_px']:g}")
     finally:
@@ -233,6 +246,8 @@ def run_daybias_settle():
                 c.execute("""UPDATE paper_trades SET exited_at=now(),
                              exit_px=%s, exit_reason='eod_flat',
                              r_multiple=%s WHERE id=%s""", (close, rm, tid))
+                record_exit(c, tid, BOOK, TICKER, close,
+                            evidence={"exit_reason": "eod_flat"})
             conn.commit()
             log.info(f"[day-bias] EOD {TICKER} @ {close:g} "
                      f"({(close-entry)/entry*10000:+.1f}bps)")

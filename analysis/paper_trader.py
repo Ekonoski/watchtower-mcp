@@ -50,6 +50,7 @@ import zoneinfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from screen.reversal_screen import _conn as get_db_connection  # noqa: E402
+from analysis.fills_audit import record_entry, record_exit  # noqa: E402
 from analysis.polygon_data import fetch_recent_bars  # noqa: E402
 
 log = logging.getLogger("watchtower.paper")
@@ -126,14 +127,21 @@ RETIRED_CLASSES = {
     # book failed — three strikes, retired with v1 (2026-09-10).
     ("higher_low", "daily"): "v6 prior -0.06R; live 1-7 (-6.2R) at the v1 gate",
     ("double_bottom", "daily"): "v6 prior -0.19R; live 2-5 (-3.4R) at the v1 gate",
+    # 2026-09-18 Captain pause — stop-tax. Desk blocked without it.
+    # Refused by name like the neckline retirements; open specs ride.
+    ("ema_bounce", "weekly"): (
+        "2026-09-18 Captain pause — stop-tax "
+        "(retest_ema_bounce_weekly); prior stands, live book paused"),
+    ("asc_triangle", "daily"): (
+        "2026-09-18 Captain pause — stop-tax "
+        "(retest_asc_triangle_daily); prior stands, live book paused"),
 }
 SWING_CLASSES = (
     ("higher_low", "weekly"),
     ("double_bottom", "weekly"),
     ("inverse_hs", "weekly"), ("inverse_hs", "daily"),
-    ("asc_triangle", "weekly"), ("asc_triangle", "daily"),
+    ("asc_triangle", "weekly"),
     ("bull_flag", "weekly"), ("bull_flag", "daily"),
-    ("ema_bounce", "weekly"),
     # Added 2026-08-10 on the v6 read (Eric): weekly-only — each positive
     # at scale (see table above). Their daily twins stay out: +0.01 to
     # +0.09 edges are too thin to spend capped book slots on, and the
@@ -1271,6 +1279,7 @@ def run_swing_close_settle():
             sign = 1 if direction == "long" else -1
             r_dist = abs(entry_px - stop) or 0.01
             r_mult = round(sign * (exit_px - entry_px) / r_dist, 2)
+            expected = stop if reason == "stop" else (tgt if reason == "target" else None)
             with conn.cursor() as c:
                 if note:
                     c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
@@ -1281,6 +1290,12 @@ def run_swing_close_settle():
                     c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
                                  exit_reason=%s, r_multiple=%s WHERE id=%s""",
                               (exit_px, reason, r_mult, tid))
+                record_exit(c, tid, book, tk, exit_px,
+                            expected_px=expected,
+                            gap_through=reason == "target" and exit_px != tgt,
+                            bar={"ts": final[0].isoformat(), "open": final[1],
+                                 "close": final[2], "high": final[3], "low": final[4]},
+                            evidence={"exit_reason": reason})
             conn.commit()
             log.info("[paper] SETTLE-EXIT %s %s %s @ %.2f (%s, %+.2fR) — "
                      "%s", book, tk, direction, exit_px, reason, r_mult,
@@ -1424,9 +1439,15 @@ def run_trigger_loop():
                         c.execute("""INSERT INTO paper_trades (spec_id, entered_at, entry_px,
                                      fill_kind, confirm_px, confirm_at, confirm_status,
                                      entry_bar)
-                                     VALUES (%s, now(), %s, %s, %s, %s, %s, %s::jsonb)""",
+                                     VALUES (%s, now(), %s, %s, %s, %s, %s, %s::jsonb)
+                                     RETURNING id""",
                                   (sid, entry_fill, kind, cpx, cts, cstat, ebar))
+                        tid_new = c.fetchone()[0]
                         c.execute("UPDATE paper_specs SET status='triggered' WHERE id=%s", (sid,))
+                        record_entry(c, tid_new, book, tk, entry_fill,
+                                     fill_kind=kind, expected_px=trig, bar=ebar,
+                                     evidence={"setup": setup, "direction": direction,
+                                               "confirm_status": cstat})
                     conn.commit()
                     log.info("[paper] ENTER %s %s %s @ %.2f (%s, %s, shadow=%s)",
                              book, tk, direction, entry_fill, setup, kind, cstat)
@@ -1470,10 +1491,17 @@ def run_trigger_loop():
                     exit_px, reason = close, "eod_flat"
                 if exit_px is not None:
                     r_mult = round(sign * (exit_px - entry_px) / r_dist, 2)
+                    expected = stop if reason == "stop" else (tgt if reason == "target" else None)
                     with conn.cursor() as c:
                         c.execute("""UPDATE paper_trades SET exited_at=now(), exit_px=%s,
                                      exit_reason=%s, r_multiple=%s WHERE id=%s""",
                                   (exit_px, reason, r_mult, tid))
+                        record_exit(c, tid, book, tk, exit_px,
+                                    expected_px=expected,
+                                    gap_through=reason == "target" and exit_px != tgt,
+                                    bar={"ts": ts.isoformat(), "open": op_, "close": close,
+                                         "high": hi, "low": lo},
+                                    evidence={"exit_reason": reason})
                     conn.commit()
                     log.info("[paper] EXIT %s %s %s @ %.2f (%s, %+.2fR)",
                              book, tk, direction, exit_px, reason, r_mult)

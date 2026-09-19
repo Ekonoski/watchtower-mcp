@@ -20,9 +20,11 @@ the stored 15m tape:
     kept only one of them.
 
 This one-shot job (marker fill_audit_v1) pulls the 1-MINUTE tape for the
-windows in question and writes verdicts + evidence to fill_audit. It is
-research verification of the record — reconstruction-is-not-tape governs
-LIVE grading, and by signature this module cannot write the books.
+windows in question and writes verdicts + evidence to fill_audit
+(singular). The live fill-provenance ledger is fills_audit (plural) —
+do not write it here. This job is research verification of the record
+— reconstruction-is-not-tape governs LIVE grading, and by signature
+this module cannot write the books.
 Going forward the question class dies at the source: every new fill
 stamps paper_trades.entry_bar with the exact bar(s) its decision read.
 """

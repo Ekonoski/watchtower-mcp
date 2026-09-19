@@ -313,6 +313,8 @@ class _Cur:
         self._last = " ".join(sql.split())
 
     def fetchone(self):
+        if "INSERT INTO paper_trades" in self._last:
+            return (1,)
         if "FROM paper_specs WHERE book=" in self._last:
             return self.conn.spec
         if "FROM paper_trades WHERE spec_id=" in self._last:
