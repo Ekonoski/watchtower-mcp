@@ -11,14 +11,18 @@
   4. fill_audit (singular) stays the forensic Q&A table; this module
      does not write it, and that module does not write fills_audit.
 """
-import inspect
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from analysis.fills_audit import (INSERT_SQL, record_entry,  # noqa: E402
                                   record_exit)
+
+
+def _read(rel):
+    return open(os.path.join(ROOT, rel)).read()
 
 
 class _Cur:
@@ -133,37 +137,33 @@ def test_fills_audit_entry_rolled_back_if_audit_fails():
 
 
 def test_four_writers_same_txn_by_source():
-    from analysis import day_bias, paper_trader, rs_leader_book, twotest_book
-    fns = (
-        paper_trader.run_trigger_loop,
-        paper_trader.run_swing_close_settle,
-        rs_leader_book.run_rsl_tick,
-        twotest_book.run_tt_tick,
-        day_bias.run_daybias_loop,
-        day_bias.run_daybias_settle,
+    files = (
+        "analysis/paper_trader.py",
+        "analysis/rs_leader_book.py",
+        "analysis/twotest_book.py",
+        "analysis/day_bias.py",
     )
     saw_entry = saw_exit = 0
-    for fn in fns:
-        src = inspect.getsource(fn)
+    for rel in files:
+        src = _read(rel)
         for block in src.split("conn.commit()"):
             if "INSERT INTO paper_trades" in block:
-                assert "record_entry(" in block, fn.__name__
-                assert "RETURNING id" in block, fn.__name__
+                assert "record_entry(" in block, rel
+                assert "RETURNING id" in block, rel
                 saw_entry += 1
             if ("UPDATE paper_trades" in block
                     and "exited_at" in block
                     and "SET legs=" not in block
                     and "SET shadow=" not in block):
-                assert "record_exit(" in block, fn.__name__
+                assert "record_exit(" in block, rel
                 saw_exit += 1
     assert saw_entry == 4, saw_entry          # one INSERT path per writer
     assert saw_exit >= 4, saw_exit            # loop + settle on paper/day_bias
 
 
 def test_singular_fill_audit_stays_forensic():
-    from analysis import fill_audit, fills_audit
-    assert "INSERT INTO fills_audit" not in inspect.getsource(fill_audit)
-    src = inspect.getsource(fills_audit)
+    assert "INSERT INTO fills_audit" not in _read("analysis/fill_audit.py")
+    src = _read("analysis/fills_audit.py")
     assert "INSERT INTO paper_trades" not in src
     assert "UPDATE paper_trades" not in src
     assert INSERT_SQL.startswith("INSERT INTO fills_audit")

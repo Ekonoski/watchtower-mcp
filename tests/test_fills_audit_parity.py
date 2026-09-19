@@ -105,13 +105,15 @@ def test_fills_audit_gap_report_counts_by_book():
         "missing_entry": 0, "missing_exit": 0, "complete": 1,
     }
     # report-only structure: no pooled score the desk could mistake
-    # for a single gap rate
+    # for a single gap rate. gamma is missing one exit; swing is
+    # missing a whole closed trade — those stay separate numbers.
     for banned in ("pooled", "overall", "score", "total"):
         assert banned not in report
-    # a caller who sums books is inventing a number — the structure
-    # keeps them apart so that sum is not the interface
-    assert report["gamma"]["missing_exit"] != report["swing"]["missing_exit"] \
-        or report["gamma"]["n_trades"] != report["swing"]["n_trades"]
+    gamma_holes = (report["gamma"]["missing_entry"]
+                   + report["gamma"]["missing_exit"])
+    swing_holes = (report["swing"]["missing_entry"]
+                   + report["swing"]["missing_exit"])
+    assert gamma_holes == 1 and swing_holes == 2
 
 
 def test_backfill_inferred_does_not_invent_pnl():
