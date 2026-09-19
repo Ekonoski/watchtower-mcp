@@ -219,14 +219,48 @@ function setSeat(id, activeMins, lastIso, html){
   document.getElementById('m-'+id).innerHTML=html;
 }
 
+let feedTimer = null;
+let refreshing = false;
+
+function clearFeed(){
+  // A lost feed must not leave old positions/prices looking current.
+  for(const id of ['tape','books','specs','squawk','plaque'])
+    document.getElementById(id).textContent='Data unavailable';
+  for(const s of SEATS){
+    document.getElementById('m-'+s.id).textContent='Data unavailable';
+    document.getElementById('sp-'+s.id).classList.remove('active','zz');
+  }
+  document.getElementById('shrine').classList.remove('winning');
+  document.getElementById('printer').classList.remove('printing');
+}
+
+function startFeed(){
+  if(feedTimer === null) feedTimer=setInterval(refresh,60000);
+  return refresh();
+}
+
 async function refresh(){
+  if(refreshing) return;
+  refreshing=true;
   let d;
   try{ const r=await fetch('/api/deskfloor');
-    if(r.status===401){ document.getElementById('err').innerHTML=
-      'not logged in — open <a href="/dashboard">/dashboard</a> first.'; return; }
+    if(r.status===401){
+      clearInterval(feedTimer); feedTimer=null;
+      clearFeed();
+      document.getElementById('err').innerHTML=
+        'Session unavailable. <a href="/dashboard" target="_blank" rel="noopener">Sign in</a>, '+
+        'then <button id="resume-feed">Resume updates</button>. Updates are paused.';
+      document.getElementById('resume-feed').onclick=startFeed;
+      return;
+    }
+    if(!r.ok) throw new Error('HTTP '+r.status);
     d=await r.json(); if(d.error) throw new Error(d.error);
     document.getElementById('err').textContent='';
-  }catch(e){ document.getElementById('err').textContent='feed error: '+e.message; return; }
+  }catch(e){
+    clearFeed();
+    document.getElementById('err').textContent='Feed unavailable: '+e.message+' — retrying in one minute.';
+    return;
+  }finally{ refreshing=false; }
 
   const jobs=d.jobs||[];
   const pick=pats=>{ for(const p of pats){
@@ -336,6 +370,6 @@ function tick(){
   document.getElementById('session').textContent=lbl;
 }
 buildDesks(); setInterval(tick,1000); tick();
-refresh(); setInterval(refresh,60000);
+startFeed();
 </script>
 </body></html>
