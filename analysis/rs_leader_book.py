@@ -62,6 +62,7 @@ import datetime as dt
 import json
 import logging
 
+from analysis.fills_audit import record_entry, record_exit
 from analysis.hybrid_exit_study import _ema as ema5
 from analysis.hybrid_exit_study import _res5 as res5
 from analysis.rsleader_study import (ENTRY_CUTOFF, MEASURE, RS_MIN, TICKERS,
@@ -518,8 +519,10 @@ def run_rsl_tick():
                     c.execute("""INSERT INTO paper_trades
                         (spec_id, entered_at, entry_px, fill_kind,
                          confirm_status)
-                        VALUES (%s,%s,%s,'close','n/a')""",
+                        VALUES (%s,%s,%s,'close','n/a')
+                        RETURNING id""",
                         (sid, bars[i][0], round(entry, 4)))
+                    tid_new = c.fetchone()[0]
                     c.execute("""UPDATE paper_specs SET status='triggered',
                                  entry_trigger=%s, stop=%s, target=%s,
                                  levels=%s::jsonb,
@@ -527,6 +530,13 @@ def run_rsl_tick():
                                  WHERE id=%s""",
                               (round(entry, 4), round(stop, 4), target,
                                json.dumps(lv), tp_txt, sid))
+                    go = bars[i]
+                    record_entry(c, tid_new, BOOK, ticker, round(entry, 4),
+                                 fill_kind="close", expected_px=round(entry, 4),
+                                 bar={"ts": go[0].isoformat(), "open": go[1],
+                                      "high": go[2], "low": go[3],
+                                      "close": go[4]},
+                                 evidence={"stop": round(stop, 4)})
                 conn.commit()
                 log.info(f"[rsl-book] ENTER {ticker} @ {entry:.4f} "
                          f"({bars[i][0]}){tp_txt}")
@@ -570,6 +580,10 @@ def run_rsl_tick():
                                  WHERE id=%s AND exited_at IS NULL""",
                               (ts, round(px, 4), reason, r, json.dumps(legs),
                                tid))
+                    record_exit(c, tid, BOOK, ticker, round(px, 4),
+                                expected_px=round(stop_lvl, 4) if reason in
+                                ("stop", "disaster") else None,
+                                evidence={"exit_reason": reason})
                 conn.commit()
                 log.info(f"[rsl-book] EXIT {ticker} {reason} @ {px:.4f} "
                          f"legs={legs}")

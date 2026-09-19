@@ -52,6 +52,7 @@ import datetime as dt
 import json
 import logging
 
+from analysis.fills_audit import record_entry, record_exit
 from analysis.rs_leader_book import BOOK as RSL_BOOK
 from analysis.rs_leader_book import (_persist_1m, describe_levels, label,
                                      legs_json, level_inputs,
@@ -273,14 +274,26 @@ def run_tt_tick():
                 with conn.cursor() as c:
                     c.execute("""INSERT INTO paper_trades
                         (spec_id, entered_at, entry_px, fill_kind, confirm_status)
-                        VALUES (%s,%s,%s,'cross','n/a')""",
+                        VALUES (%s,%s,%s,'cross','n/a')
+                        RETURNING id""",
                         (sid, bars[j][0], round(entry, 4)))
+                    tid_new = c.fetchone()[0]
                     c.execute("""UPDATE paper_specs SET status='triggered',
                                  entry_trigger=%s, stop=%s, target=%s,
                                  setup=%s, levels=%s::jsonb,
                                  rationale = rationale || %s WHERE id=%s""",
                               (round(entry, 4), round(stop, 4), target,
                                f"tt_{trig['family']}", json.dumps(lv2), txt, sid))
+                    tb = bars[j]
+                    record_entry(c, tid_new, BOOK, ticker, round(entry, 4),
+                                 fill_kind="cross", expected_px=trig["h"],
+                                 gap_through=bool(trig["gap_fill"]),
+                                 bar={"ts": tb[0].isoformat(), "open": tb[1],
+                                      "high": tb[2], "low": tb[3],
+                                      "close": tb[4]},
+                                 evidence={"family": trig["family"],
+                                           "h": trig["h"], "l2": trig["l2"],
+                                           "gap_fill": trig["gap_fill"]})
                 conn.commit()
                 log.info(f"[tt-book] ENTER {ticker} @ {entry:.4f} ({bars[j][0]}){txt}")
                 return
@@ -323,6 +336,10 @@ def run_tt_tick():
                                  exit_reason=%s, r_multiple=%s, legs=%s::jsonb
                                  WHERE id=%s AND exited_at IS NULL""",
                               (ts, round(px, 4), reason, r, json.dumps(legs), tid))
+                    record_exit(c, tid, BOOK, ticker, round(px, 4),
+                                expected_px=round(stop_lvl, 4) if reason in
+                                ("stop", "disaster") else None,
+                                evidence={"exit_reason": reason})
                 conn.commit()
                 log.info(f"[tt-book] EXIT {ticker} {reason} @ {px:.4f} legs={legs}")
             elif legs and legs != (legs_db or []):
