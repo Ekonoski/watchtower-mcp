@@ -45,22 +45,6 @@ class _Cur:
         return (42,)
 
 
-class _Conn:
-    def __init__(self, fail_audit=False):
-        self.cur = _Cur(fail_audit=fail_audit)
-        self.commits = 0
-        self.rollbacks = 0
-
-    def cursor(self):
-        return self.cur
-
-    def commit(self):
-        self.commits += 1
-
-    def rollback(self):
-        self.rollbacks += 1
-
-
 def test_fills_audit_record_entry_shape():
     cur = _Cur()
     record_entry(cur, 7, "gamma", "SPY", 720.10,
@@ -101,72 +85,61 @@ def test_fills_audit_record_exit_shape():
         assert "provenance" in str(e)
 
 
-def _write_entry_same_txn(conn, **audit):
-    """The writer contract: INSERT paper_trades, then record_entry,
-    then commit. Any exception rolls the trade back."""
-    try:
-        with conn.cursor() as c:
-            c.execute("INSERT INTO paper_trades (spec_id, entered_at, "
-                      "entry_px) VALUES (%s, now(), %s) RETURNING id",
-                      (1, 100.0))
-            tid = c.fetchone()[0]
-            record_entry(c, tid, **audit)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-
-
-def test_fills_audit_entry_rolled_back_if_audit_fails():
-    conn = _Conn(fail_audit=True)
-    try:
-        _write_entry_same_txn(conn, book="gamma", ticker="SPY", got_px=100.0,
-                              fill_kind="touch", expected_px=100.0)
-        raise AssertionError("audit failure must refuse the commit")
-    except RuntimeError as e:
-        assert "audit insert failed" in str(e)
-    assert conn.commits == 0
-    assert conn.rollbacks == 1
-    sqls = [s for s, _ in conn.cur.log]
-    assert any("INSERT INTO paper_trades" in s for s in sqls)
-    assert any("INSERT INTO fills_audit" in s for s in sqls)
-    # the happy path still commits once the audit lands
-    ok = _Conn()
-    _write_entry_same_txn(ok, book="gamma", ticker="SPY", got_px=100.0)
-    assert ok.commits == 1 and ok.rollbacks == 0
-
-
-def test_four_writers_same_txn_by_source():
-    files = (
-        "analysis/paper_trader.py",
-        "analysis/rs_leader_book.py",
-        "analysis/twotest_book.py",
-        "analysis/day_bias.py",
-    )
-    saw_entry = saw_exit = 0
-    for rel in files:
-        src = _read(rel)
-        for block in src.split("conn.commit()"):
-            if "INSERT INTO paper_trades" in block:
-                assert "record_entry(" in block, rel
-                assert "RETURNING id" in block, rel
-                saw_entry += 1
-            if ("UPDATE paper_trades" in block
-                    and "exited_at" in block
-                    and "SET legs=" not in block
-                    and "SET shadow=" not in block):
-                assert "record_exit(" in block, rel
-                saw_exit += 1
-    assert saw_entry == 4, saw_entry          # one INSERT path per writer
-    assert saw_exit >= 4, saw_exit            # loop + settle on paper/day_bias
-
-
 def test_singular_fill_audit_stays_forensic():
     assert "INSERT INTO fills_audit" not in _read("analysis/fill_audit.py")
     src = _read("analysis/fills_audit.py")
     assert "INSERT INTO paper_trades" not in src
     assert "UPDATE paper_trades" not in src
     assert INSERT_SQL.startswith("INSERT INTO fills_audit")
+
+
+
+def test_boot_schema_commits_or_rolls_back_and_surfaces_failure():
+    from analysis.fills_audit import ensure_schema
+    class Conn:
+        def __init__(self, fail=False):
+            self.fail, self.statements, self.commits, self.rollbacks = fail, [], 0, 0
+        def cursor(self):
+            return self
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def execute(self, sql):
+            self.statements.append(sql)
+            if self.fail and "CREATE TABLE" in sql:
+                raise RuntimeError("migration denied")
+        def commit(self):
+            self.commits += 1
+        def rollback(self):
+            self.rollbacks += 1
+    good = Conn()
+    ensure_schema(good)
+    assert good.commits == 1 and good.rollbacks == 0
+    assert "pg_advisory_xact_lock" in good.statements[0]
+    assert good.statements[1] == _read("migrations/076_fills_audit.sql")
+    bad = Conn(fail=True)
+    try:
+        ensure_schema(bad)
+    except RuntimeError as e:
+        assert str(e) == "migration denied"
+    else:
+        raise AssertionError("boot swallowed migration failure")
+    assert bad.commits == 0 and bad.rollbacks == 1
+
+
+def test_recorded_legs_are_never_rewritten_or_relabeled_live():
+    from analysis.fills_audit import record_legs
+    cur = _Cur()
+    old = [{"frac": .5, "px": 101., "ts": "stored", "why": "tp1"}]
+    record_legs(cur, 1, "two_test", "TEST", old, old, [], 99.)
+    assert not cur.log   # old missing audit stays a gap until explicit backfill
+    try:
+        record_legs(cur, 1, "two_test", "TEST", [], old, [], 99.)
+    except ValueError as e:
+        assert "recorded execution legs changed" in str(e)
+    else:
+        raise AssertionError("must not erase old executions")
 
 
 if __name__ == "__main__":

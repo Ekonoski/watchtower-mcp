@@ -1292,6 +1292,9 @@ def run_swing_close_settle():
                               (exit_px, reason, r_mult, tid))
                 record_exit(c, tid, book, tk, exit_px,
                             expected_px=expected,
+                            gap_through=reason == "target" and exit_px != tgt,
+                            bar={"ts": final[0].isoformat(), "open": final[1],
+                                 "close": final[2], "high": final[3], "low": final[4]},
                             evidence={"exit_reason": reason})
             conn.commit()
             log.info("[paper] SETTLE-EXIT %s %s %s @ %.2f (%s, %+.2fR) — "
@@ -1495,6 +1498,9 @@ def run_trigger_loop():
                                   (exit_px, reason, r_mult, tid))
                         record_exit(c, tid, book, tk, exit_px,
                                     expected_px=expected,
+                                    gap_through=reason == "target" and exit_px != tgt,
+                                    bar={"ts": ts.isoformat(), "open": op_, "close": close,
+                                         "high": hi, "low": lo},
                                     evidence={"exit_reason": reason})
                     conn.commit()
                     log.info("[paper] EXIT %s %s %s @ %.2f (%s, %+.2fR)",

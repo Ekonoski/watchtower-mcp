@@ -1,6 +1,6 @@
 """fills_audit parity + per-book gap report, pinned (Wave 1).
 
-An open trade is complete with its entry row. A closed trade is
+An open trade needs its entry and any recorded execution legs. A closed trade is
 complete only with entry AND exit. A missing exit on an open trade
 is not a hole — the exit has not happened.
 
@@ -94,15 +94,15 @@ def test_fills_audit_gap_report_counts_by_book():
     assert set(report) == {"gamma", "swing", "day_bias"}
     assert report["gamma"] == {
         "n_trades": 2, "n_open": 0, "n_closed": 2,
-        "missing_entry": 0, "missing_exit": 1, "complete": 1,
+        "missing_entry": 0, "missing_exit": 1, "missing_legs": 0, "complete": 1,
     }
     assert report["swing"] == {
         "n_trades": 2, "n_open": 1, "n_closed": 1,
-        "missing_entry": 1, "missing_exit": 1, "complete": 1,
+        "missing_entry": 1, "missing_exit": 1, "missing_legs": 0, "complete": 1,
     }
     assert report["day_bias"] == {
         "n_trades": 1, "n_open": 1, "n_closed": 0,
-        "missing_entry": 0, "missing_exit": 0, "complete": 1,
+        "missing_entry": 0, "missing_exit": 0, "missing_legs": 0, "complete": 1,
     }
     # report-only structure: no pooled score the desk could mistake
     # for a single gap rate. gamma is missing one exit; swing is
@@ -133,6 +133,50 @@ def test_backfill_inferred_does_not_invent_pnl():
     assert payloads[1][5] is None
     joined = " ".join(str(x) for p in payloads for x in p)
     assert "r_multiple" not in joined and "0.83" not in joined
+
+
+
+def test_partial_execution_holes_are_visible_even_on_open_trades():
+    legs = [{"frac": .5, "px": 101., "ts": "2026-09-18T10:00:00-04:00", "why": "tp1"}]
+    trade = {"id": 1, "book": "two_test", "exited_at": None, "legs": legs}
+    audits = [{"paper_trade_id": 1, "event": "entry", "leg_index": 0}]
+    report = gap_report([trade], iter(audits))["two_test"]
+    assert report["missing_legs"] == 1 and report["complete"] == 0
+    audits.append({"paper_trade_id": 1, "event": "leg", "leg_index": 1})
+    report = gap_report([trade], iter(audits))["two_test"]
+    assert report["missing_legs"] == 0 and report["complete"] == 1
+    # Two duplicate leg-1 observations cannot hide a missing leg 2.
+    trade["legs"] = legs * 2
+    report = gap_report([trade], audits + [audits[-1]])["two_test"]
+    assert report["missing_legs"] == 1 and report["complete"] == 0
+
+
+def test_backfill_legs_are_inferred_and_counts_only_inserted_rows():
+    from analysis.fills_audit_backfill import run
+    row = {"id": 1, "book": "two_test", "ticker": "TEST", "entry_px": 100.,
+           "legs": [{"frac": .5, "px": 101., "why": "tp1", "ts": "stored time"}]}
+    payloads = infer_payloads(row)
+    assert [(p[3], p[12]) for p in payloads] == [("entry", 0), ("leg", 1)]
+    assert all(p[11] == "backfill_inferred" and p[9] is None for p in payloads)
+    assert payloads[1][6] == 101. and payloads[1][5] is None
+    class Cursor:
+        def __init__(self):
+            self.description = [(k,) for k in row]
+            self.rowcount = 0
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def fetchall(self):
+            return [tuple(row.values())]
+        def execute(self, sql, params=None):
+            if params:
+                assert "ON CONFLICT (paper_trade_id, event, leg_index) DO NOTHING" in sql
+                self.rowcount = int(params[3] == "leg")  # entry already exists
+    class Connection:
+        def cursor(self):
+            return Cursor()
+    assert run(Connection()) == 1
 
 
 if __name__ == "__main__":

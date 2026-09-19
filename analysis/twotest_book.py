@@ -52,7 +52,7 @@ import datetime as dt
 import json
 import logging
 
-from analysis.fills_audit import record_entry, record_exit
+from analysis.fills_audit import record_entry, record_exit, record_legs
 from analysis.rs_leader_book import BOOK as RSL_BOOK
 from analysis.rs_leader_book import (_persist_1m, describe_levels, label,
                                      legs_json, level_inputs,
@@ -252,7 +252,7 @@ def run_tt_tick():
             return
         with conn.cursor() as c:
             c.execute("""SELECT id, entered_at, entry_px, exited_at, legs, shadow
-                         FROM paper_trades WHERE spec_id=%s""", (sid,))
+                         FROM paper_trades WHERE spec_id=%s FOR UPDATE""", (sid,))
             trade = c.fetchone()
 
         if trade is None and status == "armed":
@@ -336,10 +336,13 @@ def run_tt_tick():
                                  exit_reason=%s, r_multiple=%s, legs=%s::jsonb
                                  WHERE id=%s AND exited_at IS NULL""",
                               (ts, round(px, 4), reason, r, json.dumps(legs), tid))
+                    record_legs(c, tid, BOOK, ticker, legs, legs_db, bars, stop_lvl)
                     record_exit(c, tid, BOOK, ticker, round(px, 4),
-                                expected_px=round(stop_lvl, 4) if reason in
-                                ("stop", "disaster") else None,
-                                evidence={"exit_reason": reason})
+                                expected_px=(legs[-1]["px"] if reason == "disaster" else
+                                             round(stop_lvl, 4) if reason == "stop" else None),
+                                fill_kind="weighted_exit_summary",
+                                evidence={"exit_reason": reason,
+                                          "price_basis": "fraction_weighted_legs", "legs": legs})
                 conn.commit()
                 log.info(f"[tt-book] EXIT {ticker} {reason} @ {px:.4f} legs={legs}")
             elif legs and legs != (legs_db or []):
@@ -347,6 +350,7 @@ def run_tt_tick():
                     c.execute("""UPDATE paper_trades SET legs=%s::jsonb
                                  WHERE id=%s AND exited_at IS NULL""",
                               (json.dumps(legs), tid))
+                    record_legs(c, tid, BOOK, ticker, legs, legs_db, bars, stop_lvl)
                 conn.commit()
                 log.info(f"[tt-book] PARTIAL {ticker} legs={legs} runner stop "
                          f"{st['stop']:.4f} ({st['stop_mode']})")
