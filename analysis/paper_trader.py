@@ -127,14 +127,21 @@ RETIRED_CLASSES = {
     # book failed — three strikes, retired with v1 (2026-09-10).
     ("higher_low", "daily"): "v6 prior -0.06R; live 1-7 (-6.2R) at the v1 gate",
     ("double_bottom", "daily"): "v6 prior -0.19R; live 2-5 (-3.4R) at the v1 gate",
+    # 2026-09-18 Captain pause — stop-tax. Desk blocked without it.
+    # Refused by name like the neckline retirements; open specs ride.
+    ("ema_bounce", "weekly"): (
+        "2026-09-18 Captain pause — stop-tax "
+        "(retest_ema_bounce_weekly); prior stands, live book paused"),
+    ("asc_triangle", "daily"): (
+        "2026-09-18 Captain pause — stop-tax "
+        "(retest_asc_triangle_daily); prior stands, live book paused"),
 }
 SWING_CLASSES = (
     ("higher_low", "weekly"),
     ("double_bottom", "weekly"),
     ("inverse_hs", "weekly"), ("inverse_hs", "daily"),
-    ("asc_triangle", "weekly"), ("asc_triangle", "daily"),
+    ("asc_triangle", "weekly"),
     ("bull_flag", "weekly"), ("bull_flag", "daily"),
-    ("ema_bounce", "weekly"),
     # Added 2026-08-10 on the v6 read (Eric): weekly-only — each positive
     # at scale (see table above). Their daily twins stay out: +0.01 to
     # +0.09 edges are too thin to spend capped book slots on, and the

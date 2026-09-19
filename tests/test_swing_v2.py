@@ -77,7 +77,10 @@ def test_book_birth_touches_every_place():
 def test_retired_classes_are_refused_and_the_rest_admit():
     assert not swing_class_ok("higher_low", "daily")
     assert not swing_class_ok("double_bottom", "daily")
+    assert not swing_class_ok("ema_bounce", "weekly")
+    assert not swing_class_ok("asc_triangle", "daily")
     assert swing_class_ok("higher_low", "weekly") and swing_class_ok("inverse_hs", "daily")
+    assert swing_class_ok("asc_triangle", "weekly")
 
 
 if __name__ == "__main__":

@@ -27,10 +27,14 @@ from analysis.paper_trader import (  # noqa: E402
 def main():
     # The 2026-08-08 additions, re-graded by v6:
     assert swing_class_ok("asc_triangle", "weekly")    # +0.28R, n=1,896
-    assert swing_class_ok("ema_bounce", "weekly")      # +0.84R, n=8,188 — best on the board
     assert swing_class_ok("bull_flag", "weekly")       # +0.24R, n=2,561
-    assert swing_class_ok("asc_triangle", "daily")     # +0.08R, n=6,631
     assert swing_class_ok("bull_flag", "daily")        # +0.09R, n=11,496
+    # 2026-09-18 Captain pause — stop-tax. Refused by name; the
+    # higher_low / double_bottom daily retirements stay.
+    assert not swing_class_ok("ema_bounce", "weekly")  # retest_ema_bounce_weekly
+    assert not swing_class_ok("asc_triangle", "daily")  # retest_asc_triangle_daily
+    assert ("ema_bounce", "weekly") in RETIRED_CLASSES
+    assert ("asc_triangle", "daily") in RETIRED_CLASSES
 
     # The original neckline families stay on the weekly. The two DAILY
     # neckline experiments (retest-limit entries vs the breakout-close
@@ -51,11 +55,10 @@ def main():
     assert swing_class_ok("falling_wedge", "weekly")   # +0.12R, n=1,750
     assert swing_class_ok("wma_touch", "weekly")       # goat: 82%/+5%, n=2,653
 
-    # The exclusion that needs the JOINT gate: ema_bounce daily passes the
-    # pattern filter AND the timeframe filter individually. -0.16R over
-    # 46,979 episodes does not get half-sized — it gets excluded (the
-    # shorts lesson).
-    assert "ema_bounce" in SWING_PATTERNS
+    # ema_bounce weekly was the last allowlisted timeframe for that
+    # pattern; retiring it drops the name from SWING_PATTERNS, so the
+    # SQL cannot fetch the daily twin either. Daily stays refused.
+    assert "ema_bounce" not in SWING_PATTERNS
     assert not swing_class_ok("ema_bounce", "daily")
 
     # Daily twins of the weekly-only classes stay out — +0.01 to +0.09
@@ -72,8 +75,9 @@ def main():
         assert tf in ("weekly", "daily"), (pat, tf)
         assert pat == pat.lower() and " " not in pat, (pat, tf)
 
-    print("ok — positive-prior classes admitted (15), thin/negative daily "
-          "twins blocked by the joint gate, 4h never admitted")
+    print("ok — positive-prior classes admitted "
+          f"({len(SWING_CLASSES)}), thin/negative daily twins and the "
+          "2026-09-18 stop-tax pauses blocked, 4h never admitted")
 
 
 if __name__ == "__main__":
