@@ -2919,3 +2919,36 @@ python3 tests/test_brief_oscillator.py    # or: pytest tests/
 `tests/test_brief_oscillator.py` pins both bugs above against real NOK scan
 rows. Add cases here when a rendering bug reaches a session — a bug that
 shipped a wrong answer once is worth a permanent test.
+
+- **The rotation book: refused** (2026-10-24, Eric: "pick stocks using
+  watchtower based on money rotation from sectors into other sectors…
+  then back test" — for his own book, 1–3 week holds, on 10x, so the
+  PATH was graded beside the return). Spec frozen first
+  (`docs/research/rotation_book_spec.md`): a confirmed 50-SMA
+  reclaim-retest (close back through yesterday's high, holding the 8/21,
+  not within 3% of the 252-day high, stop under the 10-bar low capped at
+  6%, no earnings inside the hold), crossed with four sector states built
+  from the breadth RS formula across 2005→ (the cache only starts
+  2024-08; reconciled at 94% on the washout/top-4 buckets, 63% on exact
+  rank — the gap is the cache's fund pollution). 49,319 signals, each
+  graded against its own sector-day pool, SPY, and three exits.
+  READOUT (`docs/research/rotation_book_readout.md`): the setup is market
+  beta — post-2016 +12 bps/10d vs +18 for random names in the same sectors
+  and +53 for SPY, 51% win, E3 (stop + 8-EMA trail) −0.016R; sector
+  rotation makes it WORSE under the dashboard's own "rotating in" rule
+  (−6 bps, the worst cell), the week-turn cell is negative at 21 days in
+  both eras, the leader chase trails its pool by 35 bps, and the only
+  cell that beats its pool at 10 days in both eras (quarter washout +
+  month inflow, +24/+44 vs +9/+5) fails at 21 days post-2016 and
+  sign-flips by year. The 10x arithmetic: stops average 4.5% of price
+  (~45% of margin), 38% stopped, 9% gap through the stop, ~1% see an
+  overnight gap that wipes the margin. Two things survived: the earnings
+  exclusion (gap ≤ −10% 3.3% → 0.9%) and the structure's drawdown profile
+  (−10% MAE share 18% vs the pool's 24%). Universe lesson, kept: the
+  tickers table files ~1,700 funds under "Asset Management - Bonds /
+  Global / Income"; an exact-string fund exclusion let 3,387 muni/bond
+  ETF trades into Financial Services (and 17 of the first Monday list's
+  28 names) — every single-name study excludes `industry ILIKE 'asset
+  management%'`, never the bare string. Research tables `rotbook_*`
+  stay for any later cut at n; the Monday list under the frozen rules
+  was empty (earnings season), and zero picks is the answer.
