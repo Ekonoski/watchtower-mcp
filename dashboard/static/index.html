@@ -1012,7 +1012,7 @@
   <section id="tab-watchlist" class="tabpane">
     <div class="controls"><strong>Automatic daily attention list</strong>
       <select id="attention-filter" aria-label="Attention list filter"><option value="near_rising">Near zero + rising</option><option value="all">All candidates</option><option value="new_green">Newly green (last 5 sessions)</option><option value="green_rising">Established green + rising</option><option value="near">Near zero (+/-5)</option></select>
-      <button id="attention-refresh">Refresh</button><button id="attention-copy">Copy visible tickers</button>
+      <button id="attention-refresh">Refresh</button><button id="attention-copy">Copy visible tickers</button><span id="attention-visible"></span>
     </div>
     <p id="attention-status" class="count-note" style="padding:0 14px">Loading completed daily bars…</p>
     <p class="count-note" style="padding:0 14px">Review candidates, not buy signals. Liquid U.S.-listed common stocks / ADRs; $20M average daily dollar volume. Green = above SMA200 and 3/6-month momentum above SPY and QQQ. Newly green names stay here for up to 5 sessions while still green; otherwise momentum must be rising. Near zero is a review tag, not a proven edge.</p>
@@ -3595,6 +3595,7 @@ function attentionEscape(value) {
 }
 function renderAttention() {
   const rows=attentionRows(), esc=attentionEscape;
+  $("attention-visible").textContent=`Showing ${rows.length} of ${attentionData?.count || 0}`;
   $("attention-body").innerHTML=rows.map(r=>`<tr><td class="left"><button class="attention-ticker" data-ticker="${esc(r.ticker)}" title="${esc(r.company)}">${esc(r.ticker)}</button></td><td class="left">${esc(r.reason)}</td><td>${r.close.toFixed(2)}</td><td>${r.momentum_pct.toFixed(2)}</td><td>${r.momentum_change_pp>0?'+':''}${r.momentum_change_pp.toFixed(2)}</td><td>${r.near_zero?'Yes':'—'}</td><td>${r.ema20_distance_pct.toFixed(2)}</td><td>${r.dollar_volume_m.toFixed(1)}</td><td>${esc(r.as_of)}</td><td>${r.earnings?esc(r.earnings.date+' '+(r.earnings.time||'time unavailable')+(r.earnings.confirmed?' confirmed':' estimated')):'Unavailable'}</td><td class="left">${esc(r.warnings.join('; ')||'—')}</td></tr>`).join('');
   if(!rows.length)$("attention-body").innerHTML='<tr><td colspan="11">0 matching candidates for this filter.</td></tr>';
 }
@@ -3607,7 +3608,7 @@ async function loadAttention() {
     $("attention-status").textContent=`Bars: ${d.as_of} • ${d.count} candidates • ${c.liquid} liquid stocks / ${c.evaluable} evaluable / ${c.reference_stocks} listed common stocks • ${c.unavailable} unavailable. Rechecked ${new Date(d.generated_at).toLocaleString()}. Refreshes every 2 minutes while open; daily data updates after the close.`;
     $("attention-coverage").textContent=d.excluded.length?d.excluded.map(r=>`${r.ticker}: ${r.reason}${r.as_of?' (last '+r.as_of+')':''}`).join('; '):'No coverage gaps.';
   } catch(e) {
-    attentionData=null;$("attention-body").innerHTML='';
+    attentionData=null;$("attention-body").innerHTML='';$("attention-visible").textContent='';
     $("attention-status").textContent='UNAVAILABLE — '+e.message;
     $("attention-coverage").textContent='Current scan unavailable; previous candidates suppressed.';
   }

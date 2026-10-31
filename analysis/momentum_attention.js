@@ -22,13 +22,17 @@ let age=null;
 if(j>=205 && ready[j]) {
     for(let k=j-4;k<=j;k++)if(ready[k-1] && green[k] && !green[k-1])age=j-k;
 }
-const available=j>=205 && ready[j] && ready[j-1];
+const lastComplete=times=>times.filter(t=>now>=moment.unix(t).tz('America/New_York').hour(16).minute(35).second(0).unix()).slice(-1)[0];
+const available=j>=205 && ready[j] && ready[j-1] && time[j]===lastComplete(sp.time) && time[j]===lastComplete(qq.time);
 const rising=available && score[j]>score[j-1];
 const review=available && green[j] && (rising || age!==null);
+const nearOnly=input.boolean('Near zero and rising only',true);
+const selected=review && (!nearOnly || (rising && Math.abs(score[j])<=5));
 const snapshot=v=>{const a=series_of(null);a[a.length-1]=available?v:null;return a;};
-paint(snapshot(review?1:0),{name:'ReviewNow',color:'#16a085'});
+paint(snapshot(selected?1:0),{name:'ReviewNow',color:'#16a085'});
 paint(snapshot(review && age!==null?1:0),{name:'NewGreenNow',hidden:true});
 paint(snapshot(review && age===null && rising?1:0),{name:'EstablishedRisingNow',hidden:true});
 paint(snapshot(review && Math.abs(score[j])<=5?1:0),{name:'NearZeroNow',hidden:true});
 paint(snapshot(available?score[j]:null),{name:'MomentumPct',hidden:true});
-register_signal(snapshot(review),'Attention review now - NOT BUY');
+register_signal(snapshot(selected),'Attention review now - NOT BUY');
+register_signal(snapshot(review && rising && Math.abs(score[j])<=5),'Near zero and rising - REVIEW');
