@@ -2562,6 +2562,18 @@ def register_routes(mcp) -> None:
             return JSONResponse({"theme": theme, "rows": [], "count": 0, "error": str(e)[:120]})
         return JSONResponse(data)
 
+    @mcp.custom_route("/api/momentum-attention", methods=["GET"])
+    async def momentum_attention(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        try:
+            from analysis.momentum_attention import read_attention
+            data = await asyncio.to_thread(read_attention)
+        except Exception as e:
+            log.exception('Daily momentum attention list unavailable')
+            return JSONResponse({'status':'unavailable','error':str(e),'rows':[]}, status_code=503)
+        return JSONResponse(data, headers={'Cache-Control':'no-store'})
+
     @mcp.custom_route("/api/momentum", methods=["GET"])
     async def momentum(request: Request):
         if not _is_authed(request):

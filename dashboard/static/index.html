@@ -1010,6 +1010,15 @@
 
   <!-- ── WATCHLIST ── -->
   <section id="tab-watchlist" class="tabpane">
+    <div class="controls"><strong>Automatic daily attention list</strong>
+      <select id="attention-filter" aria-label="Attention list filter"><option value="near_rising">Near zero + rising</option><option value="all">All candidates</option><option value="new_green">Newly green (last 5 sessions)</option><option value="green_rising">Established green + rising</option><option value="near">Near zero (+/-5)</option></select>
+      <button id="attention-refresh">Refresh</button><button id="attention-copy">Copy visible tickers</button>
+    </div>
+    <p id="attention-status" class="count-note" style="padding:0 14px">Loading completed daily bars…</p>
+    <p class="count-note" style="padding:0 14px">Review candidates, not buy signals. Liquid U.S.-listed common stocks / ADRs; $20M average daily dollar volume. Green = above SMA200 and 3/6-month momentum above SPY and QQQ. Newly green names stay here for up to 5 sessions while still green; otherwise momentum must be rising. Near zero is a review tag, not a proven edge.</p>
+    <div class="tblwrap"><table><thead><tr><th class="left">Ticker</th><th class="left">Why review</th><th>Daily close</th><th>Momentum %</th><th>Change pp</th><th>Near zero</th><th>vs EMA20 %</th><th>Avg $ vol M</th><th>Bar date</th><th>Earnings</th><th class="left">Cautions</th></tr></thead><tbody id="attention-body"></tbody></table></div>
+    <details style="padding:12px"><summary>Coverage gaps</summary><div id="attention-coverage"></div></details>
+    <h3 style="padding:0 14px">Your saved watchlist</h3>
     <div class="controls" id="wl-form">
       <input type="text" id="wl-ticker" placeholder="Ticker" size="8" maxlength="6">
       <input type="text" id="wl-notes" placeholder="Notes (optional)" size="34">
@@ -3458,6 +3467,7 @@ async function addToWatchlist(ticker, notes) {
 }
 state.wlScope = "mine";
 async function loadWatchlist() {
+  loadAttention();
   let r;
   try { r = await api("/api/watchlist?scope=" + encodeURIComponent(state.wlScope)); } catch { return; }
   const rows = r.watchlist || [];
@@ -3575,6 +3585,38 @@ setInterval(() => {
 renderNotifyBtn();
 loadMe();
 loadLatest();
+let attentionData=null;
+function attentionRows() {
+  const filter=$("attention-filter").value;
+  return (attentionData?.rows || []).filter(r=>filter==='all'||(filter==='near_rising'?r.near_zero&&r.rising:filter==='near'?r.near_zero:r.group===filter));
+}
+function attentionEscape(value) {
+  const e=document.createElement('span');e.textContent=String(value??'');return e.innerHTML.replaceAll('"','&quot;').replaceAll("'",'&#39;');
+}
+function renderAttention() {
+  const rows=attentionRows(), esc=attentionEscape;
+  $("attention-body").innerHTML=rows.map(r=>`<tr><td class="left"><button class="attention-ticker" data-ticker="${esc(r.ticker)}" title="${esc(r.company)}">${esc(r.ticker)}</button></td><td class="left">${esc(r.reason)}</td><td>${r.close.toFixed(2)}</td><td>${r.momentum_pct.toFixed(2)}</td><td>${r.momentum_change_pp>0?'+':''}${r.momentum_change_pp.toFixed(2)}</td><td>${r.near_zero?'Yes':'—'}</td><td>${r.ema20_distance_pct.toFixed(2)}</td><td>${r.dollar_volume_m.toFixed(1)}</td><td>${esc(r.as_of)}</td><td>${r.earnings?esc(r.earnings.date+' '+(r.earnings.time||'time unavailable')+(r.earnings.confirmed?' confirmed':' estimated')):'Unavailable'}</td><td class="left">${esc(r.warnings.join('; ')||'—')}</td></tr>`).join('');
+  if(!rows.length)$("attention-body").innerHTML='<tr><td colspan="11">0 matching candidates for this filter.</td></tr>';
+}
+async function loadAttention() {
+  try {
+    const d=await api('/api/momentum-attention');
+    if(d.error||!d.coverage)throw new Error(d.error||'Incomplete response');
+    attentionData=d;renderAttention();
+    const c=d.coverage;
+    $("attention-status").textContent=`Bars: ${d.as_of} • ${d.count} candidates • ${c.liquid} liquid stocks / ${c.evaluable} evaluable / ${c.reference_stocks} listed common stocks • ${c.unavailable} unavailable. Rechecked ${new Date(d.generated_at).toLocaleString()}. Refreshes every 2 minutes while open; daily data updates after the close.`;
+    $("attention-coverage").textContent=d.excluded.length?d.excluded.map(r=>`${r.ticker}: ${r.reason}${r.as_of?' (last '+r.as_of+')':''}`).join('; '):'No coverage gaps.';
+  } catch(e) {
+    attentionData=null;$("attention-body").innerHTML='';
+    $("attention-status").textContent='UNAVAILABLE — '+e.message;
+    $("attention-coverage").textContent='Current scan unavailable; previous candidates suppressed.';
+  }
+}
+$("attention-filter").addEventListener('change',renderAttention);
+$("attention-refresh").addEventListener('click',loadAttention);
+$("attention-copy").addEventListener('click',async()=>{await navigator.clipboard.writeText(attentionRows().map(r=>r.ticker).join(','));toast('Visible attention tickers copied');});
+$("attention-body").addEventListener('click',e=>{const b=e.target.closest('.attention-ticker');if(b)openDrawer(b.dataset.ticker);});
+setInterval(()=>{if($("tab-watchlist").classList.contains('active'))loadAttention();},120000);
 loadWatchlist();
 </script>
 </body>
