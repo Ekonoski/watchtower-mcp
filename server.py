@@ -2794,6 +2794,9 @@ except Exception as _dash_err:
     )
 
 
+from analysis.momentum_feed.service import register_routes as _register_momentum_feed
+_register_momentum_feed(mcp)
+
 # ── Scheduler startup ────────────────────────────────────────────────────────
 # Guard: only start the scheduler in the first worker process.
 # Railway / uvicorn can run multiple replicas — each would start its own

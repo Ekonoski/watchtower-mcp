@@ -2475,6 +2475,12 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Separate research portfolio ledger. Narrow read-only TrendSpider feed;
+    # never creates paper_specs, broker orders, emails, or Discord messages.
+    from analysis.momentum_feed.service import run as _momentum_feed_run
+    scheduler.add_job(_momentum_feed_run, 'interval', minutes=2,
+                      id='trendspider_momentum_feed', replace_existing=True,
+                      max_instances=1, coalesce=True, misfire_grace_time=90)
     scheduler.start()
 
     # One-time seed on a fresh deploy so the Patterns tab isn't empty until
