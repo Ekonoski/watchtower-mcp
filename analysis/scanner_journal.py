@@ -90,6 +90,7 @@ class ScannerJournal:
         self.stopping=False
         self.list_task=None
         self.list_status={'state':'not started','sample_seconds':1,'checkpoint_seconds':30}
+        self.continuations=None
 
     def record(self, kind, payload, observed_at=None):
         now=time.time() if observed_at is None else observed_at
@@ -113,6 +114,7 @@ class ScannerJournal:
                 'dropped':self.dropped,'last_saved_at':self.last_saved_at,'error':self.error,
                 'write_failures':self.failures,'last_failure_at':self.last_failure_at,
                 'lists':dict(self.list_status),
+                'continuation':dict(self.continuations.status) if self.continuations else {'state':'not started'},
                 'rules_version':RULES,'revision':os.getenv('RAILWAY_GIT_COMMIT_SHA','unknown')}
 
     async def flush(self):
@@ -140,6 +142,7 @@ class ScannerJournal:
             began=time.perf_counter()
             now=time.time()
             try:
+                if self.continuations:self.continuations.sample(tape.book,now)
                 snapshot=tape.book.scanner_snapshot(now)
                 history.capture(snapshot,now,tape.book.window_generation,tape.state)
                 self.list_status.update(state='sampling',last_sample_at=now,error=None,
@@ -154,8 +157,12 @@ class ScannerJournal:
             await asyncio.sleep(max(.05,1-(time.perf_counter()-began)))
 
     async def run(self, tape):
+        from analysis.scanner_continuation import Continuations
+        self.continuations=Continuations(self.record)
+        tape.book.continuations=self.continuations
+        self.continuations.task=asyncio.create_task(self.continuations.refresh())
         self.record('run_start',{'rules_version':RULES,'revision':os.getenv('RAILWAY_GIT_COMMIT_SHA','unknown'),
-            'scope':'All generated move alerts plus sampled leaders/fresh/focus/volume lists in all three price bands. No browser filters. Not exact Warrior eligibility.',
+            'scope':'Move alerts and leaders/fresh/focus/volume/continuation lists in all price bands; recent-runner universe and volume/momentum return states. No browser filters. Not exact Warrior eligibility.',
             'heartbeat_seconds':30,'flush_seconds':1,'warmup_seconds':600})
         self.list_task=asyncio.create_task(self.sample_lists(tape))
         last=0
@@ -170,6 +177,10 @@ class ScannerJournal:
             await self.flush()
             await asyncio.sleep(1 if not self.error else 5)
         await self.list_task
+        self.continuations.stopping=True
+        self.continuations.task.cancel()
+        try:await self.continuations.task
+        except asyncio.CancelledError:pass
         self.record('run_stop',{'journal':self.status(),'stream_state':tape.state})
         while self.pending:
             await self.flush()

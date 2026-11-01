@@ -67,6 +67,45 @@ The combined export includes these records alongside alerts and coverage.
 Compare against Warrior's history at matching dates/times and scanner families;
 do not claim screen latency or exact Warrior rules from list observations.
 
+## Continuation watchlist
+
+The Continuations tab carries runners from the five most recent cached SPY
+session dates strictly before today. A cached daily high at least 10% above the
+immediately preceding session's close and close x volume >= $1m qualifies a
+historical candidate. These are research defaults, not verified Warrior rules.
+No price band gates the stored universe; UI bands and their 100-row caps apply
+afterward. A failed close does not erase a qualifying earlier high.
+
+From deployment onward, live +10%-day runners with price x fresh cumulative
+volume >= $1m also create `continuation_candidate` records (first qualification,
+then new five-percentage-point peak buckets). These are carried on later days;
+today's candidates do not backdate themselves into yesterday's watchlist.
+This covers future premarket-only spikes missed by daily-high data. Historical
+premarket-only spikes and stocks absent from daily_prices cannot be recovered.
+Ticker identity changes, splits and catalyst news are unverified, explicitly
+tagged for manual review. Fresh news is not a requirement.
+
+`continuation_universe` freezes the source dates, bar fields, source-row creation
+time, prior runner episodes and loaded coverage counts. Refreshes are hourly and
+on ET date rollover. Database failure is unavailable, not an empty universe;
+retained rows stay visible but cannot claim current return signals.
+
+Every second, `continuation_state` records changed volume/momentum flags:
+- Momentum: current price <=15s old and observed one-minute change >= +3%.
+- Volume: complete/fresh observed 1m >=10k shares, 5m >=25k shares, and 1m volume
+  >=2 times the per-minute average of that same 5m window. This is LOCAL volume
+  pace, not historical RVOL and not Warrior RVOL. Missing/warming/stale volume
+  is null, never false/zero. Confirmation of a completed five-minute observation
+  window can lag a fresh session start; the separate momentum flag can turn on
+  sooner.
+- Both: both conditions currently true; these are observations, not buy signals.
+
+Quiet, cooling and failed names remain visible. Initial/reconnect state is a
+baseline, not a proven crossing. Sampling gaps and original event/receipt times
+are retained. Without today's trades, the displayed price is explicitly
+historical/stale, not a live quote. Snapshots/membership exports include the
+continuation family; detailed transition records include names beyond UI caps.
+
 Coverage is unknown before run_start, after the last heartbeat, across unexpected
 run boundaries, disconnects, missing heartbeats, storage losses, and warmup
 (five/ten minutes after a fresh stream). Quiet/no-trade heartbeats show the worker

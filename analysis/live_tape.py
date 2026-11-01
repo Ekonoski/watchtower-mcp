@@ -36,6 +36,7 @@ class TapeBook:
     def __init__(self, alert_sink=None):
         self.alert_sink=alert_sink
         self.window_generation=0
+        self.continuations=None
         self.rows = {}
         self.history = {}
         self.previous_close = {}
@@ -259,6 +260,8 @@ class TapeBook:
                     if ticker not in enriched:enriched[ticker]=self.with_volume(self.rows[ticker],now)
                     # Focus-only hold fields must survive enrichment.
                     group[family]['rows'][i]={**row,**enriched[ticker]}
+        if self.continuations:
+            for band in scanner:scanner[band]['continuation']=self.continuations.views[band]
         return {'scanner':scanner,'session_date':self.session,'tracked_count':len(self.rows),
                 'market_at':self.last_event_at,'received_at':self.last_message_at,
                 'warm_seconds':max(0,now-self.warm_since) if self.warm_since else 0}

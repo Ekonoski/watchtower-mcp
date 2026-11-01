@@ -15,6 +15,10 @@ class Store:
 
 
 class JournalTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        mocked=patch('analysis.scanner_continuation.load_recent',side_effect=lambda target:{
+            'target_session':target,'sessions':[],'coverage':[],'runners':[],'source_note':'test fixture'})
+        mocked.start();self.addCleanup(mocked.stop)
     async def test_alerts_survive_ui_rolloff_and_freeze_context(self):
         store=Store();journal=ScannerJournal(store)
         book=TapeBook(lambda a:journal.record('alert',a,a['received_at']))

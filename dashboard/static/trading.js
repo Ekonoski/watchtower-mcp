@@ -105,6 +105,7 @@ if(typeof document!=='undefined') (()=>{
     const rec=frame.recording;
     if(rec)$('status-detail').textContent+=` · Server recording: ${rec.state}; ${rec.saved||0} saved, ${rec.pending||0} pending, ${rec.dropped||0} lost${rec.error?' · '+rec.error:''}`;
     if(rec?.lists)$('status-detail').textContent+=` · List recording: ${rec.lists.state}${rec.lists.error?' · '+rec.lists.error:''}`;
+    if(rec?.continuation)$('status-detail').textContent+=` · Continuations: ${rec.continuation.state}, ${rec.continuation.runner_count??0} recent runners${rec.continuation.reason?' · '+rec.continuation.reason:''}`;
   }
   function renderRows(){
     if(!frame)return;
@@ -123,6 +124,7 @@ if(typeof document!=='undefined') (()=>{
       if(observedFrame.state!=='receiving')return;
       const when=new Date().toISOString();
       for(const r of observedRows){
+        if(observedFeed==='continuation'&&!r.continuation?.price_is_live)continue;
         const family=observedFeed==='alerts'?
           (r.direction==='up'&&r.label==='5% / 5m'?'Squeeze Alert - Up 5% in 5min':
            r.direction==='up'&&r.label==='10% / 10m'?'Squeeze Alert - Up 10% in 10min':'Watchtower '+r.label+' '+r.direction):
@@ -143,14 +145,17 @@ if(typeof document!=='undefined') (()=>{
     $('move-empty').querySelector('h3').textContent=query?'No match in this view':'No qualifying names';
     $('move-empty').querySelector('p').textContent='Select another view or price range. Enter a ticker to inspect it directly. Unknown history is not a zero reading.';
     $('mover-body').innerHTML=rows.map(r=>{
-      const age=effectiveNow()-r.market_at,stale=age>15;
+      const age=n(r.market_at)?effectiveNow()-r.market_at:null,stale=age===null||age>15;
       const held=feed==='focus'?`<small>${stale?'Stale price · ':''}${r.attention_state==='holding'?'Pullback / cooling':'Qualified'} · ${Math.max(0,r.hold_remaining_seconds-(effectiveNow()-frame.sent_at)).toFixed(0)}s hold</small>`:'';
-      return `<tr class="${r.ticker===selection?'selected':''}"><td><button data-symbol="${esc(r.ticker)}">${esc(r.ticker)}</button><small>${feed==='alerts'?esc(r.label):n(r.chg_pct)?pct(r.chg_pct)+' day':'Day change unavailable'}</small>${held}</td><td>${price(r.price)}</td><td class="${color(r[field])}">${feed==='volume'?number(r.volume_5m?.volume):pct(r[field])}</td><td class="${stale?'amber':''}">${age.toFixed(1)}s${stale?'<small>Stale</small>':''}</td></tr>`;
+      const continuation=feed==='continuation'?`<small>${esc(r.continuation?.state)} · ran ${esc(r.continuation?.runner_session)}</small><small>Catalyst / splits: check source</small>`:'';
+      const oldPrice=feed==='continuation'&&!r.continuation?.price_is_live?'<small>Historical / stale price</small>':'';
+      return `<tr class="${r.ticker===selection?'selected':''}"><td><button data-symbol="${esc(r.ticker)}">${esc(r.ticker)}</button><small>${feed==='alerts'?esc(r.label):n(r.chg_pct)?pct(r.chg_pct)+' day':'Day change unavailable'}</small>${held}${continuation}</td><td>${price(r.price)}${oldPrice}</td><td class="${color(r[field])}">${feed==='volume'?number(r.volume_5m?.volume):pct(r[field])}</td><td class="${stale?'amber':''}">${age===null?'No live print':age.toFixed(1)+'s'}${stale?'<small>Stale</small>':''}</td></tr>`;
     }).join('');
     $('mover-body').querySelectorAll('[data-symbol]').forEach(b=>b.onclick=()=>select(b.dataset.symbol));
     $('movers').querySelector('th:nth-child(3)').textContent=feed==='leaders'?'DAY %':feed==='volume'?'5M VOL':feed==='alerts'?'MOVE':'1 MIN';
     const rule=feed==='volume'?'Completed observed five-minute aggregate window; not RVOL.':feed==='leaders'?'Positive day gain, ranked highest first; prices ≤15s old.':feed==='fresh'?'At least +3% in an observed minute; prices ≤15s old.':feed==='focus'?'Retain for 5 minutes after last +10% day or +3%/minute qualification; newest arrivals first.':'5 / 10 minute threshold history; these are past alerts.';
     $('coverage-note').textContent=`${rows.length} shown · ${view?.omitted??frame.alerts_omitted??0} omitted by cap. ${rule} ${group?.warming??0} warming one-minute histories; ${group?.missing_day_reference??0} missing prior closes. Thresholds are research defaults, not entry signals.`;
+    if(feed==='continuation')$('coverage-note').textContent=`${rows.length} shown · ${view?.omitted??0} omitted. Last 5 cached market sessions: prior +10% runner and ≥$1m approximate turnover. Momentum: +3%/1m. Volume: ≥10k/1m, ≥25k/5m and ≥2× local 5m average pace; not historical RVOL. History ${view?.history_status?.state||'loading'}; ${view?.history_status?.sessions?.join(', ')||view?.history_status?.reason||'waiting'}. News and splits unverified; research observations, not entries.`;
   }
   function renderFocus(){
     renderContext();

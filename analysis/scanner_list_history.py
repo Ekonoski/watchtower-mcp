@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 ET=ZoneInfo('America/New_York')
 LIST_RULES='scanner-focus-v1-top100-sampled1s'
-FAMILIES=('leaders','fresh','focus','volume')
+FAMILIES=('leaders','fresh','focus','volume','continuation')
 
 
 class ListHistory:
@@ -40,6 +40,7 @@ class ListHistory:
         for band, group in snapshot['scanner'].items():
             views[band]={'warming':group['warming'],'missing_day_reference':group['missing_day_reference']}
             for family in FAMILIES:
+                if family not in group:continue
                 view=group[family];rows=view['rows'];key=(band,family)
                 current={row['ticker']:{**row,'rank':i+1} for i,row in enumerate(rows)}
                 previous=self.previous.get(key,{})
@@ -58,6 +59,7 @@ class ListHistory:
                             'reason':'No longer in sampled top 100: eligibility, freshness, band or rank; not inferred as trade failure'})
                 views[band][family]={'tickers':[row['ticker'] for row in rows],
                     'total':view['total'],'omitted':view['omitted']}
+                if 'history_status' in view:views[band][family]['history_status']=view['history_status']
                 if (entered or left) and not reset:
                     self.record('list_membership',{**common,'band':band,'family':family,
                         'entered':entered,'left':left,'ranked_tickers':views[band][family]['tickers'],
