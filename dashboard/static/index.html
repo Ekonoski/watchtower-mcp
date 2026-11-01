@@ -385,6 +385,7 @@
 </div>
 
 <nav>
+  <a class="navlink" href="/dashboard/trading" style="margin-left:0;color:var(--blue);font-weight:700">Trading workspace ↗</a>
   <button data-tab="scanner" class="active">Day Trades</button>
   <button data-tab="swings">Swings</button>
   <button data-tab="gems">Hidden Gems</button>
@@ -685,13 +686,16 @@
       <p>Watchtower's day-trade scanners on a full-market snapshot, refreshed every
       10 minutes in-session plus an <b>8:50 AM pre-market watchlist pass</b>.
       <b>Gappers</b> = ±4% vs prior close. <b>Ignition</b> — our composite of the classic
-      small-cap momentum recipe: price $1–20 · +10% day · rel volume ≥5× (time-of-day
-      adjusted) · float ≤20M · news catalyst — scored, so near-misses rank below qualifiers.
+      small-cap momentum recipe: price $1–20 · +10% day · approximate volume pace ≥5×
+      · float ≤20M · news catalyst — scored, so near-misses rank below qualifiers.
+      Volume pace uses a prorated daily average with a 5% denominator floor,
+      including premarket; it is not historical same-time relative volume.
       <b>Continuation</b> = 2-week movers ≥30%. <b>Earnings gap</b> = reported within a
       day and gapping. 🔁 = Momo memory (a +25% day inside the trailing year — proven movers repeat).
-      The Structure column is the edge no momentum scanner has: the name's live swing
-      pattern and oscillator read. Data is delayed per the current plan — the seconds-class
-      alerts (HOD bursts, squeezes, halts) arrive with the real-time upgrade, not faked before it.</p>
+      Structure shows the saved swing pattern and oscillator read.
+      These are scheduled snapshots, not a streaming feed. Saved time is the scan-write
+      time; provider event time is unavailable in these rows. A real-time subscription
+      does not remove scan and display refresh intervals.</p>
     </div>
     <div class="controls">
       <div class="seg" id="mom-scanner">
@@ -709,13 +713,13 @@
       <table id="mom-table">
         <thead><tr>
           <th class="left">Ticker</th>
-          <th title="last snapshot price (delayed per data plan)">Price</th>
+          <th title="saved snapshot price; provider event time is unavailable">Price / saved</th>
           <th title="change vs prior close">Chg%</th>
           <th title="open (or pre-market last) vs prior close">Gap%</th>
           <th>Volume</th>
-          <th title="today's volume vs 20-day average, prorated by session time elapsed — the 'daily rate'">RelVol</th>
+          <th title="Approximate daily volume pace; 20-day daily average prorated by session time with a 5% floor, including premarket. Not historical same-time RVOL.">Vol pace</th>
           <th title="shares float (shares outstanding when true float is unavailable on the data plan) — cached 14 days, hottest names first">Float</th>
-          <th title="Ignition score: price $1-20, +10% day, relvol ≥5x, float ≤20M, news">Ignition</th>
+          <th title="Ignition score: price $1-20, +10% day, approximate volume pace ≥5x, float ≤20M, news">Ignition</th>
           <th title="2-week move">2W%</th>
           <th class="left" title="news catalyst headline (last ~16h)">News</th>
           <th class="left" title="best live Watchtower pattern + distance to trigger">Structure</th>
@@ -1370,7 +1374,7 @@ function renderMomentum() {
   $("mom-empty").style.display = rows.length ? "none" : "";
   $("mom-count").textContent = rows.length ? `${rows.length} names` : "";
   $("mom-asof").textContent = state.momAsOf
-    ? `as of ${new Date(state.momAsOf).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})} · ${state.momSession} · delayed per data plan` : "";
+    ? `Last saved ${new Date(state.momAsOf).toLocaleString([], {timeZone:"America/New_York"})} ET · ${state.momSession} · market event time unavailable` : "";
   body.innerHTML = rows.map(r => {
     const p = r.pillars || {};
     const pd = ["price","change","relvol","float","news"].map(k =>
@@ -1385,7 +1389,7 @@ function renderMomentum() {
       : "—";
     return `<tr data-ticker="${escAttr(r.ticker)}" style="cursor:pointer">
       <td class="left"><b>${esc(r.ticker)}</b>${r.former_momo ? ' <span title="Momo memory — a +25% day inside the trailing year">🔁</span>' : ""}${r.earnings_gap ? ' <span title="reported earnings within the last day">📊</span>' : ""}</td>
-      <td class="num">$${r.price != null ? r.price.toFixed(2) : "—"}</td>
+      <td class="num">$${r.price != null ? r.price.toFixed(2) : "—"}<div style="color:var(--muted);font-size:10px">${r.scanned_at ? "Saved " + esc(new Date(r.scanned_at).toLocaleString([], {timeZone:"America/New_York"})) + " ET" : "Saved time unavailable"}<br>Market event time unavailable</div></td>
       <td class="num"><span class="${chgCls}">${r.chg_pct != null ? (r.chg_pct > 0 ? "+" : "") + r.chg_pct.toFixed(1) + "%" : "—"}</span></td>
       <td class="num"><span class="${gapCls}">${r.gap_pct != null ? (r.gap_pct > 0 ? "+" : "") + r.gap_pct.toFixed(1) + "%" : "—"}</span></td>
       <td class="num">${fmtShares(r.volume)}</td>

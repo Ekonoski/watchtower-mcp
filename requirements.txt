@@ -3,6 +3,7 @@
 # Pin below 2 until the FastMCP import is migrated deliberately.
 mcp[cli]>=1.29,<2
 uvicorn[standard]
+websockets>=13,<16
 python-dotenv[cli]
 
 # Core data + live sources for full GMMSS (reversal + momentum + breakdown + regime + research)

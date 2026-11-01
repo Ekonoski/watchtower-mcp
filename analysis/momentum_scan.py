@@ -6,7 +6,7 @@ each row joined at read time with the column no momentum scanner has:
 the name's SWING STRUCTURE (live pattern, trigger distance, oscillator
 state).
 
-Scanners (Phase A — runs on delayed data; freshness is labeled, not faked):
+Scanners (scheduled snapshots, not a streaming alert service):
   gappers       gap >= 4% vs prior close (both directions listed; the
                 8:50 AM pre-market pass is the morning watchlist builder)
   pillars       the Ignition score — the classic small-cap momentum
@@ -18,14 +18,16 @@ Scanners (Phase A — runs on delayed data; freshness is labeled, not faked):
                 multi-day tape, and the bridge to the swing book.
   earnings_gap  reported within the last day AND gapping >= 4%.
 
-Phase B (needs the real-time upgrade): HOD momentum bursts, velocity
-alerts (up 5%/5min, 10%/10min), halts. Those are seconds-class signals;
-on delayed data they would be history dressed as alerts, so they are
-absent until the data supports them.
+Seconds-class alerts need the separate streaming path in live_tape.py.
+A real-time data entitlement does not make these scheduled snapshots live.
+Provider event age must be measured; scan time is not market event time.
 
 Data notes:
   - relvol (daily rate) = today's cumulative volume vs the 20-day average
-    volume prorated by session elapsed time. Volume history for the WHOLE
+    volume prorated by session elapsed time (minimum 5% of a day, including
+    premarket). This is approximate volume pace, NOT historical same-time
+    RVOL. The relvol storage field is retained for compatibility.
+    Volume history for the WHOLE
     market (not just our stored universe) comes from Polygon's grouped-
     daily endpoint: one call per session, 21 sessions kept in ticker_stats
     (avg_vol_20d, close_2w, last_big_day).
@@ -319,17 +321,19 @@ def refresh_market_history(days: int = 21) -> dict:
     return {"sessions": len(sessions), "tickers": len(rows)}
 
 
-DATA_DELAY_MIN = 15   # our feed lags the tape by this much
+def _session_now(now=None):
+    """Eastern clock session and approximate volume-pace denominator.
 
-
-def _session_now():
-    """('premarket'|'regular'|'closed', fraction of regular session elapsed
-    AS SEEN BY OUR DELAYED FEED — relvol divides today's volume by this, so
-    the fraction must match the data's clock, not the wall clock. The first
-    ~15 minutes after the open are still 'premarket' to the feed."""
+    No assumed subscription delay. This weekday clock is not an exchange
+    holiday/early-close calendar and does not establish snapshot freshness.
+    Preserve the existing 5% denominator floor; it is not same-time RVOL.
+    """
     from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("America/New_York"))
-    mins = now.hour * 60 + now.minute - DATA_DELAY_MIN
+    now = now if now is not None else datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Session time must be timezone-aware")
+    now = now.astimezone(ZoneInfo("America/New_York"))
+    mins = now.hour * 60 + now.minute + now.second / 60
     if mins < 4 * 60 or now.weekday() >= 5:
         return "closed", 0.0
     if mins < 9 * 60 + 30:
@@ -384,9 +388,9 @@ def run_momentum_scan() -> dict:
                 continue
             last = float(getattr(day, "close", 0) or 0) \
                 or float(getattr(mn, "close", 0) or 0) or prev_c
-            # Delayed feeds leave the day block zeroed until well after the
-            # open; the minute block's accumulated_volume carries today's
-            # running total (pre-market included) the whole time.
+            # The day block can be empty during premarket. Use minute
+            # cumulative volume as a fallback; this is not evidence of a
+            # delayed subscription, nor proof the snapshot is current.
             vol = float(getattr(day, "volume", 0) or 0) \
                 or float(getattr(mn, "accumulated_volume", 0) or 0)
             open_ = float(getattr(day, "open", 0) or 0)

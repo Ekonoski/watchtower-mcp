@@ -28,7 +28,7 @@ import threading
 import time
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 
 log = logging.getLogger(__name__)
 
@@ -1604,6 +1604,12 @@ def _momentum_rows(scanner: str = "gappers") -> dict:
             "pillars": r[10] or {}, "pillar_count": int(r[11] or 0),
             "move_2w_pct": _f(r[12]), "former_momo": bool(r[13]),
             "earnings_gap": bool(r[14]), "session": r[15],
+            "scanned_at": r[16].isoformat() if r[16] else None,
+            # Legacy rows persist scan-write time, not provider event time.
+            # Never relabel the former as measured market-data freshness.
+            "market_data_at": None,
+            "freshness_status": "unavailable",
+            "relvol_method": "approximate_daily_volume_pace",
             "pattern": r[17], "pattern_tf": r[18], "pattern_status": r[19],
             "pattern_dist": _f(r[20]),
             "osc_dir": r[21],
@@ -1859,6 +1865,43 @@ def _fmp_description(ticker: str) -> str:
 def register_routes(mcp) -> None:
     """Attach all dashboard routes to the FastMCP instance. Must be called
     before mcp.streamable_http_app() builds the Starlette app."""
+
+    @mcp.custom_route("/dashboard/trading", methods=["GET"])
+    async def trading_workspace(request: Request):
+        return FileResponse(os.path.join(_STATIC_DIR, "trading.html"),
+                            headers={"Cache-Control": "no-cache"})
+
+    @mcp.custom_route("/dashboard/trading-assets/{asset}", methods=["GET"])
+    async def trading_asset(request: Request):
+        asset = request.path_params.get("asset")
+        if asset not in ("trading.css", "trading.js"):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(os.path.join(_STATIC_DIR, asset),
+                            headers={"Cache-Control": "no-cache"})
+
+    @mcp.custom_route("/api/trading/stream", methods=["GET"])
+    async def trading_stream(request: Request):
+        if not _is_authed(request):
+            return _unauthorized()
+        import json
+        import re
+        from analysis.live_tape import live_tape
+        symbol = (request.query_params.get("symbol") or "").upper()
+        if symbol and not re.fullmatch(r"[A-Z0-9.\-]{1,16}", symbol):
+            return JSONResponse({"error": "invalid symbol"}, status_code=400)
+        await live_tape.ensure_started()
+
+        async def frames():
+            while not await request.is_disconnected():
+                # Authentication is rechecked during a long-lived connection.
+                if not _is_authed(request):
+                    yield 'event: auth\ndata: {}\n\n'
+                    break
+                payload = live_tape.snapshot(symbol or None)
+                yield 'data: ' + json.dumps(payload, allow_nan=False) + '\n\n'
+                await asyncio.sleep(0.25)
+        return StreamingResponse(frames(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
     @mcp.custom_route("/dashboard", methods=["GET"])
     async def dashboard_page(request: Request):
