@@ -1,5 +1,5 @@
 import unittest
-from analysis.scanner_continuation import Continuations
+from analysis.scanner_continuation import Continuations,provider_runners
 from analysis.live_tape import TapeBook
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -70,5 +70,17 @@ class ContinuationTests(unittest.TestCase):
         scanner=self.book.scanner_snapshot(self.now)['scanner']
         self.assertEqual(scanner['preferred']['continuation']['rows'][0]['ticker'],'OLD')
         self.assertEqual(scanner['preferred']['leaders']['rows'][0]['ticker'],'OLD')
+
+    def test_market_wide_seed_retains_failed_close_and_uses_prior_session(self):
+        class Provider:
+            def get(self,url):
+                if '2026-10-29' in url:return {'results':[{'T':'TNMG','c':4}]}
+                return {'results':[{'T':'TNMG','h':5,'c':3,'v':1000000},
+                                   {'T':'IPO','h':10,'c':8,'v':1000000}]}
+        rows,coverage=provider_runners(['2026-10-30','2026-10-29'],Provider())
+        self.assertEqual([r['ticker'] for r in rows],['TNMG'])
+        self.assertEqual(rows[0]['peak_gain_pct'],25)
+        self.assertEqual(rows[0]['last_close'],3)
+        self.assertEqual(coverage[0]['provider_symbols'],2)
 
 if __name__=='__main__':unittest.main()

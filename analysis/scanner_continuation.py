@@ -10,6 +10,28 @@ ET=ZoneInfo('America/New_York')
 RULES='continuation-v1-5sessions-10pct-1mturnover'
 
 
+def provider_runners(dates, provider):
+    bars={};coverage=[]
+    for day in dates:
+        data=provider.get(f'https://api.massive.com/v2/aggs/grouped/locale/us/market/stocks/{day}?adjusted=true&include_otc=false')
+        rows=data.get('results') or []
+        if not rows:raise RuntimeError(f'Massive grouped daily data unavailable for {day}')
+        bars[day]={r['T']:r for r in rows if r.get('T')}
+        coverage.append({'session':day,'provider_symbols':len(bars[day])})
+    candidates=[]
+    for day,previous in zip(dates[:-1],dates[1:]):
+        for ticker,row in bars[day].items():
+            prior=bars[previous].get(ticker,{}).get('c')
+            high=row.get('h');close=row.get('c');volume=row.get('v')
+            if not all(isinstance(v,(int,float)) and v>0 for v in (prior,high,close,volume)):continue
+            if high<prior*1.1 or close*volume<1_000_000:continue
+            candidates.append({'ticker':ticker,'runner_session':day,'peak_gain_pct':(high/prior-1)*100,
+                'last_close':close,'prior_close':prior,'daily_high':high,'daily_volume':volume,
+                'approx_turnover':close*volume,'source':'Massive grouped daily, adjusted, OTC excluded',
+                'catalyst_status':'unverified','corporate_actions':'Adjusted history; ticker identity and corporate actions need review'})
+    return candidates,coverage
+
+
 def load_recent(target):
     from analysis.scanner_journal import connection
     conn=connection()
@@ -40,9 +62,28 @@ def load_recent(target):
                 FROM scanner_journal WHERE kind='continuation_candidate' AND session_date=ANY(%s)
                 ORDER BY session_date,payload->>'ticker',observed_at DESC,id DESC""",(sessions,))
             rows.extend(r[0] for r in cur.fetchall())
-        return {'target_session':target,'sessions':[d.isoformat() for d in sessions],
+            cur.execute("""SELECT payload FROM scanner_journal WHERE kind='continuation_universe'
+                AND payload->'status'->>'target_session'=%s
+                AND payload->'status'->>'provider_complete'='true'
+                ORDER BY observed_at DESC,id DESC LIMIT 1""",(target,))
+            cached=cur.fetchone()
+        result={'target_session':target,'sessions':[d.isoformat() for d in sessions],
                 'coverage':coverage,'runners':rows,'source_note':'Cached daily universe plus recorded live candidates; instrument type, news, float and corporate actions are not admission gates. Missing intraday spikes or daily bars are not reconstructed.'}
     finally:conn.close()
+    if cached:
+        payload=cached[0]
+        provider_rows=[r for group in payload['runners'].values() for r in group if r['source'].startswith('Massive grouped')]
+        provider_coverage=payload['status']['provider_coverage']
+    else:
+        from analysis.scanner_reference_data import Providers
+        provider=Providers(os.getenv('POLYGON_API_KEY') or os.getenv('MASSIVE_API_KEY'),None)
+        provider_rows,provider_coverage=provider_runners([d.isoformat() for d in dates],provider)
+    # Prefer one consistent, adjusted provider history; keep separately recorded
+    # premarket-only runner observations. Never mix its prices with cached bars.
+    result['runners']=provider_rows+[r for r in rows if r['source'].startswith('live observed')]
+    result.update(provider_complete=True,provider_coverage=provider_coverage,
+        source_note='Market-wide Massive grouped daily bars (adjusted, OTC excluded), plus recorded live candidates. News, float and instrument type are not admission gates. Past premarket-only moves may be absent; IPOs without a predecessor close cannot be graded.')
+    return result
 
 
 class Continuations:
@@ -62,6 +103,7 @@ class Continuations:
         self.seeds=seeds;self.target=result['target_session']
         self.status={'state':'available','loaded_at':now,'target_session':self.target,
             'sessions':result['sessions'],'coverage':result['coverage'],'runner_count':len(seeds),
+            'provider_complete':result.get('provider_complete',False),'provider_coverage':result.get('provider_coverage',[]),
             'rules':RULES,'note':result['source_note']}
         self.record('continuation_universe',{'status':self.status,'runners':seeds},now)
 

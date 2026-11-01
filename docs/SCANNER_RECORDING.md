@@ -73,6 +73,15 @@ The Continuations tab carries runners from the five most recent cached SPY
 session dates strictly before today. A cached daily high at least 10% above the
 immediately preceding session's close and close x volume >= $1m qualifies a
 historical candidate. These are research defaults, not verified Warrior rules.
+The initial cached-only seed was found to omit TNMG. The deployed loader now
+checks the full market using six Massive grouped daily datasets (five runner
+sessions and their predecessor), adjusted and OTC-excluded. All price comparisons
+come from that one source; cached and provider prices are never mixed. The
+resulting universe and provider coverage counts are saved in scanner_journal
+and reused for that target date, avoiding repeated historical downloads.
+Provider failure makes the universe unavailable rather than silently falling
+back to the known-incomplete cached universe. Cached SPY dates still anchor the
+session calendar. IPOs without a predecessor close remain an explicit gap.
 No price band gates the stored universe; UI bands and their 100-row caps apply
 afterward. A failed close does not erase a qualifying earlier high.
 
