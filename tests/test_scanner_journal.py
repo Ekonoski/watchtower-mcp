@@ -48,6 +48,16 @@ class JournalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(journal.dropped,1)
         self.assertEqual(len(journal.pending),1)
 
+    async def test_large_snapshots_cannot_grow_buffer_without_bound(self):
+        journal=ScannerJournal(Store(),byte_capacity=32)
+        journal.record('list_snapshot',{'rows':'x'*100})
+        self.assertEqual(journal.dropped,1)
+        self.assertEqual(journal.pending_bytes,0)
+        journal.record('heartbeat',{})
+        self.assertGreater(journal.pending_bytes,0)
+        await journal.flush()
+        self.assertEqual(journal.pending_bytes,0)
+
     async def test_run_identity_and_et_date(self):
         a=ScannerJournal(Store());b=ScannerJournal(Store())
         self.assertNotEqual(a.run_id,b.run_id)
@@ -78,6 +88,22 @@ class JournalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(beat['warm_since'])
         self.assertEqual(beat['alert_total'],0)
         self.assertTrue(any(r['kind']=='run_stop' for r in rows))
+
+    async def test_slow_database_does_not_stop_list_sampling(self):
+        journal=ScannerJournal(Store())
+        tape=SimpleNamespace(state='quiet',reason='No market messages',book=TapeBook())
+        gate=asyncio.Event();flush=journal.flush
+        async def blocked_flush():
+            await gate.wait()
+            await flush()
+        with patch.object(journal,'flush',new=blocked_flush):
+            task=asyncio.create_task(journal.run(tape))
+            await asyncio.sleep(.05)
+            first=journal.list_status['last_sample_at']
+            await asyncio.sleep(1.1)
+            self.assertGreater(journal.list_status['last_sample_at'],first)
+            self.assertEqual(journal.saved,0)
+            journal.stopping=True;gate.set();await task
 
 
 class HistoryTests(unittest.IsolatedAsyncioTestCase):

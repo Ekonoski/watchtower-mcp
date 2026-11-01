@@ -17,7 +17,8 @@ separate. Up and down directions, thresholds, cooldown, warmup, float/RVOL
 errors and freshness survive export. No historical reconstruction fills holes.
 
 Writes run in a worker thread and retry with the same IDs after failure, without
-blocking the market-event loop. The buffer is bounded at 20,000 records, batches
+blocking the market-event loop. The buffer is bounded at 20,000 records and
+32 MiB of serialized payloads (Python object overhead is additional), batches
 at 500; overflow increments an explicit loss count. At most one write runs at a
 time. Database commits survive deployments; queued rows can be lost on a crash.
 Long database outages can exceed the buffer. The UI exposes write errors,
@@ -33,8 +34,38 @@ Authenticated endpoints:
 Compare Warrior's **expanded** historical alerts within matching families.
 Do not compare a collapsed last-alert timestamp with Watchtower's first alert.
 These are server trigger/receipt comparisons, never verified display latency.
-Top-list appearances, news delivery and browser render history are separate
-datasets and are not reconstructed from these alerts.
+Top-list membership is captured separately as described below. News delivery
+and browser render history are not reconstructed from these alerts.
+
+## Stock-selection history
+
+The server samples the same ScannerFocus views as the UI at a target cadence of
+one second, independently of database writes and browser requests. It records
+leaders, fresh momentum, five-minute focus holds and volume lists across the
+preferred ($3-$8), broader ($3-$20) and unrestricted bands. All keep the UI's
+100-row cap, total eligible counts, omitted counts, missing day references and
+warmup counts. This is the observed streaming universe, not proof that every
+listed US stock had coverage.
+
+`list_snapshot` stores full ranked membership every 30 seconds and at startup,
+session/reconnect boundaries and sampling gaps. Rows are deduplicated by ticker
+within each snapshot, preserving row timestamps, prices, changes, volume,
+float/RVOL values and availability, and focus-hold details. Rank is the index
+in each list's ticker array plus one. Rank-only changes are checkpointed, not
+recorded tick by tick.
+
+`list_membership` records entrants and departures between samples, with ranks
+and row context. Arrivals are new within the observed scope or returning;
+initial/reconnect rows are baseline, never proven first appearances. A sample
+interval over 2.5 seconds is explicitly a gap and new rows say after_gap.
+Membership shorter than the actual sampling interval can be missed. Expiry from
+the 15-second freshness filter, rank displacement, band changes and eligibility
+changes all remove rows; departure alone does not mean a trade failed. Failed
+stocks and returning leaders remain in the historical records.
+
+The combined export includes these records alongside alerts and coverage.
+Compare against Warrior's history at matching dates/times and scanner families;
+do not claim screen latency or exact Warrior rules from list observations.
 
 Coverage is unknown before run_start, after the last heartbeat, across unexpected
 run boundaries, disconnects, missing heartbeats, storage losses, and warmup

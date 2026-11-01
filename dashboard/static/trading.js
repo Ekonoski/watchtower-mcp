@@ -104,6 +104,7 @@ if(typeof document!=='undefined') (()=>{
     if(catalog)$('status-detail').textContent+=` · Float catalog: ${catalog.status}, ${catalog.record_count||0} dated records, ${catalog.invalid_count||0} invalid`;
     const rec=frame.recording;
     if(rec)$('status-detail').textContent+=` · Server recording: ${rec.state}; ${rec.saved||0} saved, ${rec.pending||0} pending, ${rec.dropped||0} lost${rec.error?' · '+rec.error:''}`;
+    if(rec?.lists)$('status-detail').textContent+=` · List recording: ${rec.lists.state}${rec.lists.error?' · '+rec.lists.error:''}`;
   }
   function renderRows(){
     if(!frame)return;
@@ -231,7 +232,7 @@ if(typeof document!=='undefined') (()=>{
       const payload={...page,offset:0,next_offset:null,records,exported_at:new Date().toISOString()};
       const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');
       a.href=url;a.download=`watchtower-server-history-${day}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-      $('history-status').textContent=`Exported ${records.filter(r=>r.kind==='alert').length} alerts plus coverage records. Check gaps before comparison.`;
+      $('history-status').textContent=`Exported ${records.filter(r=>r.kind==='alert').length} alerts, ${records.filter(r=>r.kind==='list_snapshot').length} list snapshots, ${records.filter(r=>r.kind==='list_membership').length} membership changes plus coverage records. Check gaps before comparison.`;
     }catch(error){$('history-status').textContent=error.message;}
     finally{$('export-history').disabled=false;}
   };

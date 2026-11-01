@@ -35,6 +35,7 @@ class TapeBook:
     """Builds causal observed-trade windows; unknown windows stay unknown."""
     def __init__(self, alert_sink=None):
         self.alert_sink=alert_sink
+        self.window_generation=0
         self.rows = {}
         self.history = {}
         self.previous_close = {}
@@ -78,6 +79,7 @@ class TapeBook:
                 'inputs_observed_at':now}
 
     def reset_windows(self):
+        self.window_generation+=1
         # A disconnect is a history hole, not a quiet market.
         self.history.clear()
         self.cooled.clear()
@@ -235,6 +237,32 @@ class TapeBook:
         self.version+=1
         return True
 
+    def with_volume(self, r, now):
+        vol=self.volume_state.get(r['ticker']) or {}
+        if not vol or datetime.fromtimestamp(vol['market_at'],ET).date().isoformat()!=self.session:
+            vol={}
+        return {**r,'volume':vol.get('value'),'volume_market_at':vol.get('market_at'),
+                'volume_5m':self.aggregate_windows.reading(r['ticker'],now),
+                **self.reference_context(r['ticker'],now)}
+
+    def scanner_snapshot(self, now):
+        # Ranking needs only price/moves and observed volume. Resolve expensive
+        # historical references for retained rows, not all 15,000 tracked names.
+        rows=[{**r,'volume_5m':self.aggregate_windows.reading(r['ticker'],now)}
+              for r in self.rows.values()]
+        scanner=self.focus.views(rows,now)
+        enriched={}
+        for group in scanner.values():
+            for family in ('leaders','fresh','focus','volume'):
+                for i,row in enumerate(group[family]['rows']):
+                    ticker=row['ticker']
+                    if ticker not in enriched:enriched[ticker]=self.with_volume(self.rows[ticker],now)
+                    # Focus-only hold fields must survive enrichment.
+                    group[family]['rows'][i]={**row,**enriched[ticker]}
+        return {'scanner':scanner,'session_date':self.session,'tracked_count':len(self.rows),
+                'market_at':self.last_event_at,'received_at':self.last_message_at,
+                'warm_seconds':max(0,now-self.warm_since) if self.warm_since else 0}
+
     def snapshot(self, now=None, selected=None):
         now=time.time() if now is None else now
         active=[r for r in self.rows.values() if now-r['market_at']<=15]
@@ -244,16 +272,11 @@ class TapeBook:
         enriched={}
         def with_volume(r):
             if r['ticker'] in enriched:return enriched[r['ticker']]
-            vol=self.volume_state.get(r['ticker']) or {}
-            if not vol or datetime.fromtimestamp(vol['market_at'],ET).date().isoformat()!=self.session:
-                vol={}
-            result={**r,'volume':vol.get('value'),'volume_market_at':vol.get('market_at'),
-                    'volume_5m':self.aggregate_windows.reading(r['ticker'],now),
-                    **self.reference_context(r['ticker'],now)}
+            result=self.with_volume(r,now)
             enriched[r['ticker']]=result
             return result
         selected_row=self.rows.get(selected)
-        scanner = self.focus.views([with_volume(r) for r in self.rows.values()], now)
+        scanner = self.scanner_snapshot(now)['scanner']
         return {'version':self.version,'sent_at':now,'session_date':self.session,
                 'scanner': scanner,
                 'received_at':self.last_message_at,'market_at':self.last_event_at,

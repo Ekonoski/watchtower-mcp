@@ -72,11 +72,13 @@ class PostgresJournal:
 
 
 class ScannerJournal:
-    def __init__(self, store=None, capacity=20000):
+    def __init__(self, store=None, capacity=20000, byte_capacity=32*1024*1024):
         self.store=store or PostgresJournal()
         self.run_id=str(uuid.uuid4())
         self.pending=deque()
         self.capacity=capacity
+        self.byte_capacity=byte_capacity
+        self.pending_bytes=0
         self.sequence=0
         self.saved=0
         self.dropped=0
@@ -86,25 +88,31 @@ class ScannerJournal:
         self.failures=0
         self.task=None
         self.stopping=False
+        self.list_task=None
+        self.list_status={'state':'not started','sample_seconds':1,'checkpoint_seconds':30}
 
     def record(self, kind, payload, observed_at=None):
         now=time.time() if observed_at is None else observed_at
         self.sequence+=1
-        if len(self.pending)>=self.capacity:
+        size=len(json.dumps(payload,allow_nan=False).encode('utf-8'))
+        if len(self.pending)>=self.capacity or self.pending_bytes+size>self.byte_capacity:
             self.dropped+=1
             log.error('Scanner journal queue full: %s evidence rows lost',self.dropped)
             return
         self.pending.append({'id':f'{self.run_id}:{self.sequence:012d}',
             'run_id':self.run_id,'kind':kind,'observed_at':now,
             'session_date':datetime.fromtimestamp(now,ET).date().isoformat(),
-            'payload':copy.deepcopy(payload)})
+            'payload':copy.deepcopy(payload),'_bytes':size})
+        self.pending_bytes+=size
 
     def status(self):
         fresh=self.last_saved_at is not None and time.time()-self.last_saved_at<90
         return {'state':'unavailable' if self.error else 'saving' if fresh else 'waiting for durable write',
                 'run_id':self.run_id,'pending':len(self.pending),'saved':self.saved,
+                'pending_payload_bytes':self.pending_bytes,'payload_byte_limit':self.byte_capacity,
                 'dropped':self.dropped,'last_saved_at':self.last_saved_at,'error':self.error,
                 'write_failures':self.failures,'last_failure_at':self.last_failure_at,
+                'lists':dict(self.list_status),
                 'rules_version':RULES,'revision':os.getenv('RAILWAY_GIT_COMMIT_SHA','unknown')}
 
     async def flush(self):
@@ -122,13 +130,34 @@ class ScannerJournal:
             self.error=detail;self.failures+=1;self.last_failure_at=time.time()
             log.error('Scanner journal write failed: %s',detail)
             return
-        for _ in batch:self.pending.popleft()
+        for _ in batch:self.pending_bytes-=self.pending.popleft()['_bytes']
         self.saved+=len(batch);self.last_saved_at=time.time();self.error=None
+
+    async def sample_lists(self, tape):
+        from analysis.scanner_list_history import ListHistory
+        history=ListHistory(self.record)
+        while not self.stopping:
+            began=time.perf_counter()
+            now=time.time()
+            try:
+                snapshot=tape.book.scanner_snapshot(now)
+                history.capture(snapshot,now,tape.book.window_generation,tape.state)
+                self.list_status.update(state='sampling',last_sample_at=now,error=None,
+                    duration_ms=(time.perf_counter()-began)*1000)
+            except Exception as exc:
+                # No credential-bearing I/O in snapshotting. Keep the failure
+                # visible and continue; never silently turn it into an empty list.
+                detail=f'{type(exc).__name__}: {exc}'
+                self.list_status.update(state='unavailable',error=detail)
+                self.record('list_error',{'error':detail},now)
+                log.exception('Scanner list sampling failed')
+            await asyncio.sleep(max(.05,1-(time.perf_counter()-began)))
 
     async def run(self, tape):
         self.record('run_start',{'rules_version':RULES,'revision':os.getenv('RAILWAY_GIT_COMMIT_SHA','unknown'),
-            'scope':'All generated 5%/5m and 10%/10m up/down alerts; no UI filters. Not exact Warrior eligibility.',
+            'scope':'All generated move alerts plus sampled leaders/fresh/focus/volume lists in all three price bands. No browser filters. Not exact Warrior eligibility.',
             'heartbeat_seconds':30,'flush_seconds':1,'warmup_seconds':600})
+        self.list_task=asyncio.create_task(self.sample_lists(tape))
         last=0
         while not self.stopping:
             now=time.time()
@@ -140,6 +169,7 @@ class ScannerJournal:
                 last=now
             await self.flush()
             await asyncio.sleep(1 if not self.error else 5)
+        await self.list_task
         self.record('run_stop',{'journal':self.status(),'stream_state':tape.state})
         while self.pending:
             await self.flush()
