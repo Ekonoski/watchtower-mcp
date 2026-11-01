@@ -102,6 +102,8 @@ if(typeof document!=='undefined') (()=>{
     if(refs)$('status-detail').textContent+=` · References: ${refs.status}; ${refs.loaded_count||0} loaded, ${refs.pending_count||0} queued, ${refs.failed_count||0} with errors, ${refs.deferred_count||0} deferred by cap`;
     const catalog=frame.float_catalog_status;
     if(catalog)$('status-detail').textContent+=` · Float catalog: ${catalog.status}, ${catalog.record_count||0} dated records, ${catalog.invalid_count||0} invalid`;
+    const rec=frame.recording;
+    if(rec)$('status-detail').textContent+=` · Server recording: ${rec.state}; ${rec.saved||0} saved, ${rec.pending||0} pending, ${rec.dropped||0} lost${rec.error?' · '+rec.error:''}`;
   }
   function renderRows(){
     if(!frame)return;
@@ -212,6 +214,26 @@ if(typeof document!=='undefined') (()=>{
       note:'First render-callback observation per session/family/ticker/filter, selected view only; not a physical-paint guarantee. Coverage is incomplete: UI caps, filters, warmup, reference gaps and unattended intervals must be reconciled before scoring misses. Alert names map published magnitude/time only, not exact Warrior eligibility. Do not mix filtered views in a full-universe comparison.'};
     const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');
     a.href=url;a.download='watchtower-discovery-observations.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+  $('history-date').value=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  $('export-history').onclick=async()=>{
+    const day=$('history-date').value;
+    if(!day)return;
+    $('export-history').disabled=true;
+    $('history-status').textContent='Loading saved records…';
+    try{
+      let offset=0, records=[], page;
+      do{
+        const response=await fetch(`/api/trading/history?session=${encodeURIComponent(day)}&offset=${offset}`);
+        if(!response.ok)throw new Error(response.status===401?'Sign in to export history':'History unavailable; no file exported');
+        page=await response.json();records.push(...page.records);offset=page.next_offset;
+      }while(offset!==null);
+      const payload={...page,offset:0,next_offset:null,records,exported_at:new Date().toISOString()};
+      const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');
+      a.href=url;a.download=`watchtower-server-history-${day}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      $('history-status').textContent=`Exported ${records.filter(r=>r.kind==='alert').length} alerts plus coverage records. Check gaps before comparison.`;
+    }catch(error){$('history-status').textContent=error.message;}
+    finally{$('export-history').disabled=false;}
   };
   $('symbol-search').oninput=renderRows;$('symbol-search').onkeydown=e=>{if(e.key==='Enter')select(e.target.value.trim().toUpperCase());};$('move-filter').onchange=renderRows;$('price-band').onchange=renderRows;
   document.querySelectorAll('[data-feed]').forEach(b=>b.onclick=()=>{feed=b.dataset.feed;document.querySelectorAll('[data-feed]').forEach(x=>x.classList.toggle('on',x===b));renderRows();});

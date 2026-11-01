@@ -1,6 +1,7 @@
 """Single-process, opt-in stock trade stream for the discretionary trading UI.
 
-No orders, automatic entries, database writes, or reinterpretation of old scans.
+No orders, automatic entries, or reinterpretation of old scans.
+Generated alerts are journaled server-side for later scanner comparison.
 Run one owning process per Massive stock connection allowance. A second owner
 can disconnect the first; enabling this is an explicit operational decision.
 """
@@ -32,7 +33,8 @@ def finite(value):
 
 class TapeBook:
     """Builds causal observed-trade windows; unknown windows stay unknown."""
-    def __init__(self):
+    def __init__(self, alert_sink=None):
+        self.alert_sink=alert_sink
         self.rows = {}
         self.history = {}
         self.previous_close = {}
@@ -223,10 +225,13 @@ class TapeBook:
             if side and crossed and market-self.cooled.get(key,0)>=60:
                 self.cooled[key]=market
                 self.alert_total+=1
-                self.alerts.appendleft({'id':self.alert_total,'ticker':symbol,'direction':side,
+                alert={'id':self.alert_total,'ticker':symbol,'direction':side,
                     'label':f'{threshold}% / {seconds//60}m','move_pct':change,
                     'price':price,'market_at':market,'received_at':now,
-                    'reference_context':self.reference_context(symbol,now)})
+                    'threshold_pct':threshold,'window_seconds':seconds,'cooldown_seconds':60,
+                    'warm_since':self.warm_since,'reference_context':self.reference_context(symbol,now)}
+                self.alerts.appendleft(alert)
+                if self.alert_sink:self.alert_sink(alert)
         self.version+=1
         return True
 
@@ -280,13 +285,33 @@ class LiveTape:
         self.selected=None
         self.news_context=None
         self.news_task=None
+        self.journal=None
 
     def enabled(self):
         return os.getenv('WATCHTOWER_LIVE_TAPE','').lower() in ('1','true','yes')
 
     async def ensure_started(self):
         if self.enabled() and self.task is None:
+            from analysis.scanner_journal import ScannerJournal
+            self.journal=ScannerJournal()
+            self.book.alert_sink=lambda alert:self.journal.record('alert',alert,alert['received_at'])
+            self.journal.task=asyncio.create_task(self.journal.run(self))
             self.task=asyncio.create_task(self._run())
+
+    async def stop(self):
+        if self.task and not self.task.done():
+            self.task.cancel()
+            try:await self.task
+            except asyncio.CancelledError:pass
+        if self.journal and self.journal.task:
+            self.journal.stopping=True
+            try:await asyncio.wait_for(asyncio.shield(self.journal.task),timeout=15)
+            except asyncio.TimeoutError:
+                log.error('Scanner journal shutdown timed out; pending rows are not guaranteed durable')
+
+    def connection_event(self, state):
+        if self.journal:self.journal.record('connection',{'state':state,'reason':self.reason,
+            'warm_since':self.book.warm_since,'market_at':self.book.last_event_at})
 
     async def seed_references(self, key):
         import requests
@@ -319,6 +344,7 @@ class LiveTape:
         try:
             await self._stream()
         finally:
+            self.connection_event('worker_stopped')
             for task in (self.reference_task,self.scanner_reference_task,self.float_catalog_task,self.news_task):
                 if task and not task.done():
                     task.cancel()
@@ -396,6 +422,7 @@ class LiveTape:
         while self.enabled():
             self.state='connecting';self.reason='Connecting to real-time stock trades.'
             self.book.reset_windows()
+            self.connection_event('connecting')
             try:
                 async with websockets.connect('wss://socket.massive.com/stocks',
                     ping_interval=20,ping_timeout=20,open_timeout=15,max_size=16*1024*1024,max_queue=32) as ws:
@@ -414,9 +441,11 @@ class LiveTape:
                                 if status=='auth_success' and not subscribed:
                                     await ws.send(json.dumps({'action':'subscribe','params':'T.*,A.*'}))
                                     subscribed=True;self.state='warming';self.reason='Waiting for real-time trade events.'
+                                    self.connection_event('subscribed')
                                 elif status in ('auth_failed','not_authorized','max_connections','error') or 'not authorized' in str(event.get('message','')).lower():
                                     self.state='unavailable'
                                     self.reason=str(event.get('message') or status).replace(key,'[REDACTED]')
+                                    self.connection_event('unavailable')
                                     return  # Never compete with another owning process.
                             elif self.book.ingest(event,now):
                                 self.state='receiving';self.reason='Receiving raw stock trades; Warrior speed parity is not yet verified.'
@@ -432,6 +461,7 @@ class LiveTape:
                 detail=(type(exc).__name__+': '+str(exc)).replace(key,'[REDACTED]')
                 log.warning('Stock stream disconnected: %s',detail)
                 self.state='disconnected';self.reason='Stock stream disconnected: '+detail
+                self.connection_event('disconnected')
             await asyncio.sleep(backoff)
             backoff=min(60,backoff*2)
 
@@ -439,6 +469,7 @@ class LiveTape:
         self.selected=selected
         result=self.book.snapshot(selected=selected)
         result.update(state=self.state,reason=self.reason,enabled=self.enabled(),
+                      recording=self.journal.status() if self.journal else {'state':'not started'},
                       selected_reference={'ticker':selected,**self.book.reference_context(selected,time.time())} if selected else None,
                       reference_status=self.reference_status,reference_at=self.reference_at,
                       scanner_reference_status=self.scanner_loader.diagnostics() if self.scanner_loader else {'status':'not started'},

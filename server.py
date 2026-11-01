@@ -2855,6 +2855,9 @@ else:
 # ── ASGI app with Bearer auth on /mcp ─────────────────────────────────────────
 
 raw_app = mcp.streamable_http_app()
+from analysis.scanner_journal import TapeLifespan
+from analysis.live_tape import live_tape as _live_tape
+raw_app = TapeLifespan(raw_app, _live_tape)
 
 
 class AuthASGIWrapper:

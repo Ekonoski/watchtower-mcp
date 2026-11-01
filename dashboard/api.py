@@ -1879,6 +1879,31 @@ def register_routes(mcp) -> None:
         return FileResponse(os.path.join(_STATIC_DIR, asset),
                             headers={"Cache-Control": "no-cache"})
 
+    @mcp.custom_route("/api/trading/recording", methods=["GET"])
+    async def trading_recording(request: Request):
+        if not _is_authed(request):return _unauthorized()
+        from analysis.live_tape import live_tape
+        return JSONResponse({'stream_state':live_tape.state,
+            'recording':live_tape.journal.status() if live_tape.journal else {'state':'not started'}})
+
+    @mcp.custom_route("/api/trading/history", methods=["GET"])
+    async def trading_history(request: Request):
+        if not _is_authed(request):return _unauthorized()
+        from datetime import date
+        from analysis.scanner_journal import PostgresJournal
+        try:
+            session=date.fromisoformat(request.query_params.get('session','')).isoformat()
+            offset=int(request.query_params.get('offset','0'))
+            if offset<0:raise ValueError()
+        except ValueError:
+            return JSONResponse({'error':'Provide session=YYYY-MM-DD and nonnegative offset'},status_code=400)
+        try:
+            data=await asyncio.to_thread(PostgresJournal().export,session,offset)
+        except Exception:
+            log.exception('Scanner history read unavailable')
+            return JSONResponse({'error':'Scanner history unavailable; not an empty session'},status_code=503)
+        return JSONResponse(data,headers={'Cache-Control':'no-store'})
+
     @mcp.custom_route("/api/trading/stream", methods=["GET"])
     async def trading_stream(request: Request):
         if not _is_authed(request):

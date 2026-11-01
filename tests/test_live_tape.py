@@ -105,11 +105,15 @@ class TapeTests(unittest.TestCase):
             with patch.dict(os.environ,{'WATCHTOWER_LIVE_TAPE':''}):
                 await stream.ensure_started();self.assertIsNone(stream.task)
             async def idle():await asyncio.sleep(20)
-            with patch.object(stream,'_run',idle),patch.dict(os.environ,{'WATCHTOWER_LIVE_TAPE':'1'}):
+            async def journal_idle(journal,tape):await asyncio.sleep(20)
+            with patch.object(stream,'_run',idle),patch('analysis.scanner_journal.ScannerJournal.run',new=journal_idle),patch.dict(os.environ,{'WATCHTOWER_LIVE_TAPE':'1'}):
                 await stream.ensure_started();a=stream.task
                 await stream.ensure_started();self.assertIs(a,stream.task)
                 a.cancel()
                 try:await a
+                except asyncio.CancelledError:pass
+                stream.journal.task.cancel()
+                try:await stream.journal.task
                 except asyncio.CancelledError:pass
         asyncio.run(check())
     def test_recorded_trade_capture_has_no_future_leak(self):
