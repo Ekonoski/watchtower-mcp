@@ -94,6 +94,13 @@ class TapeTests(unittest.TestCase):
         self.put(86401,6,symbol='NEXT')
         self.assertNotIn('TEST',self.book.rows)
         self.assertIsNone(self.book.rows['NEXT']['move_1m'])
+
+    def test_session_boundary_cannot_seed_runner_from_yesterdays_reference(self):
+        self.put(1)
+        self.book.previous_close={'NEXT':1}
+        self.book.previous_close_session=self.book.session
+        self.put(86401,6,symbol='NEXT')
+        self.assertIsNone(self.book.rows['NEXT']['chg_pct'])
     def test_truncation_is_explicit(self):
         for i in range(110):self.put(1,symbol='S'+str(i))
         snap=self.book.snapshot(self.t+2)

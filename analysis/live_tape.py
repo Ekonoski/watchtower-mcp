@@ -40,6 +40,7 @@ class TapeBook:
         self.rows = {}
         self.history = {}
         self.previous_close = {}
+        self.previous_close_session=None
         self.alerts = deque(maxlen=150)
         self.lags = deque(maxlen=2000)
         self.last_message_at = None
@@ -163,6 +164,8 @@ class TapeBook:
             return False
         day = datetime.fromtimestamp(market, ET).date().isoformat()
         if self.session != day:
+            if self.previous_close_session is not None and self.previous_close_session!=day:
+                self.previous_close.clear()
             self.rows.clear()
             self.reset_windows()
             self.alerts.clear()
@@ -350,6 +353,7 @@ class LiveTape:
             rows=await asyncio.to_thread(fetch)
             prev={r['ticker']:finite((r.get('prevDay') or {}).get('c')) for r in rows if r.get('ticker')}
             self.book.previous_close={k:v for k,v in prev.items() if v and v>0}
+            self.book.previous_close_session=datetime.fromtimestamp(time.time(),ET).date().isoformat()
             # The snapshot update timestamp is not the time its high printed.
             # Keep it as a dated reference, never backdate a new-high signal.
             for row in rows:
