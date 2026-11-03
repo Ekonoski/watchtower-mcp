@@ -1135,18 +1135,38 @@ def persist_closing_bars():
                             OR (s.status='triggered' AND t.exited_at IS NULL)""",
                       (today,))
             tks = [r[0] for r in c.fetchall()]
-        n_ok = 0
+        n_ok, missing, failed = 0, [], []
         for tk in tks:
-            bars = _last_closed_15m(tk)
-            if not bars:
-                continue
             try:
-                _persist_spec_bars(conn, tk, today, bars)
-                n_ok += 1
+                bars = _last_closed_15m(tk)
+                if bars:
+                    _persist_spec_bars(conn, tk, today, bars)
+                # A morning-only response is not a captured closing bar.
+                # Read the persisted tape so a repeat pass can also confirm
+                # a final bar captured earlier, without rewriting it.
+                with conn.cursor() as c:
+                    c.execute("""SELECT max(ts) FROM paper_spec_bars
+                                 WHERE ticker=%s AND trade_date=%s
+                                   AND (ts AT TIME ZONE 'America/New_York')::date=%s
+                                   AND (ts AT TIME ZONE 'America/New_York')::time
+                                       BETWEEN '09:30'::time AND '15:45'::time""",
+                              (tk, today, today))
+                    last = c.fetchone()[0]
+                if last is not None and last.astimezone(ET).time() == SETTLE_FINAL_BAR_START:
+                    n_ok += 1
+                else:
+                    stamp = last.astimezone(ET).isoformat() if last else "none"
+                    missing.append(f"{tk} (last RTH bar {stamp})")
             except Exception:
                 conn.rollback()
+                failed.append(tk)
                 log.exception("[paper] closing-bar persist failed for %s", tk)
-        log.info("[paper] closing-bar pass: %d/%d tickers persisted", n_ok, len(tks))
+        if missing:
+            log.warning("[paper] closing-bar holes (no final RTH bar; not settle-ready): %s",
+                        ", ".join(missing))
+        log.info("[paper] closing-bar pass: %d/%d final RTH bars ready, %d missing, %d failed",
+                 n_ok, len(tks), len(missing), len(failed))
+        return {"ready": n_ok, "total": len(tks), "missing": missing, "failed": failed}
     finally:
         conn.close()
 

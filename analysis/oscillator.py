@@ -512,10 +512,29 @@ def refresh_stale_intraday() -> dict:
     evidence) and are logged by name. Returns counts."""
     from screen.reversal_screen import _conn
     conn = _conn()
-    fixed, still = 0, []
+    fixed, still, archived = 0, [], []
     try:
         pctx = _pattern_context(conn)
-        for t, tf, bts in stale_intraday_rows(conn):
+        stale = stale_intraday_rows(conn)
+        # Keep the historical rows, but do not repeatedly fetch a symbol
+        # already marked delisted unless a paper spec/trade still needs it.
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT k.ticker FROM tickers k
+                WHERE k.delisted = true AND k.ticker = ANY(%s)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM paper_specs s
+                    LEFT JOIN paper_trades t ON t.spec_id = s.id
+                    WHERE s.ticker = k.ticker
+                      AND (s.status IN ('armed', 'triggered')
+                           OR (t.id IS NOT NULL AND t.exited_at IS NULL))
+                  )
+            """, (sorted({t for t, _, _ in stale}),))
+            inactive = {r[0] for r in cur.fetchall()}
+        for t, tf, bts in stale:
+            if t in inactive:
+                archived.append(f"{t} {tf} (bar {bts})")
+                continue
             try:
                 df = fetch_intraday_fresh(t, tf)
                 if len(df) < 70:
@@ -532,8 +551,11 @@ def refresh_stale_intraday() -> dict:
         conn.close()
     if still:
         log.warning(f"[oscillator] stale intraday rows still unresolved: {', '.join(still)}")
-    log.info(f"[oscillator] stale-row sweep: {fixed} refreshed, {len(still)} unresolved")
-    return {"refreshed": fixed, "unresolved": len(still)}
+    if archived:
+        log.info(f"[oscillator] archived delisted rows retained: {', '.join(archived)}")
+    log.info(f"[oscillator] stale-row sweep: {fixed} refreshed, {len(still)} unresolved, "
+             f"{len(archived)} archived")
+    return {"refreshed": fixed, "unresolved": len(still), "archived": len(archived)}
 
 
 def fetch_4h_confirmed(ticker: str, days: int = 200) -> pd.DataFrame:
