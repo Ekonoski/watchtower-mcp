@@ -13,6 +13,7 @@ import uuid
 from collections import deque
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from analysis.scanner_journal_codec import CODEC, MARKER, PACKED_KINDS, pack, restore
 
 ET = ZoneInfo('America/New_York')
 RULES = 'observed-trades-5pct5m-10pct10m-v1'
@@ -38,17 +39,39 @@ def connection():
 class PostgresJournal:
     def write(self, records):
         from psycopg2.extras import execute_values
+        from psycopg2 import Binary
+        if not records:return
         conn = connection()
         try:
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '10s'")
+                # Acknowledgement can be lost after commit. Exclude durable IDs
+                # before packing, even if the retry now includes newer records.
+                cur.execute('SELECT id FROM public.scanner_journal WHERE id=ANY(%s)',
+                            ([r['id'] for r in records],))
+                existing = {r[0] for r in cur.fetchall()}
+                records = [r for r in records if r['id'] not in existing]
+                if not records:return
+                bulky = [r for r in records if r['kind'] in PACKED_KINDS]
+                chunk = pack(bulky) if bulky else None
+                if chunk:
+                    cur.execute('''INSERT INTO public.scanner_journal_chunks
+                        (id,codec,sha256,raw_bytes,record_count,body)
+                        VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING''',
+                        (chunk['id'],chunk['codec'],chunk['sha256'],chunk['raw_bytes'],
+                         chunk['record_count'],Binary(chunk['body'])))
                 execute_values(cur, """INSERT INTO public.scanner_journal
-                    (id,run_id,kind,session_date,observed_at,payload) VALUES %s
+                    (id,run_id,kind,session_date,observed_at,payload,payload_chunk_id) VALUES %s
                     ON CONFLICT (id) DO NOTHING""", [
                     (r['id'],r['run_id'],r['kind'],r['session_date'],
-                     datetime.fromtimestamp(r['observed_at'],ET),json.dumps(r['payload'],allow_nan=False))
+                     datetime.fromtimestamp(r['observed_at'],ET),
+                     json.dumps(MARKER if r['kind'] in PACKED_KINDS else r['payload'],allow_nan=False),
+                     chunk['id'] if r['kind'] in PACKED_KINDS else None)
                     for r in records])
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -59,11 +82,19 @@ class PostgresJournal:
                 cur.execute("SET LOCAL statement_timeout = '10s'")
                 cur.execute("SELECT count(*) FROM public.scanner_journal WHERE session_date=%s",(session,))
                 total=cur.fetchone()[0]
-                cur.execute("""SELECT id,run_id,kind,observed_at,saved_at,payload
+                cur.execute("""SELECT id,run_id,kind,observed_at,saved_at,payload,payload_chunk_id::text
                     FROM public.scanner_journal WHERE session_date=%s
                     ORDER BY observed_at,id LIMIT %s OFFSET %s""",(session,limit,offset))
                 rows=[dict(id=r[0],run_id=r[1],kind=r[2],observed_at=r[3].isoformat(),
-                           saved_at=r[4].isoformat(),payload=r[5]) for r in cur.fetchall()]
+                           saved_at=r[4].isoformat(),payload=r[5],payload_chunk_id=r[6]) for r in cur.fetchall()]
+                chunk_ids = list({r['payload_chunk_id'] for r in rows if r['payload_chunk_id']})
+                chunks = {}
+                if chunk_ids:
+                    cur.execute('''SELECT id::text,codec,sha256,raw_bytes,record_count,body
+                        FROM public.scanner_journal_chunks WHERE id=ANY(%s::uuid[])''',(chunk_ids,))
+                    chunks = {r[0]:dict(id=r[0],codec=r[1],sha256=r[2],raw_bytes=r[3],
+                                       record_count=r[4],body=r[5]) for r in cur.fetchall()}
+                restore(rows,chunks)
             return {'session':session,'total':total,'offset':offset,'records':rows,
                     'next_offset':offset+len(rows) if offset+len(rows)<total else None,
                     'note':'Server observations, not browser display latency. Pagination is stable after the session settles. Coverage must be checked from heartbeats, connection events and run boundaries; crashes can lose uncommitted queued rows.'}
@@ -115,6 +146,7 @@ class ScannerJournal:
                 'write_failures':self.failures,'last_failure_at':self.last_failure_at,
                 'lists':dict(self.list_status),
                 'continuation':dict(self.continuations.status) if self.continuations else {'state':'not started'},
+                'payload_storage':CODEC,
                 'rules_version':RULES,'revision':os.getenv('RAILWAY_GIT_COMMIT_SHA','unknown')}
 
     async def flush(self):
@@ -162,6 +194,7 @@ class ScannerJournal:
         tape.book.continuations=self.continuations
         self.continuations.task=asyncio.create_task(self.continuations.refresh())
         self.record('run_start',{'rules_version':RULES,'revision':os.getenv('RAILWAY_GIT_COMMIT_SHA','unknown'),
+            'payload_storage':CODEC,'storage_note':'Lossless independent chunks; unchanged events and sampling; history exports restore original payloads.',
             'scope':'Move alerts and leaders/fresh/focus/volume/continuation lists in all price bands; recent-runner universe and volume/momentum return states. No browser filters. Not exact Warrior eligibility.',
             'heartbeat_seconds':30,'flush_seconds':1,'warmup_seconds':600})
         self.list_task=asyncio.create_task(self.sample_lists(tape))

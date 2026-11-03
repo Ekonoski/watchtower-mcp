@@ -125,3 +125,46 @@ render worker_stopped; do not score that interval as zero missed alerts.
 The database table has RLS enabled and no anon/authenticated grants or policies.
 Only the server's existing database role writes/reads it. Schema creation SQL is
 kept in analysis/scanner_journal.py (SCHEMA) and applied during deployment.
+
+## Lossless journal storage (2026-11-03)
+
+Apply `supabase/migrations/20261103120805_scanner_journal_lossless_chunks.sql`
+before deploying the new writer/reader, including on a fresh installation after
+the base SCHEMA. The migration is additive and has a two-second lock timeout.
+It does not rewrite, delete, archive, or expire any existing record.
+
+New `list_membership`, `continuation_state`, and `list_snapshot` payloads share
+an independently compressed chunk per flush (at most 500 logical records).
+Zlib removes repeated text within/across those payloads without rounding,
+dropping fields, reducing cadence, suppressing transitions, or changing rules.
+Every original logical event still has its own ID, kind, run, session date,
+observed_at and saved_at in scanner_journal. NULL/false/zero, rank arrays,
+omitted counts, directions, reference failures, event/receipt timestamps,
+baseline/reconnect/gap evidence and all row context survive exactly.
+
+`payload_chunk_id IS NULL` means the original JSONB is inline. A non-NULL ID
+references `scanner_journal_chunks`; its JSONB payload is explicitly a storage
+marker, **not a scanner reading**. Alerts, heartbeats, run/connection events,
+continuation candidates and universe records remain inline, so their SQL
+consumers are unchanged. For bulk history analysis use `PostgresJournal.export`
+or authenticated `/api/trading/history`; both restore the identical original
+payload shape for mixed legacy/new pages, even when a page starts mid-chunk.
+Direct SQL consumers of the three packed kinds must fetch the referenced
+chunks and use `analysis.scanner_journal_codec.restore`; do not interpret
+missing fields on a marker as missing observations. Backups need BOTH tables.
+
+Chunk bodies are UTF-8 JSON mapping original event ID to `[kind, payload]`,
+compressed using zlib level 6. The reader validates codec, bounded decompression,
+uncompressed length, SHA-256, record count, ID and kind before returning data.
+A missing/corrupt chunk fails the entire export explicitly (HTTP 503), never
+as empty history. Chunks do not depend on a previous chunk, run, or in-memory
+dictionary. Chunk and event references commit in one transaction with an
+enforced foreign key; retries filter committed IDs before creating chunks.
+Compression runs inside the existing DB worker thread, outside market ingestion.
+
+Rollback: retain this reader/codec for any compressed history already saved.
+Rolling back to a pre-codec export reader would expose storage markers. Do not
+drop the chunk table/column. No cleanup or retention is introduced here. The FK
+is NOT VALID only to avoid scanning all historical rows during deployment;
+it enforces new references immediately. No child-FK index is needed for the
+append/read-only chunk lifecycle; any future deletion policy must revisit it.
