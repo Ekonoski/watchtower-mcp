@@ -1,11 +1,11 @@
 import copy
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
 from analysis.momentum_feed.model import seed, payload, replay, session_after, LIVE
 from analysis.momentum_feed.service import status, expected
-from analysis.momentum_feed.provider import observe, validate_bar
+from analysis.momentum_feed.provider import observe, validate_bar, opening_bar, reconstruct
 
 ET = ZoneInfo('America/New_York')
 
@@ -75,3 +75,82 @@ def test_no_reconstructed_open_or_unrecorded_close():
 
 def test_bad_bar_is_not_neutral():
     with pytest.raises(ValueError):validate_bar({'o':10.,'h':9.,'l':8.,'c':9.,'v':100.},'TEST')
+
+
+def test_delayed_open_first_completed_bar_with_exact_provenance():
+    # Incident 2026-11-03: C had no 09:30 bar. Its first bar was 09:31.
+    start = 1793716200000
+    raw = {'t':start+60000,'o':122.83,'h':122.83,'l':122.18,'c':122.585,'v':105327.022215}
+    assert opening_bar([raw],start,start+120000,'C') == raw
+    with pytest.raises(ValueError,match='Missing completed'):
+        opening_bar([raw],start,start+60000,'C')
+    earlier = {**raw, 't':start}
+    assert opening_bar([raw, earlier],start,start+120000,'C') == earlier
+    with pytest.raises(ValueError,match='Missing completed'):
+        opening_bar([{**raw,'t':start-60000}],start,start+120000,'C')
+
+
+def test_observe_delayed_open_uses_completed_range_and_preserves_bar():
+    from analysis.momentum_feed import provider
+    start = 1793716200000
+    raw = {'t':start+60000,'o':122.83,'h':122.83,'l':122.18,'c':122.585,'v':105327.022215}
+    def rows(path, params):
+        if '/aggs/' in path:
+            assert path.endswith('/'+str(start)+'/'+str(start+180000-1))
+            return [raw]
+        return []
+    with patch.object(provider,'LIVE',['C']), patch.object(provider,'rows',side_effect=rows), patch.object(provider,'datetime') as dt:
+        dt.now.return_value=datetime(2026,11,3,9,33,27,tzinfo=ET)
+        dt.fromisoformat.side_effect=datetime.fromisoformat
+        ob=observe('2026-11-03','open')
+    assert ob['bars']['C']['o']==122.83
+    assert ob['opening_bars']['C']==raw
+    assert ob['source']=='forward_model'
+
+
+def test_reconstruction_stays_distinct_from_forward_and_cannot_read_future():
+    ob=opening();ob['source']='reconciled_model'
+    p=payload([ob])
+    assert p['reconciled_sessions']==['2026-11-02']
+    assert 'not live observations' in p['note']
+    assert all(e['source']=='reconciled_model' for es in p['events'].values() for e in es if e['date']=='2026-11-02')
+    with patch('analysis.momentum_feed.provider.datetime') as dt:
+        dt.now.return_value=datetime(2026,11,4,13,tzinfo=ET)
+        with pytest.raises(ValueError,match='future'):reconstruct('2026-11-05','open')
+        with pytest.raises(ValueError,match='settled daily'):reconstruct('2026-11-04','close',ob)
+
+
+def test_missing_session_stays_actionably_unavailable_without_repeated_incidents():
+    from analysis.momentum_feed import service
+    current={'asof':'2026-11-02','phase':'close'}
+    reason=None
+    for hour in (9,13):
+        conn=MagicMock();cur=conn.cursor.return_value.__enter__.return_value
+        cur.fetchone.side_effect=[(True,), (True,{'verified':True},current,reason)]
+        cur.fetchall.return_value=[]
+        with patch.object(service,'_conn',return_value=conn), patch.object(service,'datetime') as dt, \
+             patch('analysis.momentum_feed.provider.observe') as observe_mock, patch.object(service.log,'exception') as logged:
+            dt.now.return_value=datetime(2026,11,4,hour,35,tzinfo=ET)
+            service.run()
+        observe_mock.assert_not_called()
+        writes=[c for c in cur.execute.call_args_list if c.args[0].startswith('UPDATE')]
+        assert len(writes)==1
+        error=writes[0].args[1][0]
+        assert '2026-11-03 open' in error and '2026-11-02 close' in error
+        assert logged.call_count==(1 if reason is None else 0)
+        assert not any(c.args[0].startswith('INSERT') for c in cur.execute.call_args_list)
+        reason=error
+
+
+def test_reconciled_open_close_preserves_source_and_open_price():
+    from analysis.momentum_feed import provider
+    ob={'day':'2026-11-03','phase':'open','source':'reconciled_model',
+        'observed_at':'2026-11-04T13:00:00-05:00','factors':{'C':1.},
+        'dividends':[],'bars':{'C':{'o':122.83}},'opening_bars':{'C':{'t':1793716260000}}}
+    daily={'C':{'o':122.9,'h':123.,'l':121.,'c':122.,'v':100.}}
+    with patch.object(provider,'LIVE',['C']),patch.object(provider,'grouped',return_value=daily),patch.object(provider,'datetime') as dt:
+        dt.now.return_value=datetime(2026,11,4,13,tzinfo=ET)
+        close=reconstruct('2026-11-03','close',ob)
+    assert close['source']=='reconciled_model'
+    assert close['bars']['C']['o']==122.83 and close['raw_bars']['C']['o']==122.9
+    assert close['opening_bars']==ob['opening_bars']

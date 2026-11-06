@@ -53,13 +53,38 @@ def validate_bar(b, symbol):
 
 
 def observe(day, phase, opening=None):
+    return _observe(day, phase, opening)
+
+
+def reconstruct(day, phase, opening=None):
+    """Explicit incident recovery only; never label retrospective data live."""
+    return _observe(day, phase, opening, historical=True)
+
+
+def opening_bar(items, start, end, symbol):
+    """First completed RTH minute, which need not exist at exactly 09:30."""
+    eligible = [b for b in items if start <= b['t'] and b['t'] + 60000 <= end]
+    if not eligible:
+        raise ValueError('Missing completed regular-session opening bar: '+symbol)
+    raw = min(eligible, key=lambda b: b['t'])
+    validate_bar(raw, symbol)
+    return raw
+
+
+def _observe(day, phase, opening=None, historical=False):
     now = datetime.now(ET)
-    if day != now.date().isoformat():
+    if phase not in ('open', 'close'):
+        raise ValueError('Unknown observation phase')
+    if day > now.date().isoformat():
+        raise ValueError('Cannot observe a future session')
+    if not historical and day != now.date().isoformat():
         raise ValueError('Forward observations cannot backfill a missed day')
-    if phase == 'open' and not (time(9,31) <= now.time().replace(tzinfo=None) <= time(9,45)):
+    if phase == 'open' and not historical and not (time(9,31) <= now.time().replace(tzinfo=None) <= time(9,45)):
         raise ValueError('Opening capture window missed; manual reconciliation required')
-    if phase == 'close' and (now.hour*60+now.minute < 16*60+20 or opening is None):
+    if phase == 'close' and ((day == now.date().isoformat() and now.hour*60+now.minute < 16*60+20) or opening is None):
         raise ValueError('Close requires settled daily data and a recorded opening observation')
+    if opening and (opening['day'] != day or opening['phase'] != 'open'):
+        raise ValueError('Opening observation belongs to a different session or phase')
     daily = grouped(day) if phase == 'close' else None
     def one(s):
         ticker = ALIASES.get(s,s)
@@ -82,11 +107,10 @@ def observe(day, phase, opening=None):
                                   'amount_per_unit':float(x['cash_amount'])*factor})
         if phase == 'open':
             start = int(datetime.fromisoformat(day+'T09:30:00').replace(tzinfo=ET).timestamp()*1000)
-            items = rows('/v2/aggs/ticker/'+ticker+'/range/1/minute/'+str(start)+'/'+str(start+59999),
-                         {'adjusted':'false','sort':'asc','limit':10})
-            if not items or items[0]['t'] != start:
-                raise ValueError('Missing regular-session opening minute: '+s)
-            raw = items[0]
+            end = min(start+15*60000, int(now.timestamp()*1000)//60000*60000)
+            items = rows('/v2/aggs/ticker/'+ticker+'/range/1/minute/'+str(start)+'/'+str(end-1),
+                         {'adjusted':'false','sort':'asc','limit':30})
+            raw = opening_bar(items, start, end, s)
             b = {k:float(raw['o']) for k in ('o','h','l','c')}
             b['v'] = 0.
         else:
@@ -105,16 +129,18 @@ def observe(day, phase, opening=None):
             b['o'] = opening['bars'][s]['o']
             b['h'] = max(b['h'],b['o'])
             b['l'] = min(b['l'],b['o'])
-        return s,b,factor,dividends,raw_bar
+        return s,b,factor,dividends,raw_bar,dict(raw)
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(one,LIVE))
     stamp = datetime.now(ET).isoformat()
-    return {'day':day,'phase':phase,'observed_at':stamp,
+    source = 'reconciled_model' if historical or (opening and opening.get('source') == 'reconciled_model') else 'forward_model'
+    return {'day':day,'phase':phase,'observed_at':stamp, 'source':source,
             'open_observed_at':opening['observed_at'] if opening else stamp,
-            'bars':{s:b for s,b,_,_,_ in results},
-            'raw_bars':{s:b for s,_,_,_,b in results},
-            'factors':{s:f for s,_,f,_,_ in results},
-            'dividends':[d for _,_,_,ds,_ in results for d in ds]}
+            'opening_bars':opening.get('opening_bars', {}) if opening else {s:raw for s,_,_,_,_,raw in results},
+            'bars':{s:b for s,b,_,_,_,_ in results},
+            'raw_bars':{s:b for s,_,_,_,b,_ in results},
+            'factors':{s:f for s,_,f,_,_,_ in results},
+            'dividends':[d for _,_,_,ds,_,_ in results for d in ds]}
 
 
 def check_seed_anchor():

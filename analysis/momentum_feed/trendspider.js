@@ -24,8 +24,9 @@ const plans = fresh ? data.plans.filter(p => p.symbol === ticker) : [];
 for (let i=0;i<days.length;i++) {
     for (const e of byDay[days[i]] || []) {
         const forward = e.source === 'forward_model';
-        if (e.side === 'BUY') { buys[i]=forward ? 'BUY model' : 'BUY history'; if(fresh && forward && e.date===data.asof) buySignal[i]=true; }
-        else if (e.side === 'SELL') { sells[i]=(e.reason==='close_stop' ? 'SELL stop' : ticker==='QQQ' ? 'SELL reserve' : 'SELL rank')+(forward ? '' : ' history'); if(fresh && forward && e.date===data.asof) sellSignal[i]=true; }
+        const suffix = e.source === 'reconciled_model' ? ' reconstructed' : forward ? ' model' : ' history';
+        if (e.side === 'BUY') { buys[i]='BUY'+suffix; if(fresh && forward && e.date===data.asof) buySignal[i]=true; }
+        else if (e.side === 'SELL') { sells[i]=(e.reason==='close_stop' ? 'SELL stop' : ticker==='QQQ' ? 'SELL reserve' : 'SELL rank')+suffix; if(fresh && forward && e.date===data.asof) sellSignal[i]=true; }
         else corp[i]='CORP settle';
     }
     if (fresh && h && h.stop && days[i]>=h.entry_date && days[i]<=data.asof) stop[i]=h.stop;
@@ -53,7 +54,7 @@ paint_overlay('WT Watchtower portfolio',{position:'top_right',order:'above_all',
         {cells:[{text:fresh ? planText : 'New signals suppressed. '+(data.error || 'Refresh chart to check the feed.')} ]},
         {cells:[{text:'Portfolio next session '+(data.next_session || 'pending close')+': '+(globalPlans || (fresh ? 'no new stock orders' : 'unavailable'))}]},
         {cells:[{text:last ? 'Last: '+last.date+' '+last.side+' $'+last.price.toFixed(2)+' | '+last.reason : 'No model trade recorded'}]},
-        {cells:[{text:'Checked '+moment(data.checked_at).tz('America/New_York').format('MMM D HH:mm:ss z')+' | History through Oct 30; later arrows are forward model decisions.'}]},
+        {cells:[{text:'Checked '+moment(data.checked_at).tz('America/New_York').format('MMM D HH:mm:ss z')+' | '+data.note}]},
         {cells:[{text:'Green momentum = eligible, not BUY. Plans are conditional; arrows record model opening decisions.'}]}
     ] : []
 });
