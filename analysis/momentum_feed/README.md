@@ -26,8 +26,10 @@ authenticated have no schema/table access. The chart endpoint accepts only the
 dedicated feed token's SHA256 hash, never MCP/database/provider credentials.
 
 The Oct 30 bootstrap is explicitly historical. At 09:31–09:45 ET the service
-records each active cohort member's 09:30 regular-session one-minute opening
-print. Only then does it record that day's opening model decisions. These prices
+records each active cohort member's first completed regular-session minute
+within 09:30–09:45. A symbol need not have a 09:30 bar (C first printed at
+09:31 on 2026-11-03). The exact source bar and timestamp are retained; premarket
+and unfinished bars cannot qualify. Only then does it record that day's opening model decisions. These prices
 are **observed model reference fills**, not achievable quotes guaranteed to a
 user seeing the arrow later. Prior-close plans give the user advance notice.
 At/after 16:20 ET it records completed daily OHLCV and produces the next session's
@@ -40,6 +42,17 @@ retained as raw evidence but never rewrite model fills. A missed opening/session
 blocks continuation for manual reconciliation, rather than labeling historical
 reconstruction as live tape. Retries serialize via a PostgreSQL advisory lock and
 commit observations, snapshot, and current state together.
+
+Incident recovery is an explicit operator action, never a scheduler backfill.
+`scripts/reconcile_momentum_feed.py --preview PATH` reads the existing ledger,
+fetches missing sessions, and writes a reviewable deterministic replay. `--apply
+PATH` checks that the base record is unchanged, takes the scheduler's advisory
+lock, then inserts only the missing observations and snapshots in one transaction.
+Existing observations are never rewritten. Every recovered session/event carries
+`reconciled_model`, its actual retrieval time, and a persistent payload warning.
+The chart labels these events reconstructed and does not fire observed BUY/SELL
+signals from them. Later live sessions keep the reconstruction dates in the note.
+The dedicated feed token, provider credentials, and preview files must not be committed.
 
 Splits after cutoff normalize forward bars/dividends into the fixed seed basis;
 current stops, units, and event prices translate back to their dated actual basis.

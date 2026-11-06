@@ -14,6 +14,12 @@ from .model import payload, seed, session_after
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo('America/New_York')
+
+
+class ReconciliationRequired(RuntimeError):
+    """A known missing observation that scheduled retries cannot recreate."""
+
+
 SCHEMA = '''
 CREATE SCHEMA IF NOT EXISTS wt_momentum;
 REVOKE ALL ON SCHEMA wt_momentum FROM PUBLIC, anon, authenticated;
@@ -57,17 +63,18 @@ def status(p, checked, error, now):
 def run():
     """Idempotent, database-locked, once per two minutes; zero brokerage I/O."""
     conn = None
+    previous_error = None
     try:
         conn = _conn()
         with conn.cursor() as cur:
             cur.execute('SELECT pg_try_advisory_lock(20261031, 1075)')
             if not cur.fetchone()[0]:
                 return
-            cur.execute('SELECT enabled,anchor,payload FROM wt_momentum.settings WHERE id=1')
+            cur.execute('SELECT enabled,anchor,payload,error FROM wt_momentum.settings WHERE id=1')
             row = cur.fetchone()
             if not row or not row[0]:
                 return
-            _,anchor,current = row
+            _,anchor,current,previous_error = row
             from .provider import check_seed_anchor, observe
             if not anchor:
                 anchor = check_seed_anchor()
@@ -79,6 +86,12 @@ def run():
             initial = current is None
             current = current or payload(observations)
             ob = None
+            required = session_after(current['asof']) if current['phase'] == 'close' else current['asof']
+            if required < today or (required == today and current['phase'] == 'close' and clock > time(9,45)):
+                raise ReconciliationRequired('Reconciliation required for '+required+
+                                   (' open' if current['phase'] == 'close' else ' close')+
+                                   '; last recorded payload '+current['asof']+' '+current['phase']+
+                                   '. No retrospective fills will be labeled live.')
             if is_trading_day(now) and time(9,31)<=clock<=time(9,45) and current['asof']<today:
                 if current['phase']!='close' or session_after(current['asof'])!=today:
                     raise RuntimeError('Missing prior completed session; reconciliation required')
@@ -104,7 +117,10 @@ def run():
                 cur.execute('UPDATE wt_momentum.settings SET last_checked=now(),error=%s WHERE id=1',(error,))
         conn.commit()
     except Exception as exc:
-        log.exception('[momentum_feed] refresh unavailable')
+        # A persistent data hole is still unavailable, but is not a new incident
+        # every two minutes. A changed cause still gets its complete traceback.
+        if not isinstance(exc, ReconciliationRequired) or str(exc) != previous_error:
+            log.exception('[momentum_feed] refresh unavailable')
         if conn:
             conn.rollback()
             try:

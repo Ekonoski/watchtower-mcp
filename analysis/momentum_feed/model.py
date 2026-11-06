@@ -89,7 +89,7 @@ def payload(observations):
         ob = latest.get(day)
         events.setdefault(s, []).append({
             'date': day, 'side': side, 'price': px/factor(s, day), 'reason': reason,
-            'source': 'forward_model' if ob else 'research_replay',
+            'source': ob.get('source', 'forward_model') if ob else 'research_replay',
             'observed_at': ob.get('open_observed_at', ob['observed_at']) if ob else None})
 
     for t in r['trades']:
@@ -128,9 +128,12 @@ def payload(observations):
                               'session':next_day,'priority':len(plans)+1,'available_slots':slots,
                               'maximum_open':float(a['c'][-1]+a['atr'][-1])/factor(s,asof),
                               'risk_per_share':float(3*a['atr'][-1])/factor(s,asof)})
+    reconciled = sorted(day for day, ob in latest.items() if ob.get('source') == 'reconciled_model')
     return {'version':'retention_buffer_v1','asof':asof,'phase':phase,'signal_close':signal_day,
+            'reconciled_sessions':reconciled,
             'seed_cutoff':seed()['cutoff'],'next_session':next_day,'events':events,'held':held,
             'plans':plans,'top10':chosen,'retain15':retained,'universe':OLD['universe']+['QQQ'],
             'aliases':ALIASES,'cost_per_side':.0015,'account':r['curve'][-1],
-            'note':'Model signals, not brokerage fills. Research history through 2026-10-30. Conditional plans need opening price checks.',
+            'note':'Model signals, not brokerage fills. Research history through 2026-10-30. Conditional plans need opening price checks.' +
+                   (' Historical incident reconstruction (not live observations): '+', '.join(reconciled)+'.' if reconciled else ''),
             'retired_symbols':sorted(TERMINATED)}
